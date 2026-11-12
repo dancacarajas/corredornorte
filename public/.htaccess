@@ -1,0 +1,12 @@
+RewriteEngine On
+
+# Em subdomínio com document root em /public, use /
+# Se o document root for a pasta do projeto, o .htaccess da raiz redireciona para public/
+RewriteBase /
+
+# Protege pastas sensíveis caso o document root esteja acima de public/
+RewriteRule ^(storage|config|vendor|app|database|scripts)/ - [F,L]
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]

@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: arcadis-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: arcadis_rh
+      MYSQL_USER: arcadis
+      MYSQL_PASSWORD: arcadis
+    ports:
+      - "3306:3306"
+    volumes:
+      - arcadis_mysql_data:/var/lib/mysql
+      - ./database/schema_efetivo.sql:/docker-entrypoint-initdb.d/01_schema_efetivo.sql:ro
+      - ./database/schema_ponto_folha.sql:/docker-entrypoint-initdb.d/02_schema_ponto_folha.sql:ro
+      - ./database/seeds.sql:/docker-entrypoint-initdb.d/03_seeds.sql:ro
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-authentication-plugin=mysql_native_password"]
+
+volumes:
+  arcadis_mysql_data:

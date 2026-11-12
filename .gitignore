@@ -1,0 +1,17 @@
+/vendor/
+/storage/uploads/*
+!/storage/uploads/.gitkeep
+/storage/logs/*
+!/storage/logs/.gitkeep
+/storage/assinaturas/*
+!/storage/assinaturas/.gitkeep
+/storage/tmp/*
+!/storage/tmp/.gitkeep
+/storage/install.lock
+/config/database.local.php
+/config/app.local.php
+/output/*
+!/output/.gitkeep
+.env
+.DS_Store
+Thumbs.db
