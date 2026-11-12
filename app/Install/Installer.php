@@ -54,18 +54,16 @@ final class Installer
         }
 
         $messages = [];
-        $pdo = $this->connect($host, $port, $username, $password, null);
-        $messages[] = 'Conexão MySQL OK';
-
         try {
-            $pdo->exec('USE `' . str_replace('`', '``', $database) . '`');
-        } catch (PDOException $e) {
+            $pdo = $this->connect($host, $port, $username, $password, $database);
+        } catch (RuntimeException $e) {
             throw new RuntimeException(
-                'Não foi possível usar o banco "' . $database . '". Confirme se ele já existe no painel Hostinger. '
+                'Não foi possível conectar ao banco "' . $database . '". Confirme senha e se o banco já existe no painel Hostinger. '
                 . $e->getMessage(),
                 previous: $e
             );
         }
+        $messages[] = 'Conexão MySQL OK (' . $database . ')';
 
         foreach ([
             'database/schema_efetivo.sql',
@@ -139,21 +137,22 @@ final class Installer
             throw new RuntimeException('Não foi possível ler ' . $file);
         }
 
-        $sql = preg_replace('/^\s*CREATE\s+DATABASE\b.*?;\s*/im', '', $sql) ?? $sql;
-        $sql = preg_replace('/^\s*USE\s+[`\']?[a-zA-Z0-9_]+[`\']?\s*;\s*/im', '', $sql) ?? $sql;
-        $pdo->exec('USE `' . str_replace('`', '``', $database) . '`');
+        // Remove CREATE DATABASE (pode ser multilinha) e qualquer USE — no shared hosting
+        // o banco já existe e o usuário só tem acesso ao DB informado.
+        $sql = preg_replace('/\bCREATE\s+DATABASE\b.*?;/is', '', $sql) ?? $sql;
+        $sql = preg_replace('/\bUSE\s+[`\'"]?[a-zA-Z0-9_]+[`\'"]?\s*;/i', '', $sql) ?? $sql;
+        $sql = str_ireplace('arcadis_rh', $database, $sql);
 
-        try {
-            $pdo->exec($sql);
-            return;
-        } catch (Throwable) {
-            // fallback: statement por statement
-        }
+        $dbSafe = str_replace('`', '``', $database);
+        $pdo->exec('USE `' . $dbSafe . '`');
 
         $parts = preg_split('/;\s*\n/', $sql) ?: [];
         foreach ($parts as $part) {
             $stmt = trim(preg_replace('/^--.*$/m', '', $part) ?? '');
             if ($stmt === '') {
+                continue;
+            }
+            if (preg_match('/^(CREATE\s+DATABASE|USE)\b/i', $stmt)) {
                 continue;
             }
             $pdo->exec($stmt);
