@@ -55,7 +55,7 @@ final class WhatsApp
     public static function shareUrlFromPortal(string $portalUrl, ?string $rootPath = null): string
     {
         $portalUrl = trim($portalUrl);
-        if ($portalUrl !== '' && preg_match('#/assinar/([^/?#]+)#', $portalUrl, $m) === 1) {
+        if ($portalUrl !== '' && preg_match('~/assinar/([^/?#]+)~', $portalUrl, $m) === 1) {
             return rtrim(AppUrl::base($rootPath), '/') . '/s/' . rawurlencode(rawurldecode($m[1]));
         }
 
