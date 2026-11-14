@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Helpers\Db;
+use App\Helpers\EmailDeliverability;
 use App\Services\EmailOAuth\AccountMailSender;
 use App\Services\EmailOAuth\EmailAccountService;
 use PDO;
@@ -29,6 +30,10 @@ final class MailService
         $to = trim($to);
         if (preg_match('/[\r\n\0]/', $to . $subject) === 1 || filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
             return ['ok' => false, 'erro' => 'Destinatário ou assunto de e-mail inválido.'];
+        }
+        $deliver = EmailDeliverability::validate($to);
+        if (!$deliver['ok']) {
+            return ['ok' => false, 'erro' => $deliver['erro']];
         }
 
         $pdo = Db::tryConnection();

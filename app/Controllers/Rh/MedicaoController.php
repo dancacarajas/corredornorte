@@ -52,17 +52,27 @@ final class MedicaoController
             }
         }
 
+        $relatorioEnvios = [];
+        if ($dbOk && isset($svc) && is_array($painel) && $dataInicio !== '' && $dataFim !== '') {
+            try {
+                $relatorioEnvios = $svc->relatorioEnviosPeriodo($dataInicio, $dataFim);
+            } catch (Throwable) {
+                $relatorioEnvios = [];
+            }
+        }
+
         View::render('rh/medicao/index', [
             'pageTitle' => 'Medição',
             'pageSubtitle' => 'Jornada do período até o dossiê assinado',
             'activeMenu' => 'medicao',
-            'extraCss' => ['css/medicao.css?v=email-report-20261114'],
+            'extraCss' => ['css/medicao.css?v=email-report-20261114b'],
             'dbOk' => $dbOk,
             'periodosGerados' => $periodos,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'filtro' => $filtro,
             'painel' => $painel,
+            'relatorioEnvios' => $relatorioEnvios,
             'errosLote' => $_SESSION['medicao_errors_list'] ?? [],
             'flash' => $_SESSION['medicao_flash'] ?? null,
             'error' => $erro ?? ($_SESSION['medicao_error'] ?? null),

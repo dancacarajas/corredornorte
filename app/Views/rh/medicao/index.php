@@ -10,6 +10,7 @@ $dataFim = $dataFim ?? '';
 $painel = $painel ?? null;
 $flash = $flash ?? null;
 $error = $error ?? null;
+$relatorioEnvios = is_array($relatorioEnvios ?? null) ? $relatorioEnvios : [];
 
 $resumo = is_array($painel) ? ($painel['resumo'] ?? []) : [];
 $colaboradores = is_array($painel) ? ($painel['colaboradores'] ?? []) : [];
@@ -513,17 +514,22 @@ foreach ($loteBotoes as $b) {
             </form>
             <?php endif; ?>
             <span class="muted text-sm" id="medicaoBatchHint">Aplica aos elegíveis desta etapa (ou apenas aos marcados na tabela).</span>
-            <div class="batch-progress-card" id="medicaoBatchProgress" hidden style="margin-top:.75rem;flex:1 1 100%;">
+            <?php
+            $mostrarRelatorioPersistente = $filtro === 'email' && $relatorioEnvios !== [];
+            $qtdRelOk = count(array_filter($relatorioEnvios, static fn(array $i): bool => ($i['status'] ?? '') === 'ok'));
+            $qtdRelFail = count(array_filter($relatorioEnvios, static fn(array $i): bool => ($i['status'] ?? '') === 'falha'));
+            ?>
+            <div class="batch-progress-card" id="medicaoBatchProgress" <?= $mostrarRelatorioPersistente ? '' : 'hidden' ?> style="margin-top:.75rem;flex:1 1 100%;">
                 <div class="batch-progress-head">
-                    <strong id="medicaoBatchTitle">Processando lote...</strong>
-                    <span id="medicaoBatchStats" class="muted">0 / 0</span>
+                    <strong id="medicaoBatchTitle"><?= $mostrarRelatorioPersistente ? 'Relatório de envios do período' : 'Processando lote...' ?></strong>
+                    <span id="medicaoBatchStats" class="muted"><?= $mostrarRelatorioPersistente ? ($qtdRelOk . ' ok · ' . $qtdRelFail . ' falha') : '0 / 0' ?></span>
                 </div>
-                <div class="progress"><span id="medicaoBatchBar" style="width:0%"></span></div>
-                <button type="button" class="medicao-report-toggle" id="medicaoReportToggle" hidden aria-expanded="false">
+                <div class="progress" id="medicaoBatchProgressBarWrap" <?= $mostrarRelatorioPersistente ? 'hidden' : '' ?>><span id="medicaoBatchBar" style="width:0%"></span></div>
+                <button type="button" class="medicao-report-toggle" id="medicaoReportToggle" <?= $mostrarRelatorioPersistente ? '' : 'hidden' ?> aria-expanded="<?= $mostrarRelatorioPersistente ? 'true' : 'false' ?>">
                     <span class="medicao-report-chevron" aria-hidden="true"></span>
-                    <span id="medicaoReportToggleLabel">Relatório de envios</span>
+                    <span id="medicaoReportToggleLabel">Relatório de envios (<?= $qtdRelOk ?> sucesso · <?= $qtdRelFail ?> falha)</span>
                 </button>
-                <div class="medicao-report" id="medicaoReportPanel" hidden>
+                <div class="medicao-report" id="medicaoReportPanel" <?= $mostrarRelatorioPersistente ? '' : 'hidden' ?>>
                     <div class="medicao-report-filters" role="tablist" aria-label="Filtro do relatório">
                         <button type="button" class="medicao-report-filter is-active" data-filter="todos">Todos <span id="medicaoReportCountAll">0</span></button>
                         <button type="button" class="medicao-report-filter" data-filter="ok">Sucesso <span id="medicaoReportCountOk">0</span></button>
@@ -882,7 +888,14 @@ foreach ($loteBotoes as $b) {
     const reportCountAll = document.getElementById('medicaoReportCountAll');
     const reportCountOk = document.getElementById('medicaoReportCountOk');
     const reportCountFail = document.getElementById('medicaoReportCountFail');
-    let reportItems = [];
+    let reportItems = <?= json_encode(array_map(static function (array $i): array {
+        return [
+            'espelho_id' => (int) ($i['espelho_id'] ?? 0),
+            'nome' => (string) ($i['nome'] ?? ''),
+            'status' => (string) ($i['status'] ?? ''),
+            'message' => (string) ($i['message'] ?? ''),
+        ];
+    }, $relatorioEnvios), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     let reportFilter = 'todos';
 
     const statusLabelReport = (st) => {
@@ -959,6 +972,17 @@ foreach ($loteBotoes as $b) {
         renderReport();
       });
     });
+    if (reportItems.length > 0) {
+      // Preferir falhas quando há bounce / domínio inválido no período.
+      const hasFail = reportItems.some((it) => it.status === 'falha');
+      if (hasFail) {
+        reportFilter = 'falha';
+        document.querySelectorAll('.medicao-report-filter').forEach((b) => {
+          b.classList.toggle('is-active', b.getAttribute('data-filter') === 'falha');
+        });
+      }
+      renderReport();
+    }
 
     const getTargetIds = () => {
       const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
@@ -1017,10 +1041,13 @@ foreach ($loteBotoes as $b) {
       if (submitBtn && submitEl !== submitBtn) submitBtn.disabled = true;
       if (reenvioBtn && submitEl !== reenvioBtn) reenvioBtn.disabled = true;
       if (progCard) progCard.hidden = false;
+      const barWrap = document.getElementById('medicaoBatchProgressBarWrap');
+      if (barWrap) barWrap.hidden = false;
       if (progErrors) { progErrors.hidden = true; progErrors.innerHTML = ''; }
       if (progReload) progReload.hidden = true;
       if (progBar) progBar.style.width = '5%';
       if (progStats) progStats.textContent = `0 / ${ids.length}`;
+      if (progTitle) progTitle.textContent = progressLabel || 'Processando lote...';
       resetReport();
 
       const sourceForm = formEl || form || reenvioForm;

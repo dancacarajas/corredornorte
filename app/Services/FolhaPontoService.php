@@ -256,6 +256,14 @@ final class FolhaPontoService
         if ($to === '') {
             throw new RuntimeException('Colaborador sem e-mail corporativo.');
         }
+        $deliver = \App\Helpers\EmailDeliverability::validate($to);
+        if (!$deliver['ok']) {
+            $tentativaBloq = (int) $this->db->query(
+                'SELECT COALESCE(MAX(tentativa),0)+1 FROM emails_envios WHERE documento_id=' . (int) $documentoId
+            )->fetchColumn();
+            $this->registrarEnvio($documentoId, $to, false, (string) $deliver['erro'], $tentativaBloq);
+            throw new RuntimeException((string) $deliver['erro']);
+        }
 
         $tentativa = (int) $this->db->query(
             'SELECT COALESCE(MAX(tentativa),0)+1 FROM emails_envios WHERE documento_id=' . (int) $documentoId

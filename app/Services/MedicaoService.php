@@ -322,14 +322,82 @@ final class MedicaoService
             return [];
         }
         $in = implode(',', $ids);
-        $sql = "SELECT documento_id FROM emails_envios
+        // Só avança etapa 6 com envio bem-sucedido para endereço entregável
+        // (evita @arcadis.local / domínio sem MX que o SMTP aceita e depois devolve bounce).
+        $sql = "SELECT documento_id, destinatario FROM emails_envios
                 WHERE documento_id IN ({$in}) AND status = 'enviado'
-                GROUP BY documento_id";
+                ORDER BY id DESC";
         $map = [];
         foreach ($this->db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
-            $map[(int) $row['documento_id']] = true;
+            $docId = (int) $row['documento_id'];
+            if (isset($map[$docId])) {
+                continue;
+            }
+            $dest = (string) ($row['destinatario'] ?? '');
+            if (\App\Helpers\EmailDeliverability::isDeliverable($dest)) {
+                $map[$docId] = true;
+            }
         }
         return $map;
+    }
+
+    /**
+     * Relatório de envios do período (último status por colaborador/documento).
+     *
+     * @return list<array{espelho_id:int,nome:string,status:string,message:string,destinatario:string,em:?string}>
+     */
+    public function relatorioEnviosPeriodo(string $dataInicio, string $dataFim): array
+    {
+        $st = $this->db->prepare(
+            "SELECT pe.id AS espelho_id, c.nome, c.email_corp, d.id AS documento_id,
+                    e.status, e.destinatario, e.erro_mensagem, e.enviado_em, e.id AS envio_id
+             FROM ponto_espelhos pe
+             INNER JOIN ponto_periodos pp ON pp.id = pe.periodo_id
+             INNER JOIN rh_colaboradores c ON c.id = pe.colaborador_id
+             INNER JOIN documentos d ON d.id = (
+                SELECT d2.id FROM documentos d2
+                WHERE d2.espelho_id = pe.id AND d2.tipo = 'folha_ponto' AND d2.status <> 'invalidado'
+                ORDER BY d2.id DESC LIMIT 1
+             )
+             LEFT JOIN emails_envios e ON e.id = (
+                SELECT e2.id FROM emails_envios e2
+                WHERE e2.documento_id = d.id
+                ORDER BY e2.id DESC LIMIT 1
+             )
+             WHERE pp.data_inicio = :i AND pp.data_fim = :f
+               AND e.id IS NOT NULL
+             ORDER BY e.id DESC"
+        );
+        $st->execute(['i' => $dataInicio, 'f' => $dataFim]);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $statusDb = (string) ($row['status'] ?? '');
+            $dest = (string) ($row['destinatario'] ?? '');
+            $erro = trim((string) ($row['erro_mensagem'] ?? ''));
+            // Envios “enviado” para domínio inválido contam como falha no relatório.
+            if ($statusDb === 'enviado' && !\App\Helpers\EmailDeliverability::isDeliverable($dest)) {
+                $status = 'falha';
+                $message = $erro !== '' ? $erro : ('Bounce / domínio não entregável: ' . $dest);
+            } elseif ($statusDb === 'enviado') {
+                $status = 'ok';
+                $message = 'e-mail enviado para ' . $dest;
+            } elseif ($statusDb === 'falha') {
+                $status = 'falha';
+                $message = $erro !== '' ? $erro : ('falha ao enviar para ' . $dest);
+            } else {
+                $status = 'pulado';
+                $message = $statusDb !== '' ? $statusDb : 'sem status';
+            }
+            $out[] = [
+                'espelho_id' => (int) $row['espelho_id'],
+                'nome' => (string) $row['nome'],
+                'status' => $status,
+                'message' => $message,
+                'destinatario' => $dest,
+                'em' => $row['enviado_em'] !== null ? (string) $row['enviado_em'] : null,
+            ];
+        }
+        return $out;
     }
 
     /**
