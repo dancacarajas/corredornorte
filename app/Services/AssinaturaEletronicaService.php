@@ -240,6 +240,81 @@ final class AssinaturaEletronicaService
     }
 
     /**
+     * Folhas liberadas pela medição (link gerado) para o portal do colaborador.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function listarDoColaborador(int $colaboradorId): array
+    {
+        if ($colaboradorId <= 0) {
+            return [];
+        }
+        $st = $this->db->prepare(
+            "SELECT d.id, d.status, d.portal_token, d.assinatura_em, d.created_at, d.updated_at,
+                    e.id AS espelho_id, e.status AS espelho_status,
+                    pp.data_inicio, pp.data_fim
+             FROM documentos d
+             INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+             WHERE e.colaborador_id = :c
+               AND d.status IN ('enviado', 'assinado')
+               AND d.portal_token IS NOT NULL
+               AND TRIM(d.portal_token) <> ''
+               AND d.status <> 'invalidado'
+             ORDER BY
+               CASE WHEN d.status = 'enviado' THEN 0 ELSE 1 END,
+               pp.data_inicio DESC,
+               d.id DESC"
+        );
+        $st->execute(['c' => $colaboradorId]);
+        return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    public function contarPendentesDoColaborador(int $colaboradorId): int
+    {
+        if ($colaboradorId <= 0) {
+            return 0;
+        }
+        $st = $this->db->prepare(
+            "SELECT COUNT(*)
+             FROM documentos d
+             INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+             WHERE e.colaborador_id = :c
+               AND d.status = 'enviado'
+               AND d.portal_token IS NOT NULL
+               AND TRIM(d.portal_token) <> ''"
+        );
+        $st->execute(['c' => $colaboradorId]);
+        return (int) $st->fetchColumn();
+    }
+
+    /** @return array<string,mixed>|null */
+    public function buscarDoColaborador(int $documentoId, int $colaboradorId): ?array
+    {
+        if ($documentoId <= 0 || $colaboradorId <= 0) {
+            return null;
+        }
+        $st = $this->db->prepare(
+            "SELECT d.*, c.nome, c.matricula, c.id AS colaborador_id,
+                    e.id AS espelho_id, e.status AS espelho_status,
+                    pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim
+             FROM documentos d
+             INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+             INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+             WHERE d.id = :id
+               AND e.colaborador_id = :c
+               AND d.status IN ('enviado', 'assinado')
+               AND d.portal_token IS NOT NULL
+               AND TRIM(d.portal_token) <> ''
+             LIMIT 1"
+        );
+        $st->execute(['id' => $documentoId, 'c' => $colaboradorId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
+    }
+
+    /**
      * Normaliza nome completo removendo acentos, pontuações extras e múltiplos espaços.
      */
     public static function normalizarNome(string $valor): string
@@ -652,6 +727,26 @@ final class AssinaturaEletronicaService
             }
         }
         throw new RuntimeException('Não foi possível selar o PDF via Python.');
+    }
+
+    /**
+     * Caminho absoluto do PDF da folha para o portal autenticado do colaborador.
+     *
+     * @param array<string,mixed> $doc
+     */
+    public function caminhoArquivoPortal(array $doc, bool $assinado = false): string
+    {
+        $rel = $assinado
+            ? (string) ($doc['arquivo_assinado_path'] ?? '')
+            : (string) ($doc['arquivo_path'] ?? '');
+        if ($rel === '') {
+            throw new RuntimeException('PDF da folha indisponível.');
+        }
+        $path = $this->absPath($rel);
+        if (!is_file($path)) {
+            throw new RuntimeException('Arquivo da folha não encontrado.');
+        }
+        return $path;
     }
 
     private function absPath(string $rel): string

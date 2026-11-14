@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Controllers\He;
 
+use App\Config\Database;
 use App\Helpers\HePortalAuth;
 use App\Helpers\View;
+use App\Services\AssinaturaEletronicaService;
 use App\Services\HeAutorizacaoService;
 use App\Services\RelatorioAssinaturaService;
 use App\Services\RelatorioAtividadesExcel;
@@ -96,12 +98,21 @@ final class PortalController
             $relatoriosAbertos = 0;
         }
 
+        $folhasPendentes = 0;
+        try {
+            $folhasPendentes = (new AssinaturaEletronicaService(Database::connection()))
+                ->contarPendentesDoColaborador($id);
+        } catch (Throwable) {
+            $folhasPendentes = 0;
+        }
+
         View::render('he/overview', [
             'pageTitle' => 'Visão Geral',
             'pageSubtitle' => 'Portal do colaborador',
             'activeMenu' => 'overview',
             'user' => $user,
             'relatoriosAbertos' => $relatoriosAbertos,
+            'folhasPendentes' => $folhasPendentes,
             'flash' => $_SESSION['he_flash'] ?? null,
             'error' => $_SESSION['he_error'] ?? null,
         ], 'layouts/portal');
@@ -360,6 +371,136 @@ final class PortalController
         }
 
         header('Location: /he/relatorios/' . $relatorioId, true, 303);
+        exit;
+    }
+
+    public function folhas(): void
+    {
+        HePortalAuth::requireLogin();
+        $user = HePortalAuth::user();
+        $lista = [];
+        try {
+            $lista = (new AssinaturaEletronicaService(Database::connection()))
+                ->listarDoColaborador((int) $user['id']);
+        } catch (Throwable) {
+            $_SESSION['he_error'] = 'Folhas indisponíveis. Contate o RH se o problema persistir.';
+        }
+
+        View::render('he/folhas_index', [
+            'pageTitle' => 'Folha de ponto',
+            'pageSubtitle' => 'Assinatura liberada pela medição',
+            'activeMenu' => 'folhas',
+            'user' => $user,
+            'folhas' => $lista,
+            'flash' => $_SESSION['he_flash'] ?? null,
+            'error' => $_SESSION['he_error'] ?? null,
+        ], 'layouts/portal');
+        unset($_SESSION['he_flash'], $_SESSION['he_error']);
+    }
+
+    public function folhaShow(string $id = '0'): void
+    {
+        HePortalAuth::requireLogin();
+        $user = HePortalAuth::user();
+        $documentoId = (int) $id;
+        $doc = null;
+        try {
+            $doc = (new AssinaturaEletronicaService(Database::connection()))
+                ->buscarDoColaborador($documentoId, (int) $user['id']);
+        } catch (Throwable) {
+            $doc = null;
+        }
+        if ($doc === null) {
+            $_SESSION['he_error'] = 'Folha não encontrada ou ainda sem link de assinatura.';
+            header('Location: /he/folhas');
+            exit;
+        }
+
+        $ini = (string) ($doc['periodo_cartao_inicio'] ?? '');
+        $fim = (string) ($doc['periodo_cartao_fim'] ?? '');
+        $rotulo = ($ini !== '' && $fim !== '')
+            ? date('d/m/Y', strtotime($ini)) . ' a ' . date('d/m/Y', strtotime($fim))
+            : 'Folha de ponto';
+
+        View::render('he/folha_show', [
+            'pageTitle' => ((string) ($doc['status'] ?? '') === 'assinado') ? 'Folha assinada' : 'Assinar folha de ponto',
+            'pageSubtitle' => $rotulo,
+            'activeMenu' => 'folhas',
+            'user' => $user,
+            'documento' => $doc,
+            'textoAceite' => AssinaturaEletronicaService::TEXTO_ACEITE,
+            'nomeAssinaturaInformado' => (string) ($_SESSION['folha_nome_informado'] ?? ''),
+            'flash' => $_SESSION['he_flash'] ?? null,
+            'error' => $_SESSION['he_error'] ?? null,
+        ], 'layouts/portal');
+        unset($_SESSION['he_flash'], $_SESSION['he_error'], $_SESSION['folha_nome_informado']);
+    }
+
+    public function folhaPdf(string $id = '0'): void
+    {
+        HePortalAuth::requireLogin();
+        $user = HePortalAuth::user();
+        $svc = new AssinaturaEletronicaService(Database::connection());
+        $doc = $svc->buscarDoColaborador((int) $id, (int) $user['id']);
+        if ($doc === null) {
+            http_response_code(404);
+            echo 'Folha não encontrada.';
+            return;
+        }
+        try {
+            $assinado = (string) ($doc['status'] ?? '') === 'assinado';
+            $arquivo = $svc->caminhoArquivoPortal($doc, $assinado);
+        } catch (Throwable) {
+            http_response_code(500);
+            echo 'Não foi possível abrir o PDF da folha.';
+            return;
+        }
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: inline; filename="folha_ponto_' . (int) $id . '.pdf"');
+        header('Cache-Control: private, no-store');
+        readfile($arquivo);
+    }
+
+    public function folhaAssinar(string $id = '0'): void
+    {
+        HePortalAuth::requireLogin();
+        $user = HePortalAuth::user();
+        $documentoId = (int) $id;
+        $nome = is_string($_POST['nome'] ?? null) ? $_POST['nome'] : '';
+        $aceite = ($_POST['aceite'] ?? '') === '1';
+
+        try {
+            $svc = new AssinaturaEletronicaService(Database::connection());
+            $doc = $svc->buscarDoColaborador($documentoId, (int) $user['id']);
+            if ($doc === null) {
+                throw new RuntimeException('Folha não encontrada ou ainda sem link de assinatura.');
+            }
+            if ((string) ($doc['status'] ?? '') === 'assinado') {
+                throw new RuntimeException('Esta folha já foi assinada eletronicamente.');
+            }
+            if ((string) ($doc['status'] ?? '') !== 'enviado' || empty($doc['portal_token']) || empty($doc['hash_sha256'])) {
+                throw new RuntimeException('Aguarde o RH liberar o link de assinatura desta folha.');
+            }
+
+            $svc->assinarNoPortal(
+                (string) $doc['portal_token'],
+                $nome,
+                $aceite,
+                (string) $doc['hash_sha256']
+            );
+            $_SESSION['he_flash'] = 'Folha de ponto assinada eletronicamente com sucesso!';
+        } catch (PDOException) {
+            $_SESSION['he_error'] = 'Não foi possível concluir a assinatura. Tente novamente.';
+            $_SESSION['folha_nome_informado'] = $nome;
+        } catch (RuntimeException $e) {
+            $_SESSION['he_error'] = $e->getMessage();
+            $_SESSION['folha_nome_informado'] = $nome;
+        } catch (Throwable) {
+            $_SESSION['he_error'] = 'Não foi possível concluir a assinatura.';
+            $_SESSION['folha_nome_informado'] = $nome;
+        }
+
+        header('Location: /he/folhas/' . $documentoId, true, 303);
         exit;
     }
 

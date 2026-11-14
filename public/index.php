@@ -115,6 +115,10 @@ $router->get('/he/relatorios/{id}/pdf', [$hePortal, 'relatorioPdf']);
 $router->get('/he/relatorios/{id}/excel', [$hePortal, 'relatorioExcel']);
 $router->post('/he/relatorios/{id}/link-assinatura', [$raAssinatura, 'gerarLink']);
 $router->post('/he/relatorios/{id}/assinar', [$hePortal, 'relatorioAssinar']);
+$router->get('/he/folhas', [$hePortal, 'folhas']);
+$router->get('/he/folhas/{id}', [$hePortal, 'folhaShow']);
+$router->get('/he/folhas/{id}/pdf', [$hePortal, 'folhaPdf']);
+$router->post('/he/folhas/{id}/assinar', [$hePortal, 'folhaAssinar']);
 $router->get('/he/ordens', [$hePortal, 'ordensJson']);
 
 $public = ['/login', '/he/login'];
