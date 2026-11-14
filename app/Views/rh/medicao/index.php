@@ -191,6 +191,22 @@ $qtdAssinaturasTodos = $contagemStatusAssinaturas['enviado']
     + $contagemStatusAssinaturas['assinado']
     + $contagemStatusAssinaturas['outros'];
 
+$pendentesFiltro = [
+    'conferir' => 0,
+    'fechar' => 0,
+    'pdf' => 0,
+    'link' => 0,
+    'email' => 0,
+    'assinaturas' => 0,
+];
+foreach ($colaboradores as $cPend) {
+    foreach ($pendentesFiltro as $acaoPend => $_) {
+        if ($pendenteNaEtapa($cPend, $acaoPend)) {
+            $pendentesFiltro[$acaoPend]++;
+        }
+    }
+}
+
 $filtroPorEtapaKey = [
     'gerado' => '',
     'tratado' => 'conferir',
@@ -331,11 +347,15 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
                         $doneCount++;
                     }
                 }
-                $pendentesEtapa = $total - $doneCount;
+                $aindaNaoFez = $total - $doneCount;
+                $naFila = (int) ($pendentesFiltro[$filtroPorEtapaKey[$key] ?? ''] ?? 0);
+                // Para etapas com “fila” (já passaram da anterior): mostra quem está na etapa agora.
+                $pendentesEtapaLabel = $naFila > 0 ? $naFila : $aindaNaoFez;
+                $pendentesEtapaSuffix = $naFila > 0 ? 'na fila' : 'pendente' . ($aindaNaoFez === 1 ? '' : 's');
                 $etapaPct = $total > 0 ? (int) round(($doneCount / $total) * 100) : 0;
                 $filtroEtapa = $filtroPorEtapaKey[$key] ?? '';
                 $selecionada = ($filtroEtapa !== '' && $filtro === $filtroEtapa) || ($filtroEtapa === '' && $filtro === '');
-                $estado = $etapaPct >= 100 ? 'is-done' : ($etapaPct > 0 ? 'is-active' : 'is-todo');
+                $estado = $etapaPct >= 100 ? 'is-done' : (($etapaPct > 0 || $naFila > 0) ? 'is-active' : 'is-todo');
                 if ($selecionada && $filtroEtapa !== '') {
                     $estado .= ' is-selected';
                 }
@@ -349,7 +369,7 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
                         <strong><?= View::e((string) $etapa['label']) ?></strong>
                         <p><?= View::e((string) $etapa['hint']) ?></p>
                         <div class="progress <?= $etapaPct >= 100 ? 'is-success' : '' ?>"><span style="width:<?= $etapaPct ?>%"></span></div>
-                        <small><?= $doneCount ?>/<?= $total ?><?php if ($pendentesEtapa > 0): ?> · <?= $pendentesEtapa ?> pendente<?= $pendentesEtapa === 1 ? '' : 's' ?><?php endif; ?></small>
+                        <small><?= $doneCount ?>/<?= $total ?><?php if ($aindaNaoFez > 0): ?> · <?= $pendentesEtapaLabel ?> <?= $pendentesEtapaSuffix ?><?php endif; ?></small>
                     </div>
                     <?php if ($filtroEtapa !== ''): ?>
                         </a>
@@ -381,21 +401,6 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
 <?php
 $elegiveis = is_array($resumo['elegiveis'] ?? null) ? $resumo['elegiveis'] : [];
 $proximaAcao = $resumo['proxima_acao'] ?? null;
-$pendentesFiltro = [
-    'conferir' => 0,
-    'fechar' => 0,
-    'pdf' => 0,
-    'link' => 0,
-    'email' => 0,
-    'assinaturas' => 0,
-];
-foreach ($colaboradores as $c) {
-    foreach ($pendentesFiltro as $acao => $_) {
-        if ($pendenteNaEtapa($c, $acao)) {
-            $pendentesFiltro[$acao]++;
-        }
-    }
-}
 $loteBotoes = [
     [
         'acao' => 'conferir',
@@ -748,7 +753,12 @@ foreach ($loteBotoes as $b) {
                     <tr>
                         <th style="width:2.25rem;"><input type="checkbox" id="medicaoSelectAll" aria-label="Selecionar todos"></th>
                         <th>Colaborador</th>
-                        <th>Status do ponto</th>
+                        <?php if ($filtro === 'assinaturas'): ?>
+                            <th>Ponto</th>
+                            <th>RA</th>
+                        <?php else: ?>
+                            <th>Status do ponto</th>
+                        <?php endif; ?>
                         <th>Progresso</th>
                         <th>Próxima ação</th>
                         <th>Jornada</th>
@@ -762,6 +772,10 @@ foreach ($loteBotoes as $b) {
                         $pctC = (int) ($c['percentual'] ?? 0);
                         $etapas = $c['etapas'] ?? [];
                         $stEsp = (string) ($c['espelho_status'] ?? '');
+                        $folhaSt = (string) ($c['folha_status'] ?? '');
+                        $raDocSt = (string) ($c['ra_doc_status'] ?? '');
+                        $pontoAssinado = $stEsp === 'assinado' || $folhaSt === 'assinado';
+                        $raAssinado = $raDocSt === 'assinado';
                         $elegivelAtual = match ($filtro) {
                             'conferir' => empty($etapas['tratado']) && empty($c['he_pendente']),
                             'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']),
@@ -801,19 +815,32 @@ foreach ($loteBotoes as $b) {
                                 <strong><?= View::e((string) $c['nome']) ?></strong>
                                 <div class="muted text-sm"><?= View::e((string) $c['matricula']) ?></div>
                             </td>
-                            <td>
-                                <span class="badge <?= in_array($stEsp, ['fechado', 'enviado', 'assinado', 'conferido'], true) ? 'badge-aprovada' : 'badge-pendente' ?>">
-                                    <?= View::e($statusLabel($stEsp)) ?>
-                                </span>
-                                <?php if (!empty($c['he_pendente'])): ?>
-                                    <div class="muted text-sm">HE pendente</div>
-                                <?php endif; ?>
-                                <?php if ($filtro === 'email' && empty($etapas['email']) && ($c['email_ultimo_status'] ?? '') === 'falha'): ?>
-                                    <div class="medicao-email-fail" title="<?= View::e((string) ($c['email_ultimo_erro'] ?? 'Falha no envio')) ?>">
-                                        Falha no envio — permanece na etapa 6
-                                    </div>
-                                <?php endif; ?>
-                            </td>
+                            <?php if ($filtro === 'assinaturas'): ?>
+                                <td>
+                                    <span class="badge <?= $pontoAssinado ? 'badge-aprovada' : 'badge-pendente' ?>">
+                                        <?= $pontoAssinado ? 'Assinado' : View::e($statusLabel($stEsp)) ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge <?= $raAssinado ? 'badge-aprovada' : 'badge-pendente' ?>">
+                                        <?= $raAssinado ? 'Assinado' : 'Pendente' ?>
+                                    </span>
+                                </td>
+                            <?php else: ?>
+                                <td>
+                                    <span class="badge <?= in_array($stEsp, ['fechado', 'enviado', 'assinado', 'conferido'], true) ? 'badge-aprovada' : 'badge-pendente' ?>">
+                                        <?= View::e($statusLabel($stEsp)) ?>
+                                    </span>
+                                    <?php if (!empty($c['he_pendente'])): ?>
+                                        <div class="muted text-sm">HE pendente</div>
+                                    <?php endif; ?>
+                                    <?php if ($filtro === 'email' && empty($etapas['email']) && ($c['email_ultimo_status'] ?? '') === 'falha'): ?>
+                                        <div class="medicao-email-fail" title="<?= View::e((string) ($c['email_ultimo_erro'] ?? 'Falha no envio')) ?>">
+                                            Falha no envio — permanece na etapa 6
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
+                            <?php endif; ?>
                             <td style="min-width:9rem;">
                                 <div class="medicao-pct <?= $done ? 'is-done' : '' ?>"><?= $pctC ?>%</div>
                                 <div class="progress <?= $done ? 'is-success' : ($pctC >= 50 ? 'is-info' : 'is-warning') ?>">
@@ -823,6 +850,14 @@ foreach ($loteBotoes as $b) {
                             <td>
                                 <?php if ($done): ?>
                                     <span class="badge badge-aprovada">100% concluído</span>
+                                <?php elseif ($filtro === 'assinaturas'): ?>
+                                    <?php if ($pontoAssinado && !$raAssinado): ?>
+                                        Falta assinar RA
+                                    <?php elseif (!$pontoAssinado && $raAssinado): ?>
+                                        Falta assinar ponto
+                                    <?php else: ?>
+                                        Falta assinar ponto e RA
+                                    <?php endif; ?>
                                 <?php else: ?>
                                     <?= View::e($proximaEtapa($etapas)) ?>
                                 <?php endif; ?>

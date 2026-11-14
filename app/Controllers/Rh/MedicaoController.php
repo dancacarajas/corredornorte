@@ -69,7 +69,7 @@ final class MedicaoController
             'pageTitle' => 'Medição',
             'pageSubtitle' => 'Jornada do período até o dossiê assinado',
             'activeMenu' => 'medicao',
-            'extraCss' => ['css/medicao.css?v=status-assinaturas-20261114'],
+            'extraCss' => ['css/medicao.css?v=assinaturas-ponto-ra-20261114'],
             'dbOk' => $dbOk,
             'periodosGerados' => $periodos,
             'dataInicio' => $dataInicio,
