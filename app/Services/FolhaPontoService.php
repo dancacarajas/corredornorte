@@ -279,7 +279,7 @@ final class FolhaPontoService
         $mail = new MailService();
         $result = $mail->send(
             $to,
-            'Folha de Ponto (' . ($doc['competencia'] ?? '') . ') — ' . $doc['nome'],
+            $emailContent['subject'],
             $emailContent['text'],
             is_file($abs) ? $abs : null,
             $emailContent['html']
@@ -290,133 +290,26 @@ final class FolhaPontoService
     }
 
     /**
-     * Monta versão texto e HTML responsivo transacional (alto contraste) para envio da folha.
+     * Monta assunto + texto + HTML via template folha.envio_colaborador.
      *
      * @param array<string,mixed> $doc
-     * @return array{text:string,html:string}
+     * @return array{subject:string,text:string,html:string}
      */
     public static function montarEmailFolha(array $doc, ?string $portalUrl): array
     {
-        $nome = trim((string) ($doc['nome'] ?? 'Colaborador'));
-        $matricula = trim((string) ($doc['matricula'] ?? ''));
-        $competencia = trim((string) ($doc['competencia'] ?? ''));
         $ini = !empty($doc['data_inicio']) ? date('d/m/Y', strtotime((string) $doc['data_inicio'])) : '';
         $fim = !empty($doc['data_fim']) ? date('d/m/Y', strtotime((string) $doc['data_fim'])) : '';
+        $competencia = trim((string) ($doc['competencia'] ?? ''));
         $periodo = ($ini !== '' && $fim !== '') ? "{$ini} a {$fim}" : $competencia;
-        $codigo = trim((string) ($doc['codigo_verificacao'] ?? ''));
 
-        $textLines = [
-            "Olá, {$nome},",
-            '',
-            "Sua Folha de Ponto ({$periodo}) está pronta para conferência.",
-        ];
-        if ($codigo !== '') {
-            $textLines[] = "Código de verificação: {$codigo}";
-        }
-        if ($portalUrl !== null && $portalUrl !== '') {
-            $textLines[] = '';
-            $textLines[] = 'Para revisar os apontamentos e assinar eletronicamente, acesse:';
-            $textLines[] = $portalUrl;
-            $textLines[] = 'Caso identifique qualquer divergência, utilize o botão "Reportar divergência ao RH" dentro do portal antes de assinar.';
-        }
-        $textLines[] = '';
-        $textLines[] = 'Arcadis RH — Corredor Norte';
-        $text = implode("\n", $textLines);
-
-        $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $ctaHtml = '';
-        $fallbackLinkHtml = '';
-        if ($portalUrl !== null && $portalUrl !== '') {
-            $urlEsc = $e($portalUrl);
-            $ctaHtml = <<<HTML
-              <tr>
-                <td style="padding: 8px 0 20px;">
-                  <a href="{$urlEsc}" target="_blank" rel="noopener"
-                     style="display:inline-block;background-color:#EA580C;color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;font-weight:700;text-decoration:none;padding:14px 26px;border-radius:8px;">
-                    Conferir e Assinar Folha de Ponto
-                  </a>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:12px 14px;background-color:#FFF7ED;border-left:4px solid #EA580C;border-radius:6px;font-size:13px;line-height:1.5;color:#7C2D12;">
-                  <strong>Encontrou alguma divergência?</strong> Não assine com erro — abra o link acima e clique em <strong>Reportar divergência ao RH</strong> para correção antes da assinatura.
-                </td>
-              </tr>
-            HTML;
-            $fallbackLinkHtml = <<<HTML
-              <tr>
-                <td style="padding-top:16px;font-size:12px;line-height:1.5;color:#64748B;word-break:break-all;">
-                  Se o botão não abrir, copie e cole este endereço no navegador:<br>
-                  <a href="{$urlEsc}" style="color:#EA580C;text-decoration:underline;">{$urlEsc}</a>
-                </td>
-              </tr>
-            HTML;
-        }
-
-        $matriculaBadge = $matricula !== ''
-            ? '<div style="font-size:13px;color:#64748B;margin-top:2px;">Matrícula: ' . $e($matricula) . '</div>'
-            : '';
-        $codigoHtml = $codigo !== ''
-            ? '<td style="padding:10px 12px;border-top:1px solid #E2E8F0;font-size:13px;color:#0F172A;"><strong>Código:</strong> <span style="font-family:Consolas,monospace;font-weight:700;">' . $e($codigo) . '</span></td>'
-            : '';
-
-        $html = <<<HTML
-        <!DOCTYPE html>
-        <html lang="pt-BR">
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1.0">
-          <title>Folha de Ponto — Arcadis RH</title>
-        </head>
-        <body style="margin:0;padding:0;background-color:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0F172A;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F1F5F9;padding:24px 12px;">
-            <tr>
-              <td align="center">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background-color:#FFFFFF;border-radius:12px;border:1px solid #E2E8F0;overflow:hidden;">
-                  <tr>
-                    <td style="background-color:#0F172A;padding:20px 24px;border-bottom:4px solid #EA580C;">
-                      <div style="font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#FDBA74;">ARCADIS — CORREDOR NORTE</div>
-                      <div style="font-size:20px;font-weight:700;color:#FFFFFF;margin-top:4px;">Folha de Ponto para Conferência</div>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style="padding:24px;">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                        <tr>
-                          <td style="font-size:15px;line-height:1.6;color:#1E293B;padding-bottom:16px;">
-                            Olá, <strong>{$e($nome)}</strong>.{$matriculaBadge}
-                            <p style="margin:12px 0 0;">Sua folha de ponto referente ao período indicado abaixo está disponível. Confira os dias trabalhados, horas extras e ocorrências diretamente pelo celular ou computador e registre sua assinatura eletrônica.</p>
-                          </td>
-                        </tr>
-                        <tr>
-                          <td style="padding-bottom:20px;">
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
-                              <tr>
-                                <td style="padding:10px 12px;font-size:13px;color:#0F172A;"><strong>Período:</strong> {$e($periodo)}</td>
-                              </tr>
-                              <tr>{$codigoHtml}</tr>
-                            </table>
-                          </td>
-                        </tr>
-                        {$ctaHtml}
-                        {$fallbackLinkHtml}
-                      </table>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style="background-color:#F8FAFC;padding:14px 24px;border-top:1px solid #E2E8F0;font-size:12px;color:#64748B;">
-                      Arcadis RH — O PDF da folha também segue anexado para sua guarda. Em caso de dúvida, contate o RH pelo portal.
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </body>
-        </html>
-        HTML;
-
-        return ['text' => $text, 'html' => $html];
+        return EmailTemplateService::render('folha.envio_colaborador', [
+            'nome' => (string) ($doc['nome'] ?? 'Colaborador'),
+            'matricula' => (string) ($doc['matricula'] ?? ''),
+            'periodo' => $periodo,
+            'competencia' => $competencia,
+            'codigo' => (string) ($doc['codigo_verificacao'] ?? ''),
+            'portalUrl' => $portalUrl,
+        ]);
     }
 
     /**

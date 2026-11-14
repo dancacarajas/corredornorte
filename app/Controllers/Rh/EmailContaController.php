@@ -233,10 +233,17 @@ final class EmailContaController
 
         try {
             $svc = new EmailAccountService($pdo);
+            $ativa = $svc->contaAtiva();
+            $tpl = \App\Services\EmailTemplateService::render('sistema.email_teste', [
+                'destinatario' => $to,
+                'contaEmail' => (string) ($ativa['email'] ?? ''),
+            ]);
             $result = (new AccountMailSender($svc))->send(
                 $to,
-                'Arcadis RH — teste de conexão de e-mail',
-                "Este é um e-mail de teste do módulo Conta de e-mail do Arcadis RH.\n\nSe você recebeu, a conta está funcionando."
+                $tpl['subject'],
+                $tpl['text'],
+                null,
+                $tpl['html']
             );
             if ($result['ok']) {
                 header('Location: /rh/email?ok=' . rawurlencode('teste'));
