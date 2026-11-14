@@ -56,7 +56,7 @@ final class MedicaoController
             'pageTitle' => 'Medição',
             'pageSubtitle' => 'Jornada do período até o dossiê assinado',
             'activeMenu' => 'medicao',
-            'extraCss' => ['css/medicao.css?v=p1-20261114'],
+            'extraCss' => ['css/medicao.css?v=hero-20261114'],
             'dbOk' => $dbOk,
             'periodosGerados' => $periodos,
             'dataInicio' => $dataInicio,

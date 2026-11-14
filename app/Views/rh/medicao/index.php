@@ -18,9 +18,20 @@ $total = (int) ($resumo['total'] ?? 0);
 $concluidos = (int) ($resumo['concluidos'] ?? 0);
 $pct = (int) ($resumo['percentual'] ?? 0);
 $prontoDossie = !empty($resumo['pronto_dossie']);
+$proximaAcao = $resumo['proxima_acao'] ?? null;
+$elegiveis = is_array($resumo['elegiveis'] ?? null) ? $resumo['elegiveis'] : [];
 $filtro = (string) ($filtro ?? '');
 $qsBase = ['data_inicio' => $dataInicio, 'data_fim' => $dataFim];
 $qs = http_build_query($qsBase);
+$acaoHeroMap = [
+    'conferir' => ['label' => 'Conferir pontos', 'filtro' => 'conferir', 'verbo' => 'Conferir'],
+    'fechar' => ['label' => 'Fechar pontos', 'filtro' => 'fechar', 'verbo' => 'Fechar'],
+    'pdf' => ['label' => 'Gerar PDFs', 'filtro' => 'pdf', 'verbo' => 'Gerar PDFs'],
+    'link' => ['label' => 'Gerar links de assinatura', 'filtro' => 'link', 'verbo' => 'Gerar links'],
+    'email' => ['label' => 'Enviar e-mails', 'filtro' => 'email', 'verbo' => 'Enviar e-mails'],
+];
+$proximaHero = is_string($proximaAcao) ? ($acaoHeroMap[$proximaAcao] ?? null) : null;
+$proximaQtd = ($proximaHero !== null) ? (int) ($elegiveis[$proximaAcao] ?? 0) : 0;
 
 $pendenteNaEtapa = static function (array $c, string $filtro): bool {
     $et = $c['etapas'] ?? [];
@@ -122,14 +133,20 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
 
 <section class="medicao-hero card">
     <div class="card-body medicao-hero-grid">
-        <div>
-            <p class="medicao-kicker">Jornada de medição</p>
-            <h2 class="medicao-title">Acompanhe cada etapa até o dossiê</h2>
-            <p class="medicao-lead">Fluxo: gerar → conferir → fechar → PDF → link → e-mail → assinaturas → <strong>dossiê</strong>. O dossiê só libera com todos em 100%.</p>
+        <div class="medicao-hero-main">
+            <p class="medicao-kicker">Medição do período</p>
+            <h2 class="medicao-title">Do cartão ao dossiê, sem perder o fio</h2>
+            <p class="medicao-lead">
+                Você prepara o lote; o colaborador assina no portal.
+                O ZIP só libera quando <strong>todos</strong> tiverem ponto e RA concluídos.
+            </p>
+
             <form method="get" action="/rh/medicao" class="medicao-periodo-form">
-                <label class="form-label" for="periodoGerado">Período gerado</label>
+                <label class="form-label" for="periodoGerado">Período</label>
                 <div class="medicao-periodo-row">
-                    <select class="form-control" id="periodoGerado" name="periodo_pick" onchange="
+                    <select class="form-control" id="periodoGerado" name="periodo_pick"
+                            aria-describedby="periodoHint"
+                            onchange="
                         const o=this.options[this.selectedIndex];
                         if(!o||!o.value)return;
                         const [i,f]=o.value.split('|');
@@ -137,7 +154,7 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
                         this.form.data_fim.value=f;
                         this.form.submit();
                     ">
-                        <option value="">Selecione…</option>
+                        <option value="">Escolha o período…</option>
                         <?php foreach ($periodosGerados as $p): ?>
                             <?php
                             $val = $p['data_inicio'] . '|' . $p['data_fim'];
@@ -150,28 +167,60 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
                     </select>
                     <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
                     <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
-                    <button class="btn btn-secondary" type="submit">Atualizar</button>
                 </div>
+                <p class="form-hint" id="periodoHint">A lista abaixo muda ao trocar o período.</p>
             </form>
+
+            <?php if ($painel && $total > 0 && !$prontoDossie && $proximaHero !== null && $proximaQtd > 0): ?>
+                <div class="medicao-next">
+                    <div>
+                        <span class="medicao-next-label">Próximo passo</span>
+                        <strong><?= View::e((string) $proximaHero['label']) ?></strong>
+                        <span class="muted">· <?= $proximaQtd ?> colaborador<?= $proximaQtd === 1 ? '' : 'es' ?></span>
+                    </div>
+                    <a class="btn btn-primary" href="<?= View::e($urlFiltro((string) $proximaHero['filtro'])) ?>">
+                        <?= View::e((string) $proximaHero['verbo']) ?>
+                    </a>
+                </div>
+            <?php elseif ($painel && $prontoDossie): ?>
+                <div class="medicao-next is-ready">
+                    <div>
+                        <span class="medicao-next-label">Pronto</span>
+                        <strong>Todos concluíram — dossiê liberado</strong>
+                    </div>
+                    <a class="btn btn-primary" href="/rh/medicao/dossie?<?= View::e($qs) ?>">Baixar ZIP</a>
+                </div>
+            <?php endif; ?>
         </div>
 
-        <div class="medicao-score <?= $prontoDossie ? 'is-complete' : '' ?>" aria-label="Progresso geral">
+        <aside class="medicao-score <?= $prontoDossie ? 'is-complete' : '' ?>" aria-label="Progresso do período">
             <div class="medicao-score-ring" style="--pct: <?= max(0, min(100, $pct)) ?>">
                 <strong><?= $pct ?>%</strong>
-                <span>do período</span>
+                <span>médio</span>
             </div>
             <div class="medicao-score-meta">
-                <p><strong><?= $concluidos ?></strong> de <strong><?= $total ?></strong> concluídos</p>
+                <p class="medicao-score-ready">
+                    <strong><?= $concluidos ?></strong>
+                    <span>de <?= $total ?> prontos para o dossiê</span>
+                </p>
                 <?php if ($periodoLabel !== ''): ?>
-                    <p class="muted"><?= View::e($periodoLabel) ?></p>
+                    <p class="medicao-score-period"><?= View::e($periodoLabel) ?></p>
                 <?php endif; ?>
+                <p class="medicao-score-hint">
+                    <?= $prontoDossie
+                        ? 'Pacote completo para download.'
+                        : 'O % médio sobe a cada etapa; o dossiê exige 100% por pessoa.' ?>
+                </p>
                 <?php if ($prontoDossie): ?>
                     <a class="btn btn-primary" href="/rh/medicao/dossie?<?= View::e($qs) ?>">Baixar dossiê (ZIP)</a>
                 <?php else: ?>
-                    <button class="btn btn-secondary" type="button" disabled title="Disponível quando todos estiverem 100%">Baixar dossiê (ZIP)</button>
+                    <button class="btn btn-secondary" type="button" disabled
+                            title="Disponível quando todos estiverem 100%">
+                        Dossiê bloqueado
+                    </button>
                 <?php endif; ?>
             </div>
-        </div>
+        </aside>
     </div>
 </section>
 

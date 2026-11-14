@@ -1,25 +1,31 @@
 .medicao-hero {
   overflow: hidden;
+  border: 1px solid var(--border, #e5eaf0);
   background:
-    radial-gradient(1100px 280px at 8% -15%, rgba(224, 96, 8, 0.14), transparent 60%),
-    radial-gradient(880px 240px at 92% 0%, rgba(17, 24, 39, 0.06), transparent 55%),
-    var(--surface, #fff);
+    linear-gradient(135deg, rgba(224, 96, 8, 0.08) 0%, transparent 42%),
+    linear-gradient(180deg, #fff 0%, #f8fafc 100%);
 }
 
 .medicao-hero-grid {
   display: grid;
-  gap: 1.5rem;
-  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.9fr);
-  align-items: center;
+  gap: 1.35rem;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr);
+  align-items: stretch;
+}
+
+.medicao-hero-main {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
 }
 
 .medicao-lead strong {
-  color: inherit;
+  color: var(--ink, #111827);
 }
 
 .medicao-kicker {
-  margin: 0 0 0.35rem;
-  font-size: 0.75rem;
+  margin: 0;
+  font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -27,21 +33,33 @@
 }
 
 .medicao-title {
-  margin: 0 0 0.4rem;
+  margin: 0;
   font-family: "Plus Jakarta Sans", Manrope, sans-serif;
-  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-size: clamp(1.4rem, 2.1vw, 1.85rem);
   font-weight: 800;
-  line-height: 1.2;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
 }
 
 .medicao-lead {
-  margin: 0 0 1.1rem;
+  margin: 0;
   color: var(--ink-subtle, #596270);
-  max-width: 42rem;
+  max-width: 38rem;
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.medicao-periodo-form {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 36rem;
 }
 
 .medicao-periodo-form .form-label {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--ink-subtle, #596270);
 }
 
 .medicao-periodo-row {
@@ -54,16 +72,59 @@
 .medicao-periodo-row .form-control {
   min-width: min(100%, 22rem);
   flex: 1;
+  min-height: 44px;
+}
+
+.medicao-periodo-form .form-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-subtle, #64748B);
+}
+
+.medicao-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid #FDBA74;
+  background: #FFF7ED;
+}
+
+.medicao-next.is-ready {
+  border-color: #A7F3D0;
+  background: #ECFDF3;
+}
+
+.medicao-next-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9A3412;
+  margin-bottom: 0.15rem;
+}
+
+.medicao-next.is-ready .medicao-next-label {
+  color: #047857;
+}
+
+.medicao-next strong {
+  font-size: 0.98rem;
 }
 
 .medicao-score {
   display: flex;
   gap: 1rem;
   align-items: center;
-  padding: 1rem;
+  padding: 1.1rem 1.15rem;
   border: 1px solid var(--border, #e5eaf0);
-  border-radius: var(--radius-lg, 14px);
-  background: rgba(255, 255, 255, 0.85);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 .medicao-score.is-complete {
@@ -73,8 +134,8 @@
 
 .medicao-score-ring {
   --pct: 0;
-  width: 92px;
-  height: 92px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -91,22 +152,55 @@
 }
 
 .medicao-score-ring strong {
-  font-size: 1.2rem;
+  font-family: "Plus Jakarta Sans", Manrope, sans-serif;
+  font-size: 1.25rem;
   line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .medicao-score-ring span {
   font-size: 0.68rem;
+  font-weight: 650;
   color: var(--ink-subtle, #596270);
 }
 
 .medicao-score-meta {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
 .medicao-score-meta p {
   margin: 0;
+}
+
+.medicao-score-ready {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.medicao-score-ready strong {
+  font-family: "Plus Jakarta Sans", Manrope, sans-serif;
+  font-size: 1.55rem;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.medicao-score-ready span {
+  font-size: 0.88rem;
+  color: var(--ink-subtle, #596270);
+}
+
+.medicao-score-period {
+  font-size: 0.84rem;
+  font-weight: 650;
+  color: #334155;
+}
+
+.medicao-score-hint {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--ink-subtle, #64748B);
 }
 
 .medicao-journey {
@@ -337,5 +431,14 @@
 
   .medicao-score {
     justify-content: flex-start;
+  }
+
+  .medicao-next {
+    align-items: stretch;
+  }
+
+  .medicao-next .btn {
+    width: 100%;
+    justify-content: center;
   }
 }
