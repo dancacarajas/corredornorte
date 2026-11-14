@@ -281,9 +281,15 @@ $provedorLabel = static function (string $p): string {
                             <?php endif; ?>
                         </div>
                     </div>
-                    <a class="btn btn-secondary btn-sm" href="/rh/email?tpl=<?= rawurlencode((string) $tpl['chave']) ?>#templates">
-                        Editar conteúdo
-                    </a>
+                    <div class="email-tpl-actions">
+                        <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                           href="/rh/email/template/preview?chave=<?= rawurlencode((string) $tpl['chave']) ?>">
+                            Visualizar
+                        </a>
+                        <a class="btn btn-secondary btn-sm" href="/rh/email?tpl=<?= rawurlencode((string) $tpl['chave']) ?>#templates">
+                            Editar conteúdo
+                        </a>
+                    </div>
                 </div>
             <?php endforeach; ?>
         <?php endif; ?>
@@ -298,7 +304,13 @@ $provedorLabel = static function (string $p): string {
                             echo View::e(implode(' ', $vars));
                         ?></div>
                     </div>
-                    <a class="btn btn-ghost btn-sm" href="/rh/email#templates">Fechar</a>
+                    <div class="email-tpl-actions">
+                        <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                           href="/rh/email/template/preview?chave=<?= rawurlencode((string) $templateEdit['chave']) ?>">
+                            Visualizar
+                        </a>
+                        <a class="btn btn-ghost btn-sm" href="/rh/email#templates">Fechar</a>
+                    </div>
                 </div>
                 <form method="post" action="/rh/email/template" class="form-grid" style="gap:.7rem;">
                     <input type="hidden" name="chave" value="<?= View::e((string) $templateEdit['chave']) ?>">

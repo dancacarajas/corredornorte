@@ -142,6 +142,13 @@
   background: var(--brand-primary-soft, #FFF1E6);
 }
 
+.email-tpl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
 .email-tpl-editor {
   margin-top: 0.35rem;
   padding: 1rem;

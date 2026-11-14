@@ -57,7 +57,7 @@ final class EmailContaController
             'pageTitle' => 'Conta de e-mail',
             'pageSubtitle' => 'Conecte com e-mail e senha — sem Client ID',
             'activeMenu' => 'email',
-            'extraCss' => ['css/email.css?v=tpl-enboarder-20261114'],
+            'extraCss' => ['css/email.css?v=tpl-preview-20261114'],
             'dbOk' => $dbOk,
             'contas' => $contas,
             'gmail' => $gmail,
@@ -267,6 +267,28 @@ final class EmailContaController
             }
         } catch (Throwable $e) {
             header('Location: /rh/email?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
+    public function previewTemplate(): void
+    {
+        Auth::requirePermission('email.gerenciar');
+        $pdo = Db::tryConnection();
+        $chave = trim((string) ($_GET['chave'] ?? ''));
+        try {
+            $tpl = EmailTemplateService::render(
+                $chave,
+                EmailTemplateService::sampleVars($chave),
+                $pdo instanceof PDO ? $pdo : null
+            );
+            header('Content-Type: text/html; charset=UTF-8');
+            header('X-Robots-Tag: noindex');
+            echo $tpl['html'];
+        } catch (Throwable $e) {
+            http_response_code(400);
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo 'Não foi possível visualizar: ' . $e->getMessage();
         }
         exit;
     }

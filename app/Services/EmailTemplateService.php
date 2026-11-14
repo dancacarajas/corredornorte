@@ -177,6 +177,32 @@ HTML,
     }
 
     /**
+     * Variáveis de exemplo para pré-visualização no navegador.
+     *
+     * @return array<string,mixed>
+     */
+    public static function sampleVars(string $key): array
+    {
+        $key = self::normalizeKey($key);
+
+        return match ($key) {
+            'folha.envio_colaborador' => [
+                'nome' => 'Jarbas',
+                'matricula' => '12345',
+                'periodo' => '16/10/2026 a 15/11/2026',
+                'competencia' => '2026-11',
+                'codigo' => 'ABC-123',
+                'portalUrl' => '#preview-assinatura',
+            ],
+            'sistema.email_teste' => [
+                'destinatario' => 'seu@email.com',
+                'contaEmail' => 'rh@empresa.com',
+            ],
+            default => [],
+        };
+    }
+
+    /**
      * @param array<string,mixed> $vars
      * @return array{subject:string,text:string,html:string}
      */
