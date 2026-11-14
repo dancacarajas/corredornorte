@@ -477,7 +477,7 @@ foreach ($loteBotoes as $b) {
 </section>
 
 <section class="card" id="lista-colaboradores">
-    <div class="card-header">
+    <div class="card-header medicao-colab-header">
         <div>
             <h2 class="card-title">Colaboradores</h2>
             <p class="card-subtitle">
@@ -500,6 +500,14 @@ foreach ($loteBotoes as $b) {
                 <?php endif; ?>
             </p>
         </div>
+        <?php if ($colaboradoresFiltrados !== [] && !($modoDossie && $prontoDossie)): ?>
+            <div class="medicao-colab-search">
+                <label class="visually-hidden" for="medicaoBuscaNome">Buscar colaborador</label>
+                <input type="search" class="form-control" id="medicaoBuscaNome"
+                       placeholder="Buscar por nome ou matrícula…"
+                       autocomplete="off">
+            </div>
+        <?php endif; ?>
     </div>
     <div class="card-body">
         <?php if ($colaboradores === []): ?>
@@ -526,8 +534,9 @@ foreach ($loteBotoes as $b) {
                         <?php
                         $portalUrl = (string) ($c['portal_url'] ?? '');
                         $portalPath = !empty($c['portal_token']) ? '/assinar/' . rawurlencode((string) $c['portal_token']) : $portalUrl;
+                        $buscaKey = mb_strtolower(trim((string) ($c['nome'] ?? '') . ' ' . (string) ($c['matricula'] ?? '')), 'UTF-8');
                         ?>
-                        <tr>
+                        <tr class="medicao-colab-row" data-search="<?= View::e($buscaKey) ?>">
                             <td>
                                 <strong><?= View::e((string) $c['nome']) ?></strong>
                                 <div class="muted text-sm"><?= View::e((string) $c['matricula']) ?></div>
@@ -569,6 +578,7 @@ foreach ($loteBotoes as $b) {
               });
             })();
             </script>
+            <p class="muted medicao-colab-empty" id="medicaoBuscaVazioLinks" hidden>Nenhum colaborador encontrado com esse nome.</p>
         <?php else: ?>
             <div class="table-wrap">
                 <table class="table medicao-table">
@@ -598,8 +608,9 @@ foreach ($loteBotoes as $b) {
                             'email' => !empty($etapas['link']) && empty($etapas['email']),
                             default => !$done,
                         };
+                        $buscaKey = mb_strtolower(trim((string) ($c['nome'] ?? '') . ' ' . (string) ($c['matricula'] ?? '')), 'UTF-8');
                         ?>
-                        <tr class="<?= $done ? 'medicao-row-done' : '' ?>">
+                        <tr class="medicao-colab-row <?= $done ? 'medicao-row-done' : '' ?>" data-search="<?= View::e($buscaKey) ?>">
                             <td>
                                 <input type="checkbox"
                                        class="medicao-check"
@@ -655,15 +666,42 @@ foreach ($loteBotoes as $b) {
                     </tbody>
                 </table>
             </div>
+            <p class="muted medicao-colab-empty" id="medicaoBuscaVazio" hidden>Nenhum colaborador encontrado com esse nome.</p>
         <?php endif; ?>
     </div>
 </section>
 <script>
 (() => {
   const boot = () => {
+    const busca = document.getElementById('medicaoBuscaNome');
+    const rows = () => Array.from(document.querySelectorAll('#lista-colaboradores .medicao-colab-row'));
+    const emptyMsg = document.getElementById('medicaoBuscaVazio')
+      || document.getElementById('medicaoBuscaVazioLinks');
+    const norm = (s) => String(s || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+    if (busca) {
+      const applyBusca = () => {
+        const q = norm(busca.value);
+        let visible = 0;
+        rows().forEach((tr) => {
+          const hay = norm(tr.getAttribute('data-search') || tr.textContent || '');
+          const show = q === '' || hay.includes(q);
+          tr.hidden = !show;
+          if (show) visible += 1;
+        });
+        if (emptyMsg) emptyMsg.hidden = !(q !== '' && visible === 0);
+      };
+      busca.addEventListener('input', applyBusca);
+      busca.addEventListener('search', applyBusca);
+    }
+
     const form = document.getElementById('medicaoBatchForm');
     const selectAll = document.getElementById('medicaoSelectAll');
-    const checks = () => Array.from(document.querySelectorAll('.medicao-check:not(:disabled)'));
+    const checks = () => Array.from(document.querySelectorAll('.medicao-check:not(:disabled)'))
+      .filter((c) => !c.closest('tr')?.hidden);
     const countBadge = document.getElementById('medicaoBatchCount');
     const submitBtn = document.getElementById('medicaoBatchSubmit');
     const progCard = document.getElementById('medicaoBatchProgress');

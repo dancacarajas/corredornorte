@@ -320,6 +320,35 @@
   color: var(--ink-subtle, #596270);
 }
 
+.medicao-colab-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.medicao-colab-search {
+  min-width: min(100%, 260px);
+  flex: 0 1 280px;
+}
+
+.medicao-colab-empty {
+  margin: 0.75rem 0 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .medicao-lote-actions {
   display: flex;
   flex-wrap: wrap;
