@@ -50,6 +50,16 @@ final class Csrf
             return;
         }
 
+        $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+        $isHe = str_starts_with($path, '/he');
+
+        // Sessão HE ausente/expirada: manter bloqueio CSRF, mas orientar ao login do portal.
+        if ($isHe && !HePortalAuth::check()) {
+            $_SESSION['he_error'] = 'Sua sessão expirou. Entre novamente para continuar com segurança.';
+            header('Location: /he/login');
+            exit;
+        }
+
         http_response_code(403);
         $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
         $xhr = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? ''));
@@ -59,11 +69,13 @@ final class Csrf
             exit;
         }
 
+        $voltar = $isHe ? '/he/relatorios' : '/';
         View::render('ui/forbidden', [
             'pageTitle' => 'Sessão inválida',
             'pageSubtitle' => 'Atualize a página e tente novamente',
             'activeMenu' => '',
-            'permissao' => 'Token de segurança (CSRF) inválido ou expirado.',
+            'permissao' => 'Token de segurança (CSRF) inválido ou expirado. Recarregue a tela e envie de novo.',
+            'voltarUrl' => $voltar,
         ], null);
         exit;
     }

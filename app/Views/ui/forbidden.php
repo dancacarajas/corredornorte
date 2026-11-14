@@ -15,6 +15,6 @@ use App\Helpers\View;
         <div class="alert alert-danger">
             Permissão necessária: <code><?= View::e($permissao ?? '') ?></code>
         </div>
-        <a class="btn btn-secondary" href="/">Voltar ao início</a>
+        <a class="btn btn-secondary" href="<?= View::e($voltarUrl ?? '/') ?>">Voltar ao início</a>
     </div>
 </section>

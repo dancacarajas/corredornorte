@@ -24,9 +24,9 @@ $currentUser = [
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=ui-confirm-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=portal-20261114d">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=csrf-he-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=csrf-he-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=csrf-he-20261114">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
     <?php endforeach; ?>
@@ -52,7 +52,7 @@ $currentUser = [
         </main>
     </div>
 </div>
-<script src="<?= View::asset('js/app.js') ?>?v=ui-confirm-20261114"></script>
+<script src="<?= View::asset('js/app.js') ?>?v=csrf-he-20261114"></script>
 <?php foreach (($extraJs ?? []) as $jsFile): ?>
     <script src="<?= View::asset($jsFile) ?>" defer></script>
 <?php endforeach; ?>

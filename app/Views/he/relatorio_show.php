@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\Csrf;
 use App\Helpers\View;
 
 /** @var array{relatorio:array,dias:list,contadores:array} $dados */
@@ -209,6 +210,7 @@ $primeiroPendenteAberto = false;
             </div>
             <div class="ra-sign-box">
                 <form method="post" action="/he/relatorios/<?= (int) $rel['id'] ?>/assinar" class="ra-embed-sign" id="raEmbedSignForm">
+                    <?= Csrf::field() ?>
                     <div>
                         <strong style="font-size:1.05rem;">Assinar Relatório de Atividades agora</strong>
                         <p class="text-sm muted" style="margin:.25rem 0 0;">Você não precisa sair desta tela: sua assinatura gera e sela o PDF instantaneamente.</p>
@@ -237,6 +239,7 @@ $primeiroPendenteAberto = false;
                     <div style="margin-top:.75rem;">
                         <?php if (!$temLink): ?>
                             <form method="post" action="/he/relatorios/<?= (int) $rel['id'] ?>/link-assinatura" class="ra-sign-generate">
+                                <?= Csrf::field() ?>
                                 <button class="btn btn-secondary btn-sm" type="submit">Gerar link público de assinatura</button>
                             </form>
                         <?php else: ?>
@@ -267,6 +270,7 @@ $primeiroPendenteAberto = false;
         <?php endif; ?>
 
         <form method="post" action="/he/relatorios/<?= (int) $rel['id'] ?>" id="raForm" class="ra-form">
+            <?= Csrf::field() ?>
             <details class="ra-meta" <?= $modo === 'preencher' ? 'open' : '' ?>>
                 <summary>Dados do cabeçalho e contrato</summary>
                 <div class="form-grid cols-2 ra-meta-grid">
