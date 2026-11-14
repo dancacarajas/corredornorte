@@ -262,6 +262,8 @@ $router->get('/rh/email/oauth/{provedor}/callback', [$emailConta, 'callback']);
 $router->post('/rh/email/desconectar', [$emailConta, 'desconectar']);
 $router->post('/rh/email/ativar', [$emailConta, 'ativar']);
 $router->post('/rh/email/testar', [$emailConta, 'testar']);
+$router->post('/rh/email/template', [$emailConta, 'salvarTemplate']);
+$router->post('/rh/email/template/reset', [$emailConta, 'resetTemplate']);
 
 $router->get('/rh/usuarios', [$usuarios, 'index']);
 $router->get('/rh/usuarios/novo', [$usuarios, 'createForm']);

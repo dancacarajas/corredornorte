@@ -275,7 +275,7 @@ final class FolhaPontoService
             $portalUrl = $base . '/assinar/' . $doc['portal_token'];
         }
 
-        $emailContent = self::montarEmailFolha($doc, $portalUrl);
+        $emailContent = self::montarEmailFolha($doc, $portalUrl, $this->db);
         $mail = new MailService();
         $result = $mail->send(
             $to,
@@ -295,7 +295,7 @@ final class FolhaPontoService
      * @param array<string,mixed> $doc
      * @return array{subject:string,text:string,html:string}
      */
-    public static function montarEmailFolha(array $doc, ?string $portalUrl): array
+    public static function montarEmailFolha(array $doc, ?string $portalUrl, ?\PDO $pdo = null): array
     {
         $ini = !empty($doc['data_inicio']) ? date('d/m/Y', strtotime((string) $doc['data_inicio'])) : '';
         $fim = !empty($doc['data_fim']) ? date('d/m/Y', strtotime((string) $doc['data_fim'])) : '';
@@ -309,7 +309,7 @@ final class FolhaPontoService
             'competencia' => $competencia,
             'codigo' => (string) ($doc['codigo_verificacao'] ?? ''),
             'portalUrl' => $portalUrl,
-        ]);
+        ], $pdo);
     }
 
     /**

@@ -121,8 +121,57 @@
   gap: 0.75rem;
 }
 
+.email-tpl-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.email-tpl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.email-tpl-row.is-open {
+  border-color: rgba(224, 96, 8, 0.45);
+  background: var(--brand-primary-soft, #FFF1E6);
+}
+
+.email-tpl-editor {
+  margin-top: 0.35rem;
+  padding: 1rem;
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: 12px;
+  background: var(--surface-2, #f6f7f8);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.email-tpl-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.email-tpl-code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 @media (max-width: 720px) {
   .email-smtp-extra.is-open {
     grid-template-columns: 1fr;
+  }
+
+  .email-tpl-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

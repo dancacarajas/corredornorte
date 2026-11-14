@@ -8,8 +8,13 @@ use App\Helpers\View;
 /** @var ?array<string,mixed> $microsoft */
 /** @var ?array<string,mixed> $smtpGmail */
 /** @var ?array<string,mixed> $smtpMicrosoft */
+/** @var list<array<string,mixed>> $templates */
+/** @var ?array<string,mixed> $templateEdit */
 /** @var ?string $flashOk */
 /** @var ?string $flashErro */
+
+$templates = $templates ?? [];
+$templateEdit = $templateEdit ?? null;
 
 $msgs = [
     'conectado' => 'Conta conectada com sucesso.',
@@ -19,6 +24,8 @@ $msgs = [
     'teste' => 'E-mail de teste enviado.',
     'config_gmail' => 'Credenciais do Gmail salvas. OAuth liberado.',
     'config_microsoft' => 'Credenciais da Microsoft salvas. OAuth liberado.',
+    'template_salvo' => 'Template de e-mail salvo.',
+    'template_reset' => 'Template restaurado para o padrão.',
 ];
 
 $oauthCards = [
@@ -248,6 +255,93 @@ $provedorLabel = static function (string $p): string {
             </form>
         </div>
     <?php endif; ?>
+</section>
+
+<section class="card" id="templates">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Templates de e-mail</h2>
+            <p class="card-subtitle">Edite o conteúdo que o sistema envia em cada gatilho</p>
+        </div>
+    </div>
+    <div class="card-body email-tpl-list">
+        <?php if ($templates === []): ?>
+            <p class="muted">Nenhum template disponível.</p>
+        <?php else: ?>
+            <?php foreach ($templates as $tpl): ?>
+                <div class="email-tpl-row <?= ($templateEdit['chave'] ?? '') === ($tpl['chave'] ?? '') ? 'is-open' : '' ?>">
+                    <div>
+                        <div class="fw-700"><?= View::e((string) $tpl['label']) ?></div>
+                        <div class="text-xs muted"><?= View::e((string) $tpl['trigger']) ?></div>
+                        <div class="text-xs muted" style="margin-top:.2rem;">
+                            <code><?= View::e((string) $tpl['chave']) ?></code>
+                            · <?= !empty($tpl['customizado']) ? 'personalizado' : 'padrão do sistema' ?>
+                            <?php if (!empty($tpl['atualizado_em'])): ?>
+                                · <?= View::e((string) $tpl['atualizado_em']) ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <a class="btn btn-secondary btn-sm" href="/rh/email?tpl=<?= rawurlencode((string) $tpl['chave']) ?>#templates">
+                        Editar conteúdo
+                    </a>
+                </div>
+            <?php endforeach; ?>
+        <?php endif; ?>
+
+        <?php if (is_array($templateEdit)): ?>
+            <div class="email-tpl-editor">
+                <div class="email-tpl-editor-head">
+                    <div>
+                        <div class="fw-700">Editando: <?= View::e((string) $templateEdit['label']) ?></div>
+                        <div class="text-xs muted">Variáveis: <?php
+                            $vars = array_map(static fn ($v) => '{{' . $v . '}}', $templateEdit['vars'] ?? []);
+                            echo View::e(implode(' ', $vars));
+                        ?></div>
+                    </div>
+                    <a class="btn btn-ghost btn-sm" href="/rh/email#templates">Fechar</a>
+                </div>
+                <form method="post" action="/rh/email/template" class="form-grid" style="gap:.7rem;">
+                    <input type="hidden" name="chave" value="<?= View::e((string) $templateEdit['chave']) ?>">
+                    <div class="form-field">
+                        <label class="form-label" for="tpl_assunto">Assunto</label>
+                        <input class="form-control" id="tpl_assunto" name="assunto" required
+                               value="<?= View::e((string) $templateEdit['assunto']) ?>" <?= !$dbOk ? 'disabled' : '' ?>>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="tpl_titulo">Título no e-mail</label>
+                        <input class="form-control" id="tpl_titulo" name="titulo" required
+                               value="<?= View::e((string) $templateEdit['titulo']) ?>" <?= !$dbOk ? 'disabled' : '' ?>>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="tpl_texto">Versão texto (clientes sem HTML)</label>
+                        <textarea class="form-control" id="tpl_texto" name="texto" rows="7" required <?= !$dbOk ? 'disabled' : '' ?>><?= View::e((string) $templateEdit['texto']) ?></textarea>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="tpl_html">Corpo HTML</label>
+                        <textarea class="form-control email-tpl-code" id="tpl_html" name="corpo_html" rows="14" required <?= !$dbOk ? 'disabled' : '' ?>><?= View::e((string) $templateEdit['corpo_html']) ?></textarea>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="tpl_rodape">Rodapé</label>
+                        <input class="form-control" id="tpl_rodape" name="rodape"
+                               value="<?= View::e((string) $templateEdit['rodape']) ?>" <?= !$dbOk ? 'disabled' : '' ?>>
+                    </div>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                        <button class="btn btn-primary" type="submit" <?= !$dbOk ? 'disabled' : '' ?>>Salvar template</button>
+                    </div>
+                </form>
+                <?php if (!empty($templateEdit['customizado'])): ?>
+                    <form method="post" action="/rh/email/template/reset" style="margin-top:.75rem;"
+                          data-confirm-title="Restaurar padrão?"
+                          data-confirm="As alterações deste template serão descartadas."
+                          data-confirm-ok="Restaurar"
+                          data-confirm-tone="warning">
+                        <input type="hidden" name="chave" value="<?= View::e((string) $templateEdit['chave']) ?>">
+                        <button class="btn btn-ghost btn-sm" type="submit" <?= !$dbOk ? 'disabled' : '' ?>>Restaurar padrão do sistema</button>
+                    </form>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+    </div>
 </section>
 
 <details class="email-advanced" id="oauth-avancado">

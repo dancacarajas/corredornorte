@@ -400,6 +400,20 @@ final class Installer
         } catch (\Throwable) {
             // já migrado
         }
+
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS email_templates (
+                chave VARCHAR(80) NOT NULL,
+                assunto VARCHAR(255) NOT NULL,
+                titulo VARCHAR(160) NOT NULL,
+                texto MEDIUMTEXT NOT NULL,
+                corpo_html MEDIUMTEXT NOT NULL,
+                rodape TEXT NULL,
+                atualizado_por INT UNSIGNED NULL,
+                atualizado_em DATETIME NULL,
+                PRIMARY KEY (chave)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
     }
 
     private function migrateUsuariosPerfis(PDO $pdo): void

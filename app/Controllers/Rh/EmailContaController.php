@@ -9,6 +9,7 @@ use App\Helpers\Db;
 use App\Helpers\View;
 use App\Services\EmailOAuth\AccountMailSender;
 use App\Services\EmailOAuth\EmailAccountService;
+use App\Services\EmailTemplateService;
 use PDO;
 use Throwable;
 
@@ -23,9 +24,11 @@ final class EmailContaController
         $microsoft = null;
         $smtpGmail = null;
         $smtpMicrosoft = null;
+        $templates = [];
         $dbOk = $pdo instanceof PDO;
         $erro = $_GET['erro'] ?? null;
         $ok = $_GET['ok'] ?? null;
+        $editKey = trim((string) ($_GET['tpl'] ?? ''));
 
         if ($dbOk) {
             try {
@@ -35,6 +38,16 @@ final class EmailContaController
                 $microsoft = $svc->providerConfig('microsoft');
                 $smtpGmail = $svc->smtpPreset('gmail');
                 $smtpMicrosoft = $svc->smtpPreset('microsoft');
+                $templates = EmailTemplateService::listForUi($pdo);
+            } catch (Throwable $e) {
+                $erro = $e->getMessage();
+            }
+        }
+
+        $templateEdit = null;
+        if ($editKey !== '' && $dbOk) {
+            try {
+                $templateEdit = EmailTemplateService::loadForEdit($pdo, $editKey);
             } catch (Throwable $e) {
                 $erro = $e->getMessage();
             }
@@ -44,13 +57,15 @@ final class EmailContaController
             'pageTitle' => 'Conta de e-mail',
             'pageSubtitle' => 'Conecte com e-mail e senha — sem Client ID',
             'activeMenu' => 'email',
-            'extraCss' => ['css/email.css?v=smtp-simple-20261114'],
+            'extraCss' => ['css/email.css?v=tpl-edit-20261114'],
             'dbOk' => $dbOk,
             'contas' => $contas,
             'gmail' => $gmail,
             'microsoft' => $microsoft,
             'smtpGmail' => $smtpGmail,
             'smtpMicrosoft' => $smtpMicrosoft,
+            'templates' => $templates,
+            'templateEdit' => $templateEdit,
             'flashOk' => $ok,
             'flashErro' => $erro,
         ]);
@@ -234,10 +249,10 @@ final class EmailContaController
         try {
             $svc = new EmailAccountService($pdo);
             $ativa = $svc->contaAtiva();
-            $tpl = \App\Services\EmailTemplateService::render('sistema.email_teste', [
+            $tpl = EmailTemplateService::render('sistema.email_teste', [
                 'destinatario' => $to,
                 'contaEmail' => (string) ($ativa['email'] ?? ''),
-            ]);
+            ], $pdo);
             $result = (new AccountMailSender($svc))->send(
                 $to,
                 $tpl['subject'],
@@ -252,6 +267,48 @@ final class EmailContaController
             }
         } catch (Throwable $e) {
             header('Location: /rh/email?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
+    public function salvarTemplate(): void
+    {
+        Auth::requirePermission('email.gerenciar');
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            header('Location: /rh/email?erro=' . rawurlencode('MySQL indisponível'));
+            exit;
+        }
+        $chave = (string) ($_POST['chave'] ?? '');
+        try {
+            EmailTemplateService::save($pdo, $chave, [
+                'assunto' => (string) ($_POST['assunto'] ?? ''),
+                'titulo' => (string) ($_POST['titulo'] ?? ''),
+                'texto' => (string) ($_POST['texto'] ?? ''),
+                'corpo_html' => (string) ($_POST['corpo_html'] ?? ''),
+                'rodape' => (string) ($_POST['rodape'] ?? ''),
+            ], Auth::id());
+            header('Location: /rh/email?ok=template_salvo&tpl=' . rawurlencode($chave) . '#templates');
+        } catch (Throwable $e) {
+            header('Location: /rh/email?erro=' . rawurlencode($e->getMessage()) . '&tpl=' . rawurlencode($chave) . '#templates');
+        }
+        exit;
+    }
+
+    public function resetTemplate(): void
+    {
+        Auth::requirePermission('email.gerenciar');
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            header('Location: /rh/email?erro=' . rawurlencode('MySQL indisponível'));
+            exit;
+        }
+        $chave = (string) ($_POST['chave'] ?? '');
+        try {
+            EmailTemplateService::reset($pdo, $chave);
+            header('Location: /rh/email?ok=template_reset&tpl=' . rawurlencode($chave) . '#templates');
+        } catch (Throwable $e) {
+            header('Location: /rh/email?erro=' . rawurlencode($e->getMessage()) . '#templates');
         }
         exit;
     }
