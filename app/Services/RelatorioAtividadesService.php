@@ -457,24 +457,45 @@ final class RelatorioAtividadesService
      */
     public function idsAssinadosDoColaborador(int $colaboradorId): array
     {
+        $mapa = [];
+        foreach ($this->assinaturasDoColaborador($colaboradorId) as $relatorioId => $_meta) {
+            $mapa[(int) $relatorioId] = true;
+        }
+        return $mapa;
+    }
+
+    /**
+     * Assinaturas de RA do colaborador: relatorio_id => meta.
+     *
+     * @return array<int,array{assinatura_em:?string}>
+     */
+    public function assinaturasDoColaborador(int $colaboradorId): array
+    {
         if ($colaboradorId <= 0 || !$this->hasColumn('ra_documentos', 'relatorio_id')) {
             return [];
         }
         try {
             $st = $this->db->prepare(
-                "SELECT d.relatorio_id
+                "SELECT d.relatorio_id, d.assinatura_em
                  FROM ra_documentos d
                  INNER JOIN ra_relatorios r ON r.id = d.relatorio_id
                  WHERE r.colaborador_id = :c
-                   AND d.status = 'assinado'"
+                   AND d.status = 'assinado'
+                 ORDER BY d.assinatura_em DESC, d.id DESC"
             );
             $st->execute(['c' => $colaboradorId]);
         } catch (Throwable) {
             return [];
         }
         $out = [];
-        foreach ($st->fetchAll(PDO::FETCH_COLUMN) ?: [] as $relatorioId) {
-            $out[(int) $relatorioId] = true;
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $rid = (int) ($row['relatorio_id'] ?? 0);
+            if ($rid <= 0 || isset($out[$rid])) {
+                continue;
+            }
+            $out[$rid] = [
+                'assinatura_em' => $row['assinatura_em'] !== null ? (string) $row['assinatura_em'] : null,
+            ];
         }
         return $out;
     }

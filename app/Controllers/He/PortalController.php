@@ -105,31 +105,46 @@ final class PortalController
             $folhas = [];
         }
 
-        $raAssinados = [];
+        $raAssinaturas = [];
         try {
-            $raAssinados = $ra->idsAssinadosDoColaborador($id);
+            $raAssinaturas = $ra->assinaturasDoColaborador($id);
         } catch (Throwable) {
-            $raAssinados = [];
+            $raAssinaturas = [];
         }
 
         $tarefas = [];
+        $concluidas = [];
         foreach ($folhas as $folha) {
-            if ((string) ($folha['status'] ?? '') !== 'enviado') {
-                continue;
-            }
             $ini = (string) ($folha['data_inicio'] ?? '');
             $fim = (string) ($folha['data_fim'] ?? '');
-            $tarefas[] = [
-                'tipo' => 'folha',
-                'prioridade' => 1,
-                'titulo' => 'Assinar folha de ponto',
-                'descricao' => 'Liberada pela medição — confira o PDF e assine eletronicamente.',
-                'periodo' => $this->rotuloPeriodo($ini, $fim),
-                'periodo_inicio' => $ini,
-                'cta' => 'Assinar agora',
-                'href' => '/he/folhas/' . (int) $folha['id'],
-                'tom' => 'urgente',
-            ];
+            $periodo = $this->rotuloPeriodo($ini, $fim);
+            $statusFolha = (string) ($folha['status'] ?? '');
+            if ($statusFolha === 'enviado') {
+                $tarefas[] = [
+                    'tipo' => 'folha',
+                    'prioridade' => 1,
+                    'titulo' => 'Assinar folha de ponto',
+                    'descricao' => 'Liberada pela medição — confira o PDF e assine eletronicamente.',
+                    'periodo' => $periodo,
+                    'periodo_inicio' => $ini,
+                    'cta' => 'Assinar agora',
+                    'href' => '/he/folhas/' . (int) $folha['id'],
+                    'tom' => 'urgente',
+                ];
+                continue;
+            }
+            if ($statusFolha === 'assinado') {
+                $quando = (string) ($folha['assinatura_em'] ?? '');
+                $concluidas[] = [
+                    'tipo' => 'folha',
+                    'titulo' => 'Folha de ponto assinada',
+                    'periodo' => $periodo,
+                    'quando' => $quando,
+                    'quando_ts' => $quando !== '' ? (strtotime($quando) ?: 0) : 0,
+                    'cta' => 'Ver PDF',
+                    'href' => '/he/folhas/' . (int) $folha['id'],
+                ];
+            }
         }
         foreach ($relatorios as $rel) {
             $status = (string) ($rel['status'] ?? 'rascunho');
@@ -151,7 +166,20 @@ final class PortalController
                 ];
                 continue;
             }
-            if (in_array($status, ['enviado', 'aprovado'], true) && !isset($raAssinados[$relId])) {
+            if (isset($raAssinaturas[$relId])) {
+                $quando = (string) ($raAssinaturas[$relId]['assinatura_em'] ?? '');
+                $concluidas[] = [
+                    'tipo' => 'ra',
+                    'titulo' => 'Relatório de atividades assinado',
+                    'periodo' => $periodo,
+                    'quando' => $quando,
+                    'quando_ts' => $quando !== '' ? (strtotime($quando) ?: 0) : 0,
+                    'cta' => 'Abrir',
+                    'href' => '/he/relatorios/' . $relId,
+                ];
+                continue;
+            }
+            if (in_array($status, ['enviado', 'aprovado'], true)) {
                 $tarefas[] = [
                     'tipo' => 'ra_assinar',
                     'prioridade' => 1,
@@ -173,15 +201,23 @@ final class PortalController
             }
             return strcmp((string) ($b['periodo_inicio'] ?? ''), (string) ($a['periodo_inicio'] ?? ''));
         });
+        usort($concluidas, static function (array $a, array $b): int {
+            return ((int) ($b['quando_ts'] ?? 0)) <=> ((int) ($a['quando_ts'] ?? 0));
+        });
 
         $primeiroNome = trim(explode(' ', (string) ($user['nome'] ?? ''), 2)[0] ?: 'olá');
+        $qtdPend = count($tarefas);
+        $qtdOk = count($concluidas);
 
         View::render('he/overview', [
             'pageTitle' => 'Olá, ' . $primeiroNome,
-            'pageSubtitle' => $tarefas === [] ? 'Tudo em dia por enquanto' : 'Sua fila de pendências',
+            'pageSubtitle' => $qtdPend > 0
+                ? ($qtdPend === 1 ? '1 pendência na fila' : $qtdPend . ' pendências na fila')
+                : ($qtdOk > 0 ? 'Tudo em dia — veja o histórico abaixo' : 'Portal do colaborador'),
             'activeMenu' => 'overview',
             'user' => $user,
             'tarefas' => $tarefas,
+            'concluidas' => $concluidas,
             'flash' => $_SESSION['he_flash'] ?? null,
             'error' => $_SESSION['he_error'] ?? null,
         ], 'layouts/portal');
