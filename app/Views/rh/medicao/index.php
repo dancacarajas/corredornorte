@@ -663,9 +663,14 @@ foreach ($loteBotoes as $b) {
                                     $msgZap = $filtro === 'assinaturas'
                                         ? WhatsApp::mensagemLembreteFolha($nomeZap, $periodoZap, $portalZap)
                                         : WhatsApp::mensagemEnvioFolha($nomeZap, $periodoZap, $portalZap);
-                                    $waUrl = ($portalZap !== '')
-                                        ? WhatsApp::chatUrl(is_string($telZap) ? $telZap : null, $msgZap)
+                                    $waPayload = ($portalZap !== '')
+                                        ? WhatsApp::chatPayload(is_string($telZap) ? $telZap : null, $msgZap)
                                         : null;
+                                    $waUrl = is_array($waPayload) ? (string) $waPayload['url'] : null;
+                                    $waPhone = is_array($waPayload) ? (string) $waPayload['phone'] : '';
+                                    $waMsgB64 = is_array($waPayload)
+                                        ? base64_encode((string) $waPayload['message'])
+                                        : '';
                                     $waTitle = $waUrl !== null
                                         ? 'Abrir WhatsApp'
                                         : ($portalZap === ''
@@ -673,10 +678,12 @@ foreach ($loteBotoes as $b) {
                                             : 'Sem WhatsApp cadastrado');
                                     ?>
                                     <?php if ($waUrl !== null): ?>
-                                        <a class="medicao-wa-btn"
+                                        <a class="medicao-wa-btn js-medicao-wa"
                                            href="<?= View::e($waUrl) ?>"
                                            target="_blank"
                                            rel="noopener noreferrer"
+                                           data-wa-phone="<?= View::e($waPhone) ?>"
+                                           data-wa-msg="<?= View::e($waMsgB64) ?>"
                                            title="<?= View::e($waTitle) ?>"
                                            aria-label="<?= View::e($waTitle . ' — ' . $nomeZap) ?>">
                                             <svg class="medicao-wa-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -738,6 +745,28 @@ foreach ($loteBotoes as $b) {
       busca.addEventListener('input', applyBusca);
       busca.addEventListener('search', applyBusca);
     }
+
+    const b64ToUtf8 = (b64) => {
+      try {
+        const bin = atob(String(b64 || ''));
+        const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+      } catch (err) {
+        return '';
+      }
+    };
+    document.querySelectorAll('.js-medicao-wa').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        const phone = btn.getAttribute('data-wa-phone') || '';
+        const msg = b64ToUtf8(btn.getAttribute('data-wa-msg') || '');
+        if (!phone || !msg) return;
+        ev.preventDefault();
+        const url = 'https://api.whatsapp.com/send?phone='
+          + encodeURIComponent(phone)
+          + '&text=' + encodeURIComponent(msg);
+        window.open(url, '_blank', 'noopener,noreferrer');
+      });
+    });
 
     const form = document.getElementById('medicaoBatchForm');
     const selectAll = document.getElementById('medicaoSelectAll');

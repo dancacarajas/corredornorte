@@ -53,7 +53,7 @@ $pdfUrl = '/assinar/' . rawurlencode($token) . '/pdf';
 $verificarUrl = $documento !== null ? '/verificar/' . rawurlencode((string) ($documento['codigo_verificacao'] ?? '')) : '';
 $ogBase = AppUrl::base();
 $ogUrl = $ogBase . '/assinar/' . rawurlencode($token);
-$ogImage = $ogBase . '/assets/img/logo-arcadis-og.png?v=20261114';
+$ogImage = $ogBase . '/assets/img/logo-arcadis-og.jpg?v=20261114b';
 $ogTitle = 'Assinar Folha de Ponto — Arcadis RH';
 $ogDesc = $periodoTexto !== ''
     ? ('Folha de Ponto (' . $periodoTexto . ') pronta para conferência e assinatura eletrônica.')
@@ -72,9 +72,13 @@ $ogDesc = $periodoTexto !== ''
     <meta property="og:description" content="<?= View::e($ogDesc) ?>">
     <meta property="og:url" content="<?= View::e($ogUrl) ?>">
     <meta property="og:image" content="<?= View::e($ogImage) ?>">
+    <meta property="og:image:secure_url" content="<?= View::e($ogImage) ?>">
+    <meta property="og:image:type" content="image/jpeg">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Arcadis RH — Corredor Norte">
     <meta property="og:locale" content="pt_BR">
+    <link rel="image_src" href="<?= View::e($ogImage) ?>">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="<?= View::e($ogTitle) ?>">
     <meta name="twitter:description" content="<?= View::e($ogDesc) ?>">

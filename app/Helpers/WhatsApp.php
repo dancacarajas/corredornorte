@@ -4,10 +4,20 @@ declare(strict_types=1);
 
 namespace App\Helpers;
 
+/**
+ * Links e mensagens WhatsApp (wa.me / api.whatsapp.com).
+ * Emojis via escapes \u{} para o arquivo-fonte ficar ASCII-safe.
+ */
 final class WhatsApp
 {
+    /** @return non-empty-string */
+    private static function e(string $codepoint): string
+    {
+        return html_entity_decode('&#x' . $codepoint . ';', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
     /**
-     * Normaliza telefone BR para dígitos com DDI 55 (wa.me).
+     * Normaliza telefone BR para dígitos com DDI 55.
      */
     public static function normalizeBrPhone(?string $telefone): ?string
     {
@@ -20,12 +30,10 @@ final class WhatsApp
             return $digits;
         }
 
-        // DDD + número (10 ou 11 dígitos)
         if (strlen($digits) === 10 || strlen($digits) === 11) {
             return '55' . $digits;
         }
 
-        // Já veio com 55 incompleto ou formato inesperado
         if (strlen($digits) >= 12) {
             return $digits;
         }
@@ -34,7 +42,15 @@ final class WhatsApp
     }
 
     /**
-     * Monta URL wa.me com texto pré-preenchido.
+     * URL absoluta da imagem de marca (prévia do WhatsApp).
+     */
+    public static function logoUrl(?string $rootPath = null): string
+    {
+        return rtrim(AppUrl::base($rootPath), '/') . '/assets/img/logo-arcadis-og.jpg?v=20261114b';
+    }
+
+    /**
+     * Monta URL api.whatsapp.com com texto pré-preenchido.
      */
     public static function chatUrl(?string $telefone, string $mensagem): ?string
     {
@@ -44,60 +60,91 @@ final class WhatsApp
         }
 
         $text = trim($mensagem);
-        $qs = $text !== '' ? ('?text=' . rawurlencode($text)) : '';
+        $qs = 'phone=' . rawurlencode($phone);
+        if ($text !== '') {
+            $qs .= '&text=' . rawurlencode($text);
+        }
 
-        return 'https://wa.me/' . $phone . $qs;
+        return 'https://api.whatsapp.com/send?' . $qs;
     }
 
     /**
-     * Mensagem de 1º envio (etapa 6) — formatação WhatsApp (*negrito*).
+     * Payload para abertura via JS (evita corrupção de emoji no atributo href).
+     *
+     * @return array{phone:string,message:string,url:string}|null
      */
+    public static function chatPayload(?string $telefone, string $mensagem): ?array
+    {
+        $phone = self::normalizeBrPhone($telefone);
+        if ($phone === null) {
+            return null;
+        }
+
+        $message = trim($mensagem);
+        $url = self::chatUrl($phone, $message);
+        if ($url === null) {
+            return null;
+        }
+
+        return [
+            'phone' => $phone,
+            'message' => $message,
+            'url' => $url,
+        ];
+    }
+
     public static function mensagemEnvioFolha(string $nome, string $periodo, string $portalUrl): string
     {
-        $nome = trim($nome) !== '' ? trim($nome) : 'colaborador(a)';
-        $periodo = trim($periodo) !== '' ? trim($periodo) : 'período atual';
-        $portalUrl = trim($portalUrl);
-
-        return implode("\n", [
-            '🏢 *Arcadis RH — Corredor Norte*',
-            '',
-            "Olá, *{$nome}*! 👋",
-            '',
-            '📝 *Folha de Ponto pronta*',
-            "📅 Período: *{$periodo}*",
-            '',
-            'Sua folha está disponível para conferência e assinatura eletrônica.',
-            '',
-            '👉 Toque no link abaixo para acessar:',
-            $portalUrl,
-            '',
-            '_Arcadis RH · Corredor Norte_',
-        ]);
+        return self::mensagem('envio', $nome, $periodo, $portalUrl);
     }
 
-    /**
-     * Mensagem de lembrete (etapa 7).
-     */
     public static function mensagemLembreteFolha(string $nome, string $periodo, string $portalUrl): string
+    {
+        return self::mensagem('lembrete', $nome, $periodo, $portalUrl);
+    }
+
+    private static function mensagem(string $tipo, string $nome, string $periodo, string $portalUrl): string
     {
         $nome = trim($nome) !== '' ? trim($nome) : 'colaborador(a)';
         $periodo = trim($periodo) !== '' ? trim($periodo) : 'período atual';
         $portalUrl = trim($portalUrl);
+        $logo = self::logoUrl();
 
+        $building = self::e('1F3E2');
+        $wave = self::e('1F44B');
+        $memo = self::e('1F4DD');
+        $alarm = self::e('23F0');
+        $calendar = self::e('1F4C5');
+        $point = self::e('1F449');
+
+        $titulo = $tipo === 'lembrete'
+            ? "{$alarm} *Lembrete — assinatura pendente*"
+            : "{$memo} *Folha de Ponto pronta*";
+        $corpo = $tipo === 'lembrete'
+            ? 'Sua Folha de Ponto ainda aguarda sua assinatura eletrônica.'
+            : 'Sua folha está disponível para conferência e assinatura eletrônica.';
+        $cta = $tipo === 'lembrete'
+            ? "{$point} Toque no link abaixo para concluir:"
+            : "{$point} Toque no link abaixo para acessar:";
+
+        // 1ª URL = logo (card visual obrigatório no WhatsApp)
+        // 2ª URL = portal de assinatura
         return implode("\n", [
-            '🏢 *Arcadis RH — Corredor Norte*',
+            $logo,
             '',
-            "Olá, *{$nome}*! 👋",
+            "{$building} *Arcadis RH — Corredor Norte*",
             '',
-            '⏰ *Lembrete — assinatura pendente*',
-            "📅 Período: *{$periodo}*",
+            "Olá, *{$nome}*! {$wave}",
             '',
-            'Sua Folha de Ponto ainda aguarda sua assinatura eletrônica.',
+            $titulo,
+            "{$calendar} Período: *{$periodo}*",
             '',
-            '👉 Toque no link abaixo para concluir:',
+            $corpo,
+            '',
+            $cta,
             $portalUrl,
             '',
-            '_Arcadis RH · Corredor Norte_',
+            '_Arcadis RH — Corredor Norte_',
         ]);
     }
 }
