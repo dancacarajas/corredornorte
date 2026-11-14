@@ -48,4 +48,56 @@ final class WhatsApp
 
         return 'https://wa.me/' . $phone . $qs;
     }
+
+    /**
+     * Mensagem de 1º envio (etapa 6) — formatação WhatsApp (*negrito*).
+     */
+    public static function mensagemEnvioFolha(string $nome, string $periodo, string $portalUrl): string
+    {
+        $nome = trim($nome) !== '' ? trim($nome) : 'colaborador(a)';
+        $periodo = trim($periodo) !== '' ? trim($periodo) : 'período atual';
+        $portalUrl = trim($portalUrl);
+
+        return implode("\n", [
+            '🏢 *Arcadis RH — Corredor Norte*',
+            '',
+            "Olá, *{$nome}*! 👋",
+            '',
+            '📝 *Folha de Ponto pronta*',
+            "📅 Período: *{$periodo}*",
+            '',
+            'Sua folha está disponível para conferência e assinatura eletrônica.',
+            '',
+            '👉 Toque no link abaixo para acessar:',
+            $portalUrl,
+            '',
+            '_Arcadis RH · Corredor Norte_',
+        ]);
+    }
+
+    /**
+     * Mensagem de lembrete (etapa 7).
+     */
+    public static function mensagemLembreteFolha(string $nome, string $periodo, string $portalUrl): string
+    {
+        $nome = trim($nome) !== '' ? trim($nome) : 'colaborador(a)';
+        $periodo = trim($periodo) !== '' ? trim($periodo) : 'período atual';
+        $portalUrl = trim($portalUrl);
+
+        return implode("\n", [
+            '🏢 *Arcadis RH — Corredor Norte*',
+            '',
+            "Olá, *{$nome}*! 👋",
+            '',
+            '⏰ *Lembrete — assinatura pendente*',
+            "📅 Período: *{$periodo}*",
+            '',
+            'Sua Folha de Ponto ainda aguarda sua assinatura eletrônica.',
+            '',
+            '👉 Toque no link abaixo para concluir:',
+            $portalUrl,
+            '',
+            '_Arcadis RH · Corredor Norte_',
+        ]);
+    }
 }

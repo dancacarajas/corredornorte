@@ -661,8 +661,8 @@ foreach ($loteBotoes as $b) {
                                     $nomeZap = (string) ($c['nome'] ?? '');
                                     $periodoZap = $periodoLabel !== '' ? $periodoLabel : 'período atual';
                                     $msgZap = $filtro === 'assinaturas'
-                                        ? "Oi {$nomeZap}, lembrete: sua Folha de Ponto ({$periodoZap}) ainda aguarda sua assinatura. Acesse: {$portalZap}"
-                                        : "Oi {$nomeZap}, sua Folha de Ponto ({$periodoZap}) está pronta para conferência e assinatura. Acesse: {$portalZap}";
+                                        ? WhatsApp::mensagemLembreteFolha($nomeZap, $periodoZap, $portalZap)
+                                        : WhatsApp::mensagemEnvioFolha($nomeZap, $periodoZap, $portalZap);
                                     $waUrl = ($portalZap !== '')
                                         ? WhatsApp::chatUrl(is_string($telZap) ? $telZap : null, $msgZap)
                                         : null;

@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\AppUrl;
 use App\Helpers\View;
 
 /** @var array<string,mixed>|null $documento */
@@ -50,13 +51,34 @@ $assinada = $documento !== null && (($documento['status'] ?? '') === 'assinado')
 $disponivel = $documento !== null && (($documento['status'] ?? '') === 'enviado') && !$modeloAnterior && !$emDivergencia;
 $pdfUrl = '/assinar/' . rawurlencode($token) . '/pdf';
 $verificarUrl = $documento !== null ? '/verificar/' . rawurlencode((string) ($documento['codigo_verificacao'] ?? '')) : '';
+$ogBase = AppUrl::base();
+$ogUrl = $ogBase . '/assinar/' . rawurlencode($token);
+$ogImage = $ogBase . '/assets/img/logo-arcadis-og.png?v=20261114';
+$ogTitle = 'Assinar Folha de Ponto — Arcadis RH';
+$ogDesc = $periodoTexto !== ''
+    ? ('Folha de Ponto (' . $periodoTexto . ') pronta para conferência e assinatura eletrônica.')
+    : 'Folha de Ponto Arcadis — conferência e assinatura eletrônica.';
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Assinar Folha de Ponto — Arcadis RH</title>
+    <title><?= View::e($ogTitle) ?></title>
+    <meta name="description" content="<?= View::e($ogDesc) ?>">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Arcadis RH — Corredor Norte">
+    <meta property="og:title" content="<?= View::e($ogTitle) ?>">
+    <meta property="og:description" content="<?= View::e($ogDesc) ?>">
+    <meta property="og:url" content="<?= View::e($ogUrl) ?>">
+    <meta property="og:image" content="<?= View::e($ogImage) ?>">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:locale" content="pt_BR">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="<?= View::e($ogTitle) ?>">
+    <meta name="twitter:description" content="<?= View::e($ogDesc) ?>">
+    <meta name="twitter:image" content="<?= View::e($ogImage) ?>">
     <link rel="stylesheet" href="/assets/css/tokens.css">
     <link rel="stylesheet" href="/assets/css/components.css">
     <style>
