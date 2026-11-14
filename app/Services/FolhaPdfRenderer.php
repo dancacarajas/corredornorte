@@ -28,9 +28,9 @@ final class FolhaPdfRenderer
 
         $pdf = new FPDF('P', 'mm', 'Letter');
         $pdf->SetAutoPageBreak(false);
-        $pdf->SetTitle('Cartão de Ponto | Arcadis RH');
-        $pdf->SetAuthor('Arcadis RH');
-        $pdf->SetSubject('Arcadis RH | folha de ponto retrato v' . self::LAYOUT_VERSION);
+        $pdf->SetTitle('Cartão de Ponto | Arcadis RH', true);
+        $pdf->SetAuthor('Arcadis RH', true);
+        $pdf->SetSubject('Arcadis RH | folha de ponto retrato v' . self::LAYOUT_VERSION, true);
 
         $dias = $payload['dias'] ?? [];
         if (!is_array($dias) || $dias === []) {

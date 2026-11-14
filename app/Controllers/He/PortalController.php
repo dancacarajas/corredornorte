@@ -6,6 +6,7 @@ namespace App\Controllers\He;
 
 use App\Config\Database;
 use App\Helpers\HePortalAuth;
+use App\Helpers\PdfInline;
 use App\Helpers\View;
 use App\Services\AssinaturaEletronicaService;
 use App\Services\HeAutorizacaoService;
@@ -569,10 +570,11 @@ final class PortalController
             echo 'Não foi possível abrir o PDF da folha.';
             return;
         }
-        header('Content-Type: application/pdf');
-        header('Content-Disposition: inline; filename="folha_ponto_' . (int) $id . '.pdf"');
-        header('Cache-Control: private, no-store');
-        readfile($arquivo);
+        PdfInline::stream(
+            $arquivo,
+            $assinado ? 'Cartão de Ponto assinado | Arcadis RH' : 'Cartão de Ponto | Arcadis RH',
+            ($assinado ? 'cartao_ponto_assinado_' : 'folha_ponto_') . (int) $id . '.pdf'
+        );
     }
 
     public function folhaAssinar(string $id = '0'): void

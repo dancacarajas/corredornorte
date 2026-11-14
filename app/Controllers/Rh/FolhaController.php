@@ -447,12 +447,15 @@ final class FolhaController
             echo 'Integridade do PDF comprometida';
             return;
         }
-        $name = (($doc['status'] ?? '') === 'assinado')
+        $assinado = (($doc['status'] ?? '') === 'assinado');
+        $name = $assinado
             ? 'cartao_ponto_assinado_' . (int) $doc['id'] . '.pdf'
             : 'folha_' . (int) $doc['id'] . '.pdf';
-        header('Content-Type: application/pdf');
-        header('Content-Disposition: inline; filename="' . $name . '"');
-        readfile($path);
+        \App\Helpers\PdfInline::stream(
+            $path,
+            $assinado ? 'Cartão de Ponto assinado | Arcadis RH' : 'Cartão de Ponto | Arcadis RH',
+            $name
+        );
         exit;
     }
 
