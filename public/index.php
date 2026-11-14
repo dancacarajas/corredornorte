@@ -37,11 +37,8 @@ if (function_exists('mb_internal_encoding')) {
 
 // PHP 8.4+/8.5: depreciações de libs (FPDI/QRCode) não podem ir para o browser —
 // quebram redirect/PDF com "headers already sent".
-$errorLevel = E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED;
-if (defined('E_STRICT')) {
-    $errorLevel &= ~E_STRICT;
-}
-error_reporting($errorLevel);
+// Não referenciar E_STRICT: a constante em si é deprecated desde 8.4.
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
 $debug = (($config['env'] ?? '') === 'local') && !empty($config['debug']);
 ini_set('display_errors', $debug ? '1' : '0');
 ini_set('log_errors', '1');

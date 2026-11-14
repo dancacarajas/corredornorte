@@ -137,9 +137,13 @@
   width: 96px;
   height: 96px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
   flex-shrink: 0;
+  text-align: center;
   background:
     radial-gradient(circle at center, #fff 58%, transparent 59%),
     conic-gradient(var(--brand-primary, #E06008) calc(var(--pct) * 1%), #e8eef4 0);
@@ -152,6 +156,7 @@
 }
 
 .medicao-score-ring strong {
+  display: block;
   font-family: "Plus Jakarta Sans", Manrope, sans-serif;
   font-size: 1.25rem;
   line-height: 1;
@@ -159,8 +164,10 @@
 }
 
 .medicao-score-ring span {
+  display: block;
   font-size: 0.68rem;
   font-weight: 650;
+  line-height: 1;
   color: var(--ink-subtle, #596270);
 }
 
