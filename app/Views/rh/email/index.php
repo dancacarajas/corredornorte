@@ -268,29 +268,39 @@ $provedorLabel = static function (string $p): string {
         <?php if ($templates === []): ?>
             <p class="muted">Nenhum template disponível.</p>
         <?php else: ?>
-            <?php foreach ($templates as $tpl): ?>
-                <div class="email-tpl-row <?= ($templateEdit['chave'] ?? '') === ($tpl['chave'] ?? '') ? 'is-open' : '' ?>">
-                    <div>
-                        <div class="fw-700"><?= View::e((string) $tpl['label']) ?></div>
-                        <div class="text-xs muted"><?= View::e((string) $tpl['trigger']) ?></div>
-                        <div class="text-xs muted" style="margin-top:.2rem;">
-                            <code><?= View::e((string) $tpl['chave']) ?></code>
-                            · <?= !empty($tpl['customizado']) ? 'personalizado' : 'padrão do sistema' ?>
-                            <?php if (!empty($tpl['atualizado_em'])): ?>
-                                · <?= View::e((string) $tpl['atualizado_em']) ?>
-                            <?php endif; ?>
+            <?php
+            $groups = [];
+            foreach ($templates as $tpl) {
+                $g = (string) ($tpl['group'] ?? 'Outros');
+                $groups[$g][] = $tpl;
+            }
+            ?>
+            <?php foreach ($groups as $groupName => $items): ?>
+                <h3 class="email-tpl-group"><?= View::e($groupName) ?></h3>
+                <?php foreach ($items as $tpl): ?>
+                    <div class="email-tpl-row <?= ($templateEdit['chave'] ?? '') === ($tpl['chave'] ?? '') ? 'is-open' : '' ?>">
+                        <div>
+                            <div class="fw-700"><?= View::e((string) $tpl['label']) ?></div>
+                            <div class="text-xs muted"><?= View::e((string) $tpl['trigger']) ?></div>
+                            <div class="text-xs muted" style="margin-top:.2rem;">
+                                <code><?= View::e((string) $tpl['chave']) ?></code>
+                                · <?= !empty($tpl['customizado']) ? 'personalizado' : 'padrão do sistema' ?>
+                                <?php if (!empty($tpl['atualizado_em'])): ?>
+                                    · <?= View::e((string) $tpl['atualizado_em']) ?>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="email-tpl-actions">
+                            <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
+                               href="/rh/email/template/preview?chave=<?= rawurlencode((string) $tpl['chave']) ?>">
+                                Visualizar
+                            </a>
+                            <a class="btn btn-secondary btn-sm" href="/rh/email?tpl=<?= rawurlencode((string) $tpl['chave']) ?>#templates">
+                                Editar conteúdo
+                            </a>
                         </div>
                     </div>
-                    <div class="email-tpl-actions">
-                        <a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"
-                           href="/rh/email/template/preview?chave=<?= rawurlencode((string) $tpl['chave']) ?>">
-                            Visualizar
-                        </a>
-                        <a class="btn btn-secondary btn-sm" href="/rh/email?tpl=<?= rawurlencode((string) $tpl['chave']) ?>#templates">
-                            Editar conteúdo
-                        </a>
-                    </div>
-                </div>
+                <?php endforeach; ?>
             <?php endforeach; ?>
         <?php endif; ?>
 

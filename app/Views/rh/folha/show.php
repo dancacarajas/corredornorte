@@ -42,7 +42,11 @@ $fmtMin = static function (int $min): string {
 };
 ?>
 
-<?php if (!empty($flash) && $flash !== 'link_assinatura'): ?><div class="alert alert-success">Operação concluída.</div><?php endif; ?>
+<?php if (!empty($flash) && $flash !== 'link_assinatura'): ?>
+    <div class="alert alert-success">
+        <?= $flash === 'lembrete' ? 'Lembrete de assinatura enviado.' : ($flash === 'email' ? 'E-mail da folha enviado.' : 'Operação concluída.') ?>
+    </div>
+<?php endif; ?>
 <?php if (!empty($error)): ?><div class="alert alert-danger"><?= View::e((string) $error) ?></div><?php endif; ?>
 <?php if (!empty($portalUrl)): ?>
     <div class="alert alert-success">
@@ -134,6 +138,12 @@ $fmtMin = static function (int $min): string {
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
                 <button class="btn btn-secondary" type="submit">Enviar PDF por e-mail</button>
             </form>
+            <?php if (($docAtivo['status'] ?? '') === 'enviado' && !empty($docAtivo['portal_token'])): ?>
+            <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/lembrar?<?= View::e($periodoQuery) ?>">
+                <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
+                <button class="btn btn-secondary" type="submit">Enviar lembrete</button>
+            </form>
+            <?php endif; ?>
             <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/link-assinatura?<?= View::e($periodoQuery) ?>">
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
                 <button class="btn btn-secondary" type="submit">Gerar link de assinatura</button>
@@ -198,6 +208,12 @@ $fmtMin = static function (int $min): string {
                             <form method="post" action="/rh/folha/<?= (int) $doc['espelho_id'] ?>/link-assinatura?<?= View::e($periodoQuery) ?>">
                                 <input type="hidden" name="documento_id" value="<?= (int) $doc['id'] ?>">
                                 <button class="btn btn-secondary btn-sm" type="submit"><?= $modeloAtual ? 'Gerar link assinatura' : 'Atualizar e gerar link' ?></button>
+                            </form>
+                            <?php endif; ?>
+                            <?php if ($doc['status'] === 'enviado' && !empty($doc['portal_token'])): ?>
+                            <form method="post" action="/rh/folha/<?= (int) $doc['espelho_id'] ?>/lembrar?<?= View::e($periodoQuery) ?>">
+                                <input type="hidden" name="documento_id" value="<?= (int) $doc['id'] ?>">
+                                <button class="btn btn-ghost btn-sm" type="submit">Lembrete</button>
                             </form>
                             <?php endif; ?>
                             <?php if (($doc['status'] === 'assinado' || ($pendente && $modeloAtual)) && !empty($doc['portal_token'])): ?>

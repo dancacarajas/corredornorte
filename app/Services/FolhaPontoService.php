@@ -235,7 +235,8 @@ final class FolhaPontoService
     {
         $documentoId = $this->atualizarModeloPendente($documentoId, null, $espelhoId);
         $stmt = $this->db->prepare(
-            'SELECT d.*, c.email_corp, c.nome, c.matricula, e.id AS espelho_id, p.competencia, p.data_inicio, p.data_fim
+            'SELECT d.*, c.email_corp, c.nome, c.matricula, e.id AS espelho_id,
+                    DATE_FORMAT(p.data_inicio, \'%Y-%m\') AS competencia, p.data_inicio, p.data_fim
              FROM documentos d
              INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
              INNER JOIN ponto_periodos p ON p.id = e.periodo_id
@@ -275,7 +276,10 @@ final class FolhaPontoService
             $portalUrl = $base . '/assinar/' . $doc['portal_token'];
         }
 
-        $emailContent = self::montarEmailFolha($doc, $portalUrl, $this->db);
+        $tplKey = $tentativa > 1 ? 'folha.reenvio_colaborador' : 'folha.envio_colaborador';
+        $emailContent = self::montarEmailFolha($doc, $portalUrl, $this->db, $tplKey, [
+            'tentativa' => (string) $tentativa,
+        ]);
         $mail = new MailService();
         $result = $mail->send(
             $to,
@@ -290,26 +294,95 @@ final class FolhaPontoService
     }
 
     /**
-     * Monta assunto + texto + HTML via template folha.envio_colaborador.
+     * Envia lembrete de assinatura (folha já enviada, ainda não assinada).
+     *
+     * @return array{ok:bool,erro:?string}
+     */
+    public function enviarLembreteAssinatura(int $documentoId, ?int $espelhoId = null): array
+    {
+        $documentoId = $this->atualizarModeloPendente($documentoId, null, $espelhoId);
+        $stmt = $this->db->prepare(
+            'SELECT d.*, c.email_corp, c.nome, c.matricula, e.id AS espelho_id,
+                    DATE_FORMAT(p.data_inicio, \'%Y-%m\') AS competencia, p.data_inicio, p.data_fim
+             FROM documentos d
+             INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+             INNER JOIN ponto_periodos p ON p.id = e.periodo_id
+             INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
+             WHERE d.id = :id'
+        );
+        $stmt->execute(['id' => $documentoId]);
+        $doc = $stmt->fetch();
+        if ($doc === false) {
+            throw new RuntimeException('Documento não encontrado.');
+        }
+        if (($doc['status'] ?? '') !== 'enviado') {
+            throw new RuntimeException('Lembrete só é enviado quando a folha está com status “enviado”.');
+        }
+        if (empty($doc['portal_token'])) {
+            throw new RuntimeException('Gere o link de assinatura antes do lembrete.');
+        }
+
+        $to = (string) ($doc['email_corp'] ?? '');
+        if ($to === '') {
+            throw new RuntimeException('Colaborador sem e-mail corporativo.');
+        }
+
+        $app = require dirname(__DIR__, 2) . '/config/app.php';
+        $base = rtrim(trim((string) ($app['url'] ?? '')), '/');
+        if ($base === '') {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+            $base = ($https ? 'https' : 'http') . '://' . \App\Helpers\AppUrl::sanitizeHost((string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8080'));
+        }
+        if (str_ends_with(strtolower($base), '/public')) {
+            $base = rtrim(substr($base, 0, -7), '/');
+        }
+        $portalUrl = $base . '/assinar/' . $doc['portal_token'];
+
+        $emailContent = self::montarEmailFolha($doc, $portalUrl, $this->db, 'folha.lembrete_assinatura');
+        $mail = new MailService();
+        $result = $mail->send(
+            $to,
+            $emailContent['subject'],
+            $emailContent['text'],
+            null,
+            $emailContent['html']
+        );
+
+        $tentativa = (int) $this->db->query(
+            'SELECT COALESCE(MAX(tentativa),0)+1 FROM emails_envios WHERE documento_id=' . (int) $documentoId
+        )->fetchColumn();
+        $this->registrarEnvio($documentoId, $to, $result['ok'], $result['erro'], $tentativa);
+
+        return $result;
+    }
+
+    /**
+     * Monta assunto + texto + HTML via template de folha.
      *
      * @param array<string,mixed> $doc
+     * @param array<string,mixed> $extra
      * @return array{subject:string,text:string,html:string}
      */
-    public static function montarEmailFolha(array $doc, ?string $portalUrl, ?\PDO $pdo = null): array
-    {
+    public static function montarEmailFolha(
+        array $doc,
+        ?string $portalUrl,
+        ?\PDO $pdo = null,
+        string $templateKey = 'folha.envio_colaborador',
+        array $extra = []
+    ): array {
         $ini = !empty($doc['data_inicio']) ? date('d/m/Y', strtotime((string) $doc['data_inicio'])) : '';
         $fim = !empty($doc['data_fim']) ? date('d/m/Y', strtotime((string) $doc['data_fim'])) : '';
         $competencia = trim((string) ($doc['competencia'] ?? ''));
         $periodo = ($ini !== '' && $fim !== '') ? "{$ini} a {$fim}" : $competencia;
 
-        return EmailTemplateService::render('folha.envio_colaborador', [
+        return EmailTemplateService::render($templateKey, array_merge([
             'nome' => (string) ($doc['nome'] ?? 'Colaborador'),
             'matricula' => (string) ($doc['matricula'] ?? ''),
             'periodo' => $periodo,
             'competencia' => $competencia,
             'codigo' => (string) ($doc['codigo_verificacao'] ?? ''),
             'portalUrl' => $portalUrl,
-        ], $pdo);
+        ], $extra), $pdo);
     }
 
     /**

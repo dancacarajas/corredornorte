@@ -208,6 +208,7 @@ final class AssinaturaEletronicaService
                 'assinado_em' => $assinadoEm,
             ]);
             $this->db->commit();
+            $this->notificarAssinaturaConfirmacao($doc);
         } catch (Throwable $e) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
@@ -225,8 +226,9 @@ final class AssinaturaEletronicaService
             return null;
         }
         $stmt = $this->db->prepare(
-            "SELECT d.*, c.nome, c.matricula,
+            "SELECT d.*, c.nome, c.matricula, c.email_corp, e.colaborador_id,
                     pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim,
+                    DATE_FORMAT(pp.data_inicio, '%Y-%m') AS periodo_competencia,
                     YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
              FROM documentos d
              INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
@@ -602,6 +604,7 @@ final class AssinaturaEletronicaService
                 'motivo' => $motivo,
             ]);
             $this->db->commit();
+            $this->notificarDivergenciaRh($doc, $motivo, $dataValida, $espelhoId);
         } catch (Throwable $e) {
             $this->db->rollBack();
             throw $e;
@@ -756,6 +759,115 @@ final class AssinaturaEletronicaService
     private function baseUrl(): string
     {
         return \App\Helpers\AppUrl::base(dirname(__DIR__, 2));
+    }
+
+    /** @param array<string,mixed> $doc */
+    private function notificarAssinaturaConfirmacao(array $doc): void
+    {
+        try {
+            $to = trim((string) ($doc['email_corp'] ?? ''));
+            if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+                return;
+            }
+            $periodo = $this->periodoLabel($doc);
+            $codigo = trim((string) ($doc['codigo_verificacao'] ?? ''));
+            $verificarUrl = $codigo !== '' ? $this->baseUrl() . '/verificar/' . $codigo : '';
+            $tpl = EmailTemplateService::render('folha.assinada_confirmacao', [
+                'nome' => (string) ($doc['nome'] ?? 'Colaborador'),
+                'matricula' => (string) ($doc['matricula'] ?? ''),
+                'periodo' => $periodo,
+                'competencia' => (string) ($doc['periodo_competencia'] ?? ''),
+                'codigo' => $codigo,
+                'portalUrl' => $verificarUrl,
+                'cta_label' => 'VALIDAR DOCUMENTO',
+            ], $this->db);
+            (new MailService())->send($to, $tpl['subject'], $tpl['text'], null, $tpl['html']);
+        } catch (Throwable) {
+            // não bloqueia a assinatura
+        }
+    }
+
+    /** @param array<string,mixed> $doc */
+    private function notificarDivergenciaRh(array $doc, string $motivo, ?string $dataOcorrencia, int $espelhoId): void
+    {
+        try {
+            $destinos = $this->emailsRhNotificacao();
+            if ($destinos === []) {
+                return;
+            }
+            $periodo = $this->periodoLabel($doc);
+            $dataFmt = $dataOcorrencia !== null && $dataOcorrencia !== ''
+                ? date('d/m/Y', strtotime($dataOcorrencia))
+                : 'Não informada';
+            $linkRh = $this->baseUrl() . '/rh/ponto/' . $espelhoId;
+            $tpl = EmailTemplateService::render('folha.divergencia_aviso_rh', [
+                'nome' => (string) ($doc['nome'] ?? 'Colaborador'),
+                'matricula' => (string) ($doc['matricula'] ?? ''),
+                'periodo' => $periodo,
+                'motivo' => $motivo,
+                'data_ocorrencia' => $dataFmt,
+                'portalUrl' => $linkRh,
+                'cta_label' => 'ABRA AGORA',
+            ], $this->db);
+            $mail = new MailService();
+            foreach ($destinos as $to) {
+                $mail->send($to, $tpl['subject'], $tpl['text'], null, $tpl['html']);
+            }
+        } catch (Throwable) {
+            // não bloqueia o registro da divergência
+        }
+    }
+
+    /** @param array<string,mixed> $doc */
+    private function periodoLabel(array $doc): string
+    {
+        $ini = !empty($doc['periodo_cartao_inicio']) ? date('d/m/Y', strtotime((string) $doc['periodo_cartao_inicio'])) : '';
+        $fim = !empty($doc['periodo_cartao_fim']) ? date('d/m/Y', strtotime((string) $doc['periodo_cartao_fim'])) : '';
+        if ($ini !== '' && $fim !== '') {
+            return $ini . ' a ' . $fim;
+        }
+
+        return trim((string) ($doc['periodo_competencia'] ?? ''));
+    }
+
+    /** @return list<string> */
+    private function emailsRhNotificacao(): array
+    {
+        $emails = [];
+        try {
+            $rows = $this->db->query(
+                "SELECT DISTINCT u.email
+                 FROM usuarios u
+                 INNER JOIN usuario_perfis up ON up.usuario_id = u.id
+                 INNER JOIN perfis p ON p.id = up.perfil_id AND p.status = 'ativo'
+                 INNER JOIN perfil_permissoes pp ON pp.perfil_id = p.id
+                 INNER JOIN permissoes pe ON pe.id = pp.permissao_id
+                 WHERE u.status = 'ativo'
+                   AND u.email IS NOT NULL
+                   AND u.email <> ''
+                   AND pe.codigo IN ('folha.enviar', 'email.gerenciar', 'ponto.editar')"
+            )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            foreach ($rows as $email) {
+                $email = strtolower(trim((string) $email));
+                if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    $emails[$email] = $email;
+                }
+            }
+        } catch (Throwable) {
+        }
+
+        if ($emails === []) {
+            try {
+                $ativa = (new EmailOAuth\EmailAccountService($this->db))->contaAtiva();
+                $fallback = strtolower(trim((string) ($ativa['email'] ?? '')));
+                if (filter_var($fallback, FILTER_VALIDATE_EMAIL)) {
+                    $emails[$fallback] = $fallback;
+                }
+            } catch (Throwable) {
+            }
+        }
+
+        return array_values($emails);
     }
 }
 

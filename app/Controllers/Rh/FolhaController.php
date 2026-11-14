@@ -247,6 +247,28 @@ final class FolhaController
         exit;
     }
 
+    public function lembrar(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $docId = (int) ($_POST['documento_id'] ?? 0);
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $docId <= 0) {
+            header('Location: /rh/folha');
+            exit;
+        }
+
+        try {
+            $result = (new FolhaPontoService($pdo))->enviarLembreteAssinatura($docId, $espelhoId);
+            if (!$result['ok']) {
+                throw new \RuntimeException($result['erro'] ?: 'Falha no lembrete');
+            }
+            $this->redirecionarFolha($espelhoId, ['ok' => 'lembrete']);
+        } catch (Throwable $e) {
+            $this->redirecionarFolha($espelhoId, ['erro' => $e->getMessage()]);
+        }
+        exit;
+    }
+
     /** Gera link do portal (só leitura) para assinatura eletrônica Arcadis. */
     public function gerarLinkAssinatura(string $id = '0'): void
     {

@@ -24,14 +24,42 @@ final class EmailTemplateService
      */
     public static function catalog(): array
     {
+        $folhaVars = ['nome', 'matricula', 'periodo', 'competencia', 'codigo', 'portal_url', 'matricula_linha', 'codigo_linha', 'cta_bloco', 'link_fallback', 'tentativa'];
+
         return [
             'folha.envio_colaborador' => [
                 'label' => 'Envio da folha de ponto',
-                'trigger' => 'Enviar PDF (folha unitária e lote da medição)',
-                'vars' => ['nome', 'matricula', 'periodo', 'competencia', 'codigo', 'portal_url', 'matricula_linha', 'codigo_linha', 'cta_bloco', 'link_fallback'],
+                'group' => 'Folha de ponto',
+                'trigger' => '1º envio do PDF (folha unitária e lote da medição)',
+                'vars' => $folhaVars,
+            ],
+            'folha.reenvio_colaborador' => [
+                'label' => 'Reenvio da folha de ponto',
+                'group' => 'Folha de ponto',
+                'trigger' => '2º envio em diante do mesmo PDF',
+                'vars' => $folhaVars,
+            ],
+            'folha.lembrete_assinatura' => [
+                'label' => 'Lembrete de assinatura',
+                'group' => 'Folha de ponto',
+                'trigger' => 'Botão “Enviar lembrete” na folha (status enviado, sem assinar)',
+                'vars' => $folhaVars,
+            ],
+            'folha.divergencia_aviso_rh' => [
+                'label' => 'Divergência reportada (RH)',
+                'group' => 'Folha de ponto',
+                'trigger' => 'Colaborador reporta divergência no portal /assinar',
+                'vars' => ['nome', 'matricula', 'periodo', 'motivo', 'data_ocorrencia', 'link_rh', 'cta_bloco', 'link_fallback'],
+            ],
+            'folha.assinada_confirmacao' => [
+                'label' => 'Confirmação de assinatura',
+                'group' => 'Folha de ponto',
+                'trigger' => 'Colaborador conclui a assinatura eletrônica',
+                'vars' => ['nome', 'matricula', 'periodo', 'codigo', 'verificar_url', 'cta_bloco', 'link_fallback'],
             ],
             'sistema.email_teste' => [
                 'label' => 'Teste de conexão',
+                'group' => 'Sistema',
                 'trigger' => 'Botão “Testar envio” em Conta de e-mail',
                 'vars' => ['destinatario', 'conta_email', 'conta_linha'],
             ],
@@ -44,6 +72,8 @@ final class EmailTemplateService
     public static function defaults(string $key): array
     {
         $key = self::normalizeKey($key);
+
+        $rodapePadrao = 'Este e-mail contém informações pessoais. Se você não for o destinatário correto, por favor avise o RH.';
 
         return match ($key) {
             'folha.envio_colaborador' => [
@@ -60,7 +90,72 @@ final class EmailTemplateService
 {{cta_bloco}}
 {{link_fallback}}
 HTML,
-                'rodape' => 'Este e-mail contém informações pessoais. Se você não for o destinatário correto, por favor avise o RH. O PDF da folha também segue anexado para sua guarda.',
+                'rodape' => $rodapePadrao . ' O PDF da folha também segue anexado para sua guarda.',
+            ],
+            'folha.reenvio_colaborador' => [
+                'assunto' => 'Reenvio — Folha de Ponto ({{competencia}}) — {{nome}}',
+                'titulo' => 'Reenvio da Folha de Ponto',
+                'texto' => "Oi {{nome}},\n\nEstamos reenviando sua Folha de Ponto ({{periodo}}) para conferência e assinatura.{{codigo_txt}}{{portal_txt}}\nO PDF atualizado segue anexado.\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Esperamos que você esteja bem hoje.</p>
+<p>Estamos <strong>reenviando</strong> sua folha de ponto do período <strong>{{periodo}}</strong>. Use o link abaixo para conferir e assinar a via atual.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Clique no botão abaixo para continuar.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Este é um reenvio da via atual da folha.',
+            ],
+            'folha.lembrete_assinatura' => [
+                'assunto' => 'Lembrete — assine sua Folha de Ponto ({{competencia}})',
+                'titulo' => 'Lembrete de assinatura',
+                'texto' => "Oi {{nome}},\n\nPassando para lembrar: sua Folha de Ponto ({{periodo}}) ainda aguarda sua assinatura eletrônica.{{codigo_txt}}{{portal_txt}}\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Esperamos que você esteja bem hoje.</p>
+<p>Passando para lembrar: sua folha de ponto do período <strong>{{periodo}}</strong> ainda aguarda sua <strong>assinatura eletrônica</strong>.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Clique no botão abaixo para concluir.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao,
+            ],
+            'folha.divergencia_aviso_rh' => [
+                'assunto' => 'Divergência na folha — {{nome}} ({{periodo}})',
+                'titulo' => 'Divergência reportada',
+                'texto' => "Olá RH,\n\n{{nome}} reportou uma divergência na Folha de Ponto ({{periodo}}).\n\nMotivo:\n{{motivo}}\n\nData da ocorrência: {{data_ocorrencia}}\n\nAcesse o ponto no sistema para analisar.\n{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Olá, equipe de RH,</p>
+<p>O colaborador <strong>{{nome}}</strong> reportou uma divergência na folha de ponto do período <strong>{{periodo}}</strong>.</p>
+{{matricula_linha}}
+<p><strong>Data da ocorrência:</strong> {{data_ocorrencia}}</p>
+<p><strong>Motivo informado:</strong></p>
+<p>{{motivo}}</p>
+<p>Acesse o sistema para analisar e tratar a divergência.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Notificação automática do portal de assinatura.',
+            ],
+            'folha.assinada_confirmacao' => [
+                'assunto' => 'Folha assinada — {{periodo}}',
+                'titulo' => 'Assinatura confirmada',
+                'texto' => "Oi {{nome}},\n\nRecebemos sua assinatura eletrônica da Folha de Ponto ({{periodo}}).{{codigo_txt}}\nObrigado.\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Esperamos que você esteja bem hoje.</p>
+<p>Recebemos sua <strong>assinatura eletrônica</strong> da folha de ponto do período <strong>{{periodo}}</strong>.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Você pode validar o documento pelo link abaixo, se precisar.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Guarde o PDF assinado para seus registros.',
             ],
             'sistema.email_teste' => [
                 'assunto' => 'Arcadis RH — teste de conexão de e-mail',
@@ -73,7 +168,7 @@ HTML,
 <p><strong>Destinatário:</strong> {{destinatario}}</p>
 {{conta_linha}}
 HTML,
-                'rodape' => 'Este e-mail contém informações pessoais. Se você não for o destinatário correto, por favor avise o RH. Mensagem automática de diagnóstico.',
+                'rodape' => $rodapePadrao . ' Mensagem automática de diagnóstico.',
             ],
             default => throw new RuntimeException('Template desconhecido: ' . $key),
         };
@@ -96,6 +191,7 @@ HTML,
         return [
             'chave' => $key,
             'label' => $meta['label'],
+            'group' => (string) ($meta['group'] ?? 'Outros'),
             'trigger' => $meta['trigger'],
             'vars' => $meta['vars'],
             'assunto' => $custom ? (string) $row['assunto'] : $base['assunto'],
@@ -109,7 +205,7 @@ HTML,
     }
 
     /**
-     * @return list<array{chave:string,label:string,trigger:string,customizado:bool,atualizado_em:?string}>
+     * @return list<array{chave:string,label:string,group:string,trigger:string,customizado:bool,atualizado_em:?string}>
      */
     public static function listForUi(?PDO $pdo): array
     {
@@ -119,6 +215,7 @@ HTML,
             $out[] = [
                 'chave' => $key,
                 'label' => $meta['label'],
+                'group' => (string) ($meta['group'] ?? 'Outros'),
                 'trigger' => $meta['trigger'],
                 'customizado' => $row !== null,
                 'atualizado_em' => $row !== null ? (string) ($row['atualizado_em'] ?? '') : null,
@@ -185,14 +282,36 @@ HTML,
     {
         $key = self::normalizeKey($key);
 
+        $folhaSample = [
+            'nome' => 'Jarbas',
+            'matricula' => '12345',
+            'periodo' => '16/10/2026 a 15/11/2026',
+            'competencia' => '2026-11',
+            'codigo' => 'ABC-123',
+            'portalUrl' => '#preview-assinatura',
+            'tentativa' => '2',
+        ];
+
         return match ($key) {
-            'folha.envio_colaborador' => [
+            'folha.envio_colaborador',
+            'folha.reenvio_colaborador',
+            'folha.lembrete_assinatura' => $folhaSample,
+            'folha.divergencia_aviso_rh' => [
                 'nome' => 'Jarbas',
                 'matricula' => '12345',
                 'periodo' => '16/10/2026 a 15/11/2026',
-                'competencia' => '2026-11',
+                'motivo' => 'A hora de saída do dia 20/10 está diferente do ponto biométrico.',
+                'data_ocorrencia' => '20/10/2026',
+                'portalUrl' => '#preview-ponto-rh',
+                'cta_label' => 'ABRA AGORA',
+            ],
+            'folha.assinada_confirmacao' => [
+                'nome' => 'Jarbas',
+                'matricula' => '12345',
+                'periodo' => '16/10/2026 a 15/11/2026',
                 'codigo' => 'ABC-123',
-                'portalUrl' => '#preview-assinatura',
+                'portalUrl' => '#preview-verificar',
+                'cta_label' => 'VALIDAR DOCUMENTO',
             ],
             'sistema.email_teste' => [
                 'destinatario' => 'seu@email.com',
@@ -240,27 +359,37 @@ HTML,
     {
         $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
-        if ($key === 'folha.envio_colaborador') {
+        if (str_starts_with($key, 'folha.')) {
             $nome = trim((string) ($vars['nome'] ?? 'Colaborador'));
             $matricula = trim((string) ($vars['matricula'] ?? ''));
             $periodo = trim((string) ($vars['periodo'] ?? ''));
             $competencia = trim((string) ($vars['competencia'] ?? ''));
             $codigo = trim((string) ($vars['codigo'] ?? ''));
-            $portalUrl = trim((string) ($vars['portalUrl'] ?? $vars['portal_url'] ?? ''));
+            $motivo = trim((string) ($vars['motivo'] ?? ''));
+            $dataOcorrencia = trim((string) ($vars['data_ocorrencia'] ?? ''));
+            $tentativa = trim((string) ($vars['tentativa'] ?? ''));
+            $portalUrl = trim((string) ($vars['portalUrl'] ?? $vars['portal_url'] ?? $vars['link_rh'] ?? $vars['verificar_url'] ?? ''));
+            $ctaLabel = trim((string) ($vars['cta_label'] ?? 'ABRA AGORA'));
+            if ($ctaLabel === '') {
+                $ctaLabel = 'ABRA AGORA';
+            }
             if ($periodo === '') {
                 $periodo = $competencia;
             }
             if ($competencia === '') {
                 $competencia = $periodo;
             }
+            if ($dataOcorrencia === '') {
+                $dataOcorrencia = 'Não informada';
+            }
 
             $cta = '';
             $fallback = '';
             $portalTxt = '';
             if ($portalUrl !== '') {
-                $cta = self::ctaButtonHtml($portalUrl, 'ABRA AGORA');
+                $cta = self::ctaButtonHtml($portalUrl, $ctaLabel);
                 $fallback = self::ctaFallbackHtml($portalUrl);
-                $portalTxt = "\n\nPara revisar e assinar, acesse:\n{$portalUrl}\nCaso identifique divergência, use “Reportar divergência ao RH” no portal antes de assinar.\n";
+                $portalTxt = "\n\nAcesse:\n{$portalUrl}\n";
             }
 
             return [
@@ -269,7 +398,12 @@ HTML,
                 'periodo' => $periodo,
                 'competencia' => $competencia,
                 'codigo' => $codigo,
+                'motivo' => $motivo,
+                'data_ocorrencia' => $dataOcorrencia,
+                'tentativa' => $tentativa,
                 'portal_url' => $portalUrl,
+                'link_rh' => $portalUrl,
+                'verificar_url' => $portalUrl,
                 'matricula_linha' => $matricula !== ''
                     ? '<p style="margin-top:12px;"><strong>Matrícula:</strong> ' . $e($matricula) . '</p>'
                     : '',

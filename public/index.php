@@ -322,6 +322,7 @@ $router->get('/rh/folha/documento/{id}', [$folha, 'download']);
 $router->get('/rh/folha/{id}', [$folha, 'show']);
 $router->post('/rh/folha/{id}/gerar', [$folha, 'gerar']);
 $router->post('/rh/folha/{id}/enviar', [$folha, 'enviar']);
+$router->post('/rh/folha/{id}/lembrar', [$folha, 'lembrar']);
 $router->post('/rh/folha/{id}/link-assinatura', [$folha, 'gerarLinkAssinatura']);
 
 $router->dispatch($_SERVER['REQUEST_METHOD'] ?? 'GET', $_SERVER['REQUEST_URI'] ?? '/');
