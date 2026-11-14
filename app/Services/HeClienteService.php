@@ -185,10 +185,15 @@ final class HeClienteService
 
     /**
      * Normaliza payload HE do formulário do RA.
+     * @param array<string,mixed>|null $diaPonto Dia do RA já enriquecido com batidas do ponto
      * @return array{he_hora_inicio:?string,he_hora_fim:?string,he_status:string}
      */
-    public function normalizarCamposHeDia(array $item, string $statusAtual = 'nenhuma'): array
-    {
+    public function normalizarCamposHeDia(
+        array $item,
+        string $statusAtual = 'nenhuma',
+        ?array $diaPonto = null,
+        ?string $dataRef = null
+    ): array {
         $iniRaw = trim((string) ($item['he_hora_inicio'] ?? ''));
         $fimRaw = trim((string) ($item['he_hora_fim'] ?? ''));
         if ($iniRaw === '' && $fimRaw === '') {
@@ -206,6 +211,16 @@ final class HeClienteService
         if ($this->diffMinutos($ini, $fim) <= 0) {
             throw new RuntimeException('HE: a hora final deve ser após a inicial.');
         }
+
+        $ultima = $diaPonto !== null ? $this->ultimaBatidaPonto($diaPonto) : null;
+        if ($ultima !== null && $this->toMin($ini) < $this->toMin($ultima . ':00')) {
+            $rotuloData = $dataRef ?? (string) ($diaPonto['data'] ?? '');
+            $prefixo = $rotuloData !== '' ? 'Em ' . date('d/m', strtotime($rotuloData) ?: time()) . ': ' : '';
+            throw new RuntimeException(
+                $prefixo . 'HE início deve ser a partir da última batida do ponto (' . $ultima . ').'
+            );
+        }
+
         if ($statusAtual === 'aplicada') {
             return [
                 'he_hora_inicio' => $ini,
@@ -218,6 +233,63 @@ final class HeClienteService
             'he_hora_fim' => $fim,
             'he_status' => 'declarada',
         ];
+    }
+
+    /**
+     * Última marcação do cartão (ordem ent1 → sai1 → ent2 → sai2).
+     * @param array<string,mixed> $dia
+     */
+    public function ultimaBatidaPonto(array $dia): ?string
+    {
+        $ultima = null;
+        foreach (['ponto_ent1', 'ponto_sai1', 'ponto_ent2', 'ponto_sai2'] as $campo) {
+            $hora = $this->horaCurta($dia[$campo] ?? null);
+            if ($hora !== null) {
+                $ultima = $hora;
+            }
+        }
+        return $ultima;
+    }
+
+    /**
+     * Rótulo amigável das batidas, ex.: "07:00 → 12:00 · 13:00 → 17:00".
+     * @param array<string,mixed> $dia
+     */
+    public function rotuloBatidasPonto(array $dia): string
+    {
+        $pares = [];
+        $e1 = $this->horaCurta($dia['ponto_ent1'] ?? null);
+        $s1 = $this->horaCurta($dia['ponto_sai1'] ?? null);
+        $e2 = $this->horaCurta($dia['ponto_ent2'] ?? null);
+        $s2 = $this->horaCurta($dia['ponto_sai2'] ?? null);
+        if ($e1 !== null || $s1 !== null) {
+            $pares[] = ($e1 ?? '—') . ' → ' . ($s1 ?? '—');
+        }
+        if ($e2 !== null || $s2 !== null) {
+            $pares[] = ($e2 ?? '—') . ' → ' . ($s2 ?? '—');
+        }
+        return $pares === [] ? '' : implode(' · ', $pares);
+    }
+
+    private function horaCurta(mixed $hora): ?string
+    {
+        if ($hora === null) {
+            return null;
+        }
+        $txt = trim((string) $hora);
+        if ($txt === '') {
+            return null;
+        }
+        if (preg_match('/^(\d{2}:\d{2})/', $txt, $m)) {
+            return $m[1];
+        }
+        return null;
+    }
+
+    private function toMin(string $hora): int
+    {
+        $parts = explode(':', substr($hora, 0, 8));
+        return ((int) ($parts[0] ?? 0) * 60) + (int) ($parts[1] ?? 0);
     }
 
     private function temColunaHeFluxo(): bool

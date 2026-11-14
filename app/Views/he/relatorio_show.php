@@ -380,6 +380,8 @@ $primeiroPendenteAberto = false;
                     $heLock = $somenteLeitura || $heStatus === 'aplicada';
                     $heIni = substr((string) ($dia['he_hora_inicio'] ?? ''), 0, 5);
                     $heFim = substr((string) ($dia['he_hora_fim'] ?? ''), 0, 5);
+                    $pontoBatidas = trim((string) ($dia['ponto_batidas_label'] ?? ''));
+                    $pontoUltima = substr((string) ($dia['ponto_ultima_batida'] ?? ''), 0, 5);
                     $ehFolga = $tipo !== 'trabalho';
                     $temHeOuTextoFolga = $ehFolga && ($heIni !== '' || $heFim !== '' || trim((string) ($dia['descricao'] ?? '')) !== '');
                     $temDesc = trim((string) ($dia['descricao'] ?? '')) !== '';
@@ -518,28 +520,62 @@ $primeiroPendenteAberto = false;
                             </div>
 
                             <?php if ($heCliente): ?>
-                                <div class="ra-he-row">
-                                    <div class="ra-field-box">
-                                        <label>HE Início<?= $ehFolga ? ' (Folga/Feriado)' : '' ?></label>
-                                        <input type="time" name="dias[<?= $i ?>][he_hora_inicio]" value="<?= View::e($heIni) ?>" <?= $heLock ? 'readonly' : '' ?>>
+                                <div class="ra-he-block"
+                                     data-ra-he-day
+                                     data-ultima-batida="<?= View::e($pontoUltima) ?>"
+                                     data-day-label="<?= View::e(date('d/m', $ts ?: time())) ?>">
+                                    <div class="ra-ponto-batidas">
+                                        <div class="ra-ponto-batidas-title">Marcação do ponto</div>
+                                        <?php if ($pontoBatidas !== ''): ?>
+                                            <div class="ra-ponto-batidas-times"><?= View::e($pontoBatidas) ?></div>
+                                            <?php if ($pontoUltima !== ''): ?>
+                                                <p class="ra-ponto-batidas-hint">
+                                                    HE só a partir de <strong><?= View::e($pontoUltima) ?></strong>
+                                                    (última batida do dia).
+                                                </p>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <div class="ra-ponto-batidas-times is-empty">Sem batidas registradas neste dia</div>
+                                            <p class="ra-ponto-batidas-hint">
+                                                <?= $ehFolga
+                                                    ? 'Em folga/feriado você pode lançar HE autorizada sem batida prévia.'
+                                                    : 'Sem batida final no ponto, a HE ainda pode ser informada — o RH conferirá na aplicação.' ?>
+                                            </p>
+                                        <?php endif; ?>
                                     </div>
-                                    <div class="ra-field-box">
-                                        <label>HE Fim</label>
-                                        <input type="time" name="dias[<?= $i ?>][he_hora_fim]" value="<?= View::e($heFim) ?>" <?= $heLock ? 'readonly' : '' ?>>
-                                    </div>
-                                    <div class="ra-field-box">
-                                        <label>Situação HE</label>
-                                        <div style="min-height:42px;display:flex;align-items:center;font-weight:700;font-size:.88rem;">
-                                            <?php
-                                            echo match ($heStatus) {
-                                                'declarada' => 'Declarada',
-                                                'aplicada' => 'Aplicada no ponto',
-                                                'divergente' => 'Divergente',
-                                                default => 'Sem HE',
-                                            };
-                                            ?>
+                                    <div class="ra-he-row">
+                                        <div class="ra-field-box">
+                                            <label>HE Início<?= $ehFolga ? ' (Folga/Feriado)' : '' ?></label>
+                                            <input type="time"
+                                                   name="dias[<?= $i ?>][he_hora_inicio]"
+                                                   value="<?= View::e($heIni) ?>"
+                                                   data-he-inicio
+                                                   <?= $pontoUltima !== '' ? 'min="' . View::e($pontoUltima) . '"' : '' ?>
+                                                   <?= $heLock ? 'readonly' : '' ?>>
+                                        </div>
+                                        <div class="ra-field-box">
+                                            <label>HE Fim</label>
+                                            <input type="time"
+                                                   name="dias[<?= $i ?>][he_hora_fim]"
+                                                   value="<?= View::e($heFim) ?>"
+                                                   data-he-fim
+                                                   <?= $heLock ? 'readonly' : '' ?>>
+                                        </div>
+                                        <div class="ra-field-box">
+                                            <label>Situação HE</label>
+                                            <div style="min-height:42px;display:flex;align-items:center;font-weight:700;font-size:.88rem;" data-he-situacao>
+                                                <?php
+                                                echo match ($heStatus) {
+                                                    'declarada' => 'Declarada',
+                                                    'aplicada' => 'Aplicada no ponto',
+                                                    'divergente' => 'Divergente',
+                                                    default => 'Sem HE',
+                                                };
+                                                ?>
+                                            </div>
                                         </div>
                                     </div>
+                                    <p class="ra-he-error" data-he-error hidden></p>
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -549,7 +585,8 @@ $primeiroPendenteAberto = false;
 
             <?php if ($heCliente && !$somenteLeitura): ?>
                 <p class="muted text-sm" style="margin-top:.75rem;">
-                    HE Cliente (inclusive em folgas e feriados): informe início e fim nos dias em que realizou hora extra autorizada.
+                    HE Cliente: o início da hora extra precisa ser igual ou posterior à última batida do ponto daquele dia
+                    (ex.: batida final 17:00 → HE 17:00–19:00). Em folgas/feriados sem batida, o lançamento autorizado permanece liberado.
                     <?php if (!empty($rel['gestor_cliente_nome'])): ?>
                         Gestor Cliente: <strong><?= View::e((string) $rel['gestor_cliente_nome']) ?></strong>.
                     <?php endif; ?>
@@ -814,6 +851,56 @@ $primeiroPendenteAberto = false;
     recount();
   });
 
+  // HE Cliente: início >= última batida do ponto
+  const toMinutes = (hhmm) => {
+    if (!hhmm || !/^\d{2}:\d{2}/.test(hhmm)) return null;
+    const [h, m] = hhmm.slice(0, 5).split(':').map(Number);
+    return (h * 60) + m;
+  };
+  const validateHeBlock = (block) => {
+    const err = block.querySelector('[data-he-error]');
+    const iniEl = block.querySelector('[data-he-inicio]');
+    const fimEl = block.querySelector('[data-he-fim]');
+    if (!iniEl || !fimEl) return true;
+    const ultima = (block.dataset.ultimaBatida || '').slice(0, 5);
+    const ini = (iniEl.value || '').slice(0, 5);
+    const fim = (fimEl.value || '').slice(0, 5);
+    const label = block.dataset.dayLabel || '';
+    let msg = '';
+    if ((ini && !fim) || (!ini && fim)) {
+      msg = (label ? label + ': ' : '') + 'Informe início e fim da HE.';
+    } else if (ini && fim) {
+      const iniMin = toMinutes(ini);
+      const fimMin = toMinutes(fim);
+      const ultimaMin = toMinutes(ultima);
+      if (iniMin !== null && fimMin !== null && fimMin <= iniMin) {
+        msg = (label ? label + ': ' : '') + 'HE fim deve ser após o início.';
+      } else if (ultimaMin !== null && iniMin !== null && iniMin < ultimaMin) {
+        msg = (label ? label + ': ' : '') + 'HE início deve ser a partir da última batida (' + ultima + ').';
+        if (!iniEl.readOnly) iniEl.value = ultima;
+      }
+    }
+    if (err) {
+      err.hidden = !msg;
+      err.textContent = msg;
+    }
+    if (msg && iniEl && !iniEl.readOnly) {
+      iniEl.setCustomValidity(msg);
+    } else if (iniEl) {
+      iniEl.setCustomValidity('');
+    }
+    return !msg;
+  };
+  document.querySelectorAll('[data-ra-he-day]').forEach((block) => {
+    ['change', 'input', 'blur'].forEach((evt) => {
+      block.addEventListener(evt, (e) => {
+        if (!(e.target instanceof HTMLInputElement)) return;
+        if (!e.target.matches('[data-he-inicio], [data-he-fim]')) return;
+        validateHeBlock(block);
+      }, true);
+    });
+  });
+
   // Autosave em localStorage + proteção beforeunload
   const saveDraftLocal = () => {
     if (!form) return;
@@ -858,7 +945,18 @@ $primeiroPendenteAberto = false;
 
     form.addEventListener('input', () => { dirty = true; saveDraftLocal(); recount(); });
     form.addEventListener('change', () => { dirty = true; saveDraftLocal(); recount(); });
-    form.addEventListener('submit', () => {
+    form.addEventListener('submit', (ev) => {
+      let heOk = true;
+      document.querySelectorAll('[data-ra-he-day]').forEach((block) => {
+        if (!validateHeBlock(block)) heOk = false;
+      });
+      if (!heOk) {
+        ev.preventDefault();
+        const firstErr = document.querySelector('[data-he-error]:not([hidden])');
+        firstErr?.closest('.ra-day-card')?.classList.add('is-open');
+        firstErr?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
       dirty = false;
       try { localStorage.removeItem(draftKey); } catch (_) {}
     });

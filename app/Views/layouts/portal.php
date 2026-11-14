@@ -26,7 +26,7 @@ $currentUser = [
     <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
     <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=csrf-he-20261114">
     <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=csrf-he-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=csrf-he-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=he-ponto-20261114">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
     <?php endforeach; ?>

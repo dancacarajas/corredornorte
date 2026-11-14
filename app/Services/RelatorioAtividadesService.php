@@ -208,7 +208,11 @@ final class RelatorioAtividadesService
 
         $diasSt = $this->db->prepare(
             'SELECT d.*,
-                    pd.tipo_dia, pd.ok_status
+                    pd.tipo_dia, pd.ok_status,
+                    pd.ent1 AS ponto_ent1, pd.sai1 AS ponto_sai1,
+                    pd.ent2 AS ponto_ent2, pd.sai2 AS ponto_sai2,
+                    pd.previsto_entrada AS ponto_previsto_entrada,
+                    pd.previsto_saida AS ponto_previsto_saida
              FROM ra_dias d
              LEFT JOIN ponto_dias pd ON pd.espelho_id = :esp AND pd.data = d.data
              WHERE d.relatorio_id = :r
@@ -219,6 +223,12 @@ final class RelatorioAtividadesService
             'r' => $relatorioId,
         ]);
         $dias = $diasSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $heSvc = new HeClienteService($this->db);
+        foreach ($dias as &$diaRow) {
+            $diaRow['ponto_batidas_label'] = $heSvc->rotuloBatidasPonto($diaRow);
+            $diaRow['ponto_ultima_batida'] = $heSvc->ultimaBatidaPonto($diaRow);
+        }
+        unset($diaRow);
 
         $contadores = ['remoto' => 0, 'site' => 0, 'viagem' => 0, 'classificada' => 0];
         foreach ($dias as $dia) {
@@ -275,14 +285,21 @@ final class RelatorioAtividadesService
                 throw new RuntimeException('Ambiente inválido em ' . $data);
             }
             $statusHeAtual = 'nenhuma';
+            $diaExistenteRef = null;
             foreach ($dados['dias'] as $diaExistente) {
                 if ((string) ($diaExistente['data'] ?? '') === $data) {
                     $statusHeAtual = (string) ($diaExistente['he_status'] ?? 'nenhuma');
+                    $diaExistenteRef = $diaExistente;
                     break;
                 }
             }
             $heCampos = $usaHeCliente
-                ? $heSvc->normalizarCamposHeDia($item, $statusHeAtual)
+                ? $heSvc->normalizarCamposHeDia(
+                    $item,
+                    $statusHeAtual,
+                    is_array($diaExistenteRef) ? $diaExistenteRef : null,
+                    $data
+                )
                 : ['he_hora_inicio' => null, 'he_hora_fim' => null, 'he_status' => 'nenhuma'];
 
             $byData[$data] = [
