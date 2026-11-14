@@ -177,37 +177,50 @@ final class EmailAccountService
      */
     public function smtpPreset(string $provedor): array
     {
-        $provedor = $this->assertProvider($provedor);
+        $provedor = $this->assertSmtpProvider($provedor);
         if ($provedor === 'gmail') {
             return [
                 'host' => 'smtp.gmail.com',
                 'port' => 587,
                 'encryption' => 'tls',
                 'label' => 'Gmail SMTP',
-                'hint' => 'Use a senha de app do Google (Conta Google → Segurança → Senhas de app). A senha normal costuma ser bloqueada.',
+                'hint' => 'Use senha de app do Google (Conta Google → Segurança → Senhas de app).',
+            ];
+        }
+        if ($provedor === 'microsoft') {
+            return [
+                'host' => 'smtp.office365.com',
+                'port' => 587,
+                'encryption' => 'tls',
+                'label' => 'Microsoft SMTP',
+                'hint' => 'Muitas contas Microsoft bloqueiam senha no SMTP. Se falhar, peça o SMTP da TI ou use OAuth avançado.',
             ];
         }
 
         return [
-            'host' => 'smtp.office365.com',
+            'host' => '',
             'port' => 587,
             'encryption' => 'tls',
-            'label' => 'Microsoft SMTP',
-            'hint' => 'A Microsoft costuma bloquear usuário/senha (erro 535). O caminho que funciona hoje é OAuth.',
+            'label' => 'SMTP da empresa',
+            'hint' => 'Peça à TI: servidor SMTP, porta (587/465) e se usa TLS ou SSL.',
         ];
     }
 
     /**
      * Conecta com usuário e senha (SMTP) e valida autenticação na hora.
      *
-     * @param array{email:string,password:string,nome?:string} $dados
+     * @param array{email:string,password:string,nome?:string,smtp_host?:string,smtp_port?:int|string,smtp_encryption?:string,smtp_user?:string} $dados
      */
     public function conectarSmtp(string $provedor, array $dados, ?int $userId): int
     {
-        $provedor = $this->assertProvider($provedor);
+        $provedor = $this->assertSmtpProvider($provedor);
         $email = strtolower(trim((string) ($dados['email'] ?? '')));
         $password = (string) ($dados['password'] ?? '');
         $nome = trim((string) ($dados['nome'] ?? ''));
+        $smtpUser = trim((string) ($dados['smtp_user'] ?? ''));
+        if ($smtpUser === '') {
+            $smtpUser = $email;
+        }
 
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new RuntimeException('Informe um e-mail válido.');
@@ -218,34 +231,55 @@ final class EmailAccountService
         $domain = strtolower((string) substr(strrchr($email, '@') ?: '', 1));
         if ($domain === '' || str_ends_with($domain, '.local') || in_array($domain, ['localhost', 'example.com', 'test'], true)) {
             throw new RuntimeException(
-                'Use o e-mail real da Microsoft/Gmail (ex.: nome@outlook.com ou nome@empresa.com). '
-                . 'admin@arcadis.local é só login do sistema e não autentica no Outlook.'
+                'Use o e-mail real da empresa (ex.: nome@empresa.com). '
+                . 'admin@arcadis.local é só login do sistema e não autentica no servidor de e-mail.'
             );
         }
-        if ($provedor === 'gmail' && !preg_match('/^(gmail\.com|googlemail\.com)$/', $domain) && !str_contains($domain, '.')) {
-            throw new RuntimeException('Para Gmail informe uma conta @gmail.com (ou Google Workspace).');
+        if ($provedor === 'gmail' && !preg_match('/^(gmail\.com|googlemail\.com)$/', $domain)) {
+            // Google Workspace usa domínio próprio — ainda pode ir no preset Gmail
+            if (!str_contains($domain, '.')) {
+                throw new RuntimeException('Para Gmail informe uma conta @gmail.com (ou Google Workspace).');
+            }
         }
 
         $preset = $this->smtpPreset($provedor);
-        $hosts = [$preset['host']];
-        if ($provedor === 'microsoft') {
-            // Contas pessoais Outlook.com às vezes usam outro host
-            $hosts[] = 'smtp-mail.outlook.com';
+        $encryption = strtolower(trim((string) ($dados['smtp_encryption'] ?? $preset['encryption'])));
+        if (!in_array($encryption, ['tls', 'ssl', 'none'], true)) {
+            $encryption = 'tls';
+        }
+        $port = (int) ($dados['smtp_port'] ?? $preset['port'] ?: 587);
+        if ($port < 1 || $port > 65535) {
+            throw new RuntimeException('Porta SMTP inválida.');
+        }
+
+        $hosts = [];
+        if ($provedor === 'smtp') {
+            $customHost = strtolower(trim((string) ($dados['smtp_host'] ?? '')));
+            if ($customHost === '' || !preg_match('/^[a-z0-9.-]+$/i', $customHost)) {
+                throw new RuntimeException('Informe o servidor SMTP da empresa (ex.: smtp.empresa.com).');
+            }
+            $hosts[] = $customHost;
+        } else {
+            $hosts[] = $preset['host'];
+            if ($provedor === 'microsoft') {
+                $hosts[] = 'smtp-mail.outlook.com';
+            }
         }
 
         $test = ['ok' => false, 'erro' => null];
-        $hostUsado = $preset['host'];
+        $hostUsado = $hosts[0];
+        $portUsado = $port;
+        $encUsado = $encryption;
         foreach (array_unique($hosts) as $host) {
             $hostUsado = $host;
             $test = (new SmtpMailSender($this))->testAuth(
                 $host,
-                $preset['port'],
-                $preset['encryption'],
-                $email,
+                $portUsado,
+                $encUsado,
+                $smtpUser,
                 $password
             );
             if ($test['ok']) {
-                $preset['host'] = $host;
                 break;
             }
         }
@@ -254,9 +288,8 @@ final class EmailAccountService
             if ($provedor === 'microsoft' && (str_contains($raw, '535') || str_contains($raw, '5.7.3'))) {
                 throw new RuntimeException(
                     'A Microsoft recusou usuário/senha (SMTP 535). '
-                    . 'Isso é bloqueio de autenticação básica no Outlook/Microsoft 365 — não é falha do Arcadis. '
-                    . 'Solução: use OAuth no card Microsoft (Client ID + Secret → Salvar e conectar OAuth). '
-                    . 'Se for conta corporativa, o admin ainda precisa liberar SMTP AUTH ou autorizar o app no Entra ID.'
+                    . 'Isso é bloqueio de autenticação básica — não é falha do sistema. '
+                    . 'Use o SMTP da empresa (TI) ou abra “Opção avançada (OAuth)” abaixo.'
                 );
             }
             if ($provedor === 'gmail' && (str_contains($raw, '535') || str_contains($raw, '5.7.'))) {
@@ -275,10 +308,10 @@ final class EmailAccountService
 
         $params = [
             'n' => $nome !== '' ? $nome : $email,
-            'host' => $preset['host'],
-            'port' => $preset['port'],
-            'enc' => $preset['encryption'],
-            'user' => $email,
+            'host' => $hostUsado,
+            'port' => $portUsado,
+            'enc' => $encUsado,
+            'user' => $smtpUser,
             'pw' => TokenCrypto::encrypt($password),
             'u' => $userId,
         ];
@@ -568,6 +601,16 @@ final class EmailAccountService
         $provedor = strtolower(trim($provedor));
         if (!in_array($provedor, ['gmail', 'microsoft'], true)) {
             throw new RuntimeException('Provedor inválido.');
+        }
+
+        return $provedor;
+    }
+
+    private function assertSmtpProvider(string $provedor): string
+    {
+        $provedor = strtolower(trim($provedor));
+        if (!in_array($provedor, ['gmail', 'microsoft', 'smtp'], true)) {
+            throw new RuntimeException('Provedor SMTP inválido.');
         }
 
         return $provedor;

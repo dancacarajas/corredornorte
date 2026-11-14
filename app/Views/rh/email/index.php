@@ -13,7 +13,7 @@ use App\Helpers\View;
 
 $msgs = [
     'conectado' => 'Conta conectada com sucesso.',
-    'smtp' => 'Conta conectada com usuário e senha (SMTP validado).',
+    'smtp' => 'Conta conectada com e-mail e senha (SMTP validado).',
     'desconectado' => 'Conta desconectada.',
     'ativa' => 'Conta definida como ativa para envios.',
     'teste' => 'E-mail de teste enviado.',
@@ -21,31 +21,40 @@ $msgs = [
     'config_microsoft' => 'Credenciais da Microsoft salvas. OAuth liberado.',
 ];
 
-$cards = [
+$oauthCards = [
     'gmail' => [
         'title' => 'Gmail',
         'subtitle' => 'Google Workspace / conta pessoal',
         'cfg' => $gmail,
-        'smtp' => $smtpGmail,
-        'oauth_label' => 'Conectar com Google (OAuth)',
+        'oauth_label' => 'Conectar com Google',
         'help' => 'Google Cloud Console → Credenciais OAuth (tipo Web) + Gmail API.',
-        'email_ph' => 'seu@gmail.com',
-        'pass_ph' => 'Senha de app do Google',
     ],
     'microsoft' => [
         'title' => 'Microsoft',
         'subtitle' => 'Outlook / Microsoft 365',
         'cfg' => $microsoft,
-        'smtp' => $smtpMicrosoft,
-        'oauth_label' => 'Conectar com Microsoft (OAuth)',
-        'help' => 'Recomendado: OAuth. Azure Portal → Registros de aplicativo → permissões Graph Mail.Send + User.Read + offline_access. Cole o Redirect URI abaixo.',
-        'email_ph' => 'seu@outlook.com ou @empresa.com',
-        'pass_ph' => 'Senha (muitas contas Microsoft bloqueiam SMTP)',
+        'oauth_label' => 'Conectar com Microsoft',
+        'help' => 'Azure Portal → Registros de aplicativo → Mail.Send + User.Read + offline_access.',
     ],
+];
+
+$hints = [
+    'gmail' => (string) (($smtpGmail['hint'] ?? '') ?: 'Use senha de app do Google.'),
+    'microsoft' => (string) (($smtpMicrosoft['hint'] ?? '') ?: 'Se a senha falhar, use SMTP da TI ou OAuth avançado.'),
+    'smtp' => 'Peça à TI: servidor, porta e criptografia. Não precisa de Client ID.',
 ];
 
 $smtpBloqueadoMs = is_string($flashErro ?? null)
     && (str_contains((string) $flashErro, '535') || str_contains((string) $flashErro, 'recusou usuário/senha'));
+
+$provedorLabel = static function (string $p): string {
+    return match ($p) {
+        'gmail' => 'Gmail',
+        'microsoft' => 'Microsoft',
+        'smtp' => 'SMTP empresa',
+        default => ucfirst($p),
+    };
+};
 ?>
 
 <?php if (!$dbOk): ?>
@@ -59,104 +68,87 @@ $smtpBloqueadoMs = is_string($flashErro ?? null)
     <div class="alert alert-danger">
         <?= View::e((string) $flashErro) ?>
         <?php if ($smtpBloqueadoMs): ?>
-            <div style="margin-top:.75rem;">
-                <a class="btn btn-primary btn-sm" href="#microsoft">Ir para OAuth Microsoft</a>
+            <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap;">
+                <a class="btn btn-secondary btn-sm" href="#conexao-rapida" onclick="document.getElementById('prov-smtp')?.click()">Usar SMTP da empresa</a>
+                <a class="btn btn-primary btn-sm" href="#oauth-avancado">Abrir OAuth avançado</a>
             </div>
         <?php endif; ?>
     </div>
 <?php endif; ?>
 
+<section class="card email-hero" id="conexao-rapida">
+    <div class="card-body">
+        <h2>Conecte o e-mail da empresa</h2>
+        <p>Informe e-mail e senha. Não precisa de Client ID nem acesso ao Google Cloud / Azure.</p>
+    </div>
+</section>
+
 <section class="card">
     <div class="card-header">
         <div>
-            <h2 class="card-title">Conectar conta</h2>
-            <p class="card-subtitle">
-                OAuth fica ativo depois de salvar Client ID + Secret no card.
-                Usuário/senha funciona na hora com e-mail real (não use @arcadis.local).
-            </p>
+            <h2 class="card-title">Conexão rápida</h2>
+            <p class="card-subtitle">Caminho recomendado para a maioria das empresas</p>
         </div>
     </div>
-    <div class="card-body" style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">
-        <?php foreach ($cards as $key => $card): ?>
-            <?php
-            $cfg = $card['cfg'] ?? [];
-            $ready = $dbOk && !empty($cfg['configured']);
-            ?>
-            <div id="<?= View::e($key) ?>" style="border:1px solid var(--border);border-radius:12px;padding:1.1rem;display:flex;flex-direction:column;gap:.85rem;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;">
-                    <div style="display:flex;align-items:center;gap:.75rem;">
-                        <?php if ($key === 'gmail'): ?>
-                            <div style="width:42px;height:42px;border-radius:10px;background:#fff;border:1px solid var(--border);display:grid;place-items:center;">
-                                <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="#EA4335" d="M12 12.7L2.4 5.4A2 2 0 0 1 4 5h16a2 2 0 0 1 1.6.4z"/><path fill="#34A853" d="M12 12.7L2.4 5.4V19a2 2 0 0 0 2 2h3.2V9.7z"/><path fill="#4285F4" d="M21.6 5.4L12 12.7l6.4 8.3H20a2 2 0 0 0 2-2V5.4z"/><path fill="#FBBC05" d="M12 12.7l6.4 8.3H5.6z"/></svg>
-                            </div>
-                        <?php else: ?>
-                            <div style="width:42px;height:42px;border-radius:10px;background:#fff;border:1px solid var(--border);display:grid;place-items:center;">
-                                <svg width="22" height="22" viewBox="0 0 23 23" aria-hidden="true">
-                                    <rect width="10" height="10" x="1" y="1" fill="#F25022"/>
-                                    <rect width="10" height="10" x="12" y="1" fill="#7FBA00"/>
-                                    <rect width="10" height="10" x="1" y="12" fill="#00A4EF"/>
-                                    <rect width="10" height="10" x="12" y="12" fill="#FFB900"/>
-                                </svg>
-                            </div>
-                        <?php endif; ?>
-                        <div>
-                            <div class="fw-700"><?= View::e($card['title']) ?></div>
-                            <div class="text-sm muted"><?= View::e($card['subtitle']) ?></div>
-                        </div>
-                    </div>
-                    <span class="pill <?= $ready ? 'pill-success' : 'pill-neutral' ?>">
-                        OAuth <?= $ready ? 'ativo' : 'inativo' ?>
-                    </span>
-                </div>
+    <div class="card-body">
+        <form method="post" action="/rh/email/conectar-smtp" class="form-grid" id="emailSmtpForm" style="gap:.7rem;max-width:560px;">
+            <div class="email-provider-tabs" role="radiogroup" aria-label="Tipo de conta">
+                <label class="is-active">
+                    <input type="radio" name="provedor" value="gmail" id="prov-gmail" checked <?= !$dbOk ? 'disabled' : '' ?>>
+                    Gmail
+                </label>
+                <label>
+                    <input type="radio" name="provedor" value="microsoft" id="prov-microsoft" <?= !$dbOk ? 'disabled' : '' ?>>
+                    Microsoft
+                </label>
+                <label>
+                    <input type="radio" name="provedor" value="smtp" id="prov-smtp" <?= !$dbOk ? 'disabled' : '' ?>>
+                    SMTP da empresa
+                </label>
+            </div>
 
-                <div style="background:var(--surface-2, #f6f7f8);border-radius:10px;padding:.85rem;display:flex;flex-direction:column;gap:.55rem;">
-                    <div class="fw-700 text-sm">1) Ativar OAuth</div>
-                    <div class="text-xs muted"><?= View::e($card['help']) ?></div>
-                    <form method="post" action="/rh/email/config" class="form-grid" style="gap:.55rem;">
-                        <input type="hidden" name="provedor" value="<?= View::e($key) ?>">
-                        <input type="hidden" name="redirect_uri" value="<?= View::e((string) ($cfg['redirect_uri'] ?? '')) ?>">
-                        <input class="form-control" name="client_id" required
-                               placeholder="Client ID"
-                               value="<?= View::e((string) ($cfg['client_id'] ?? '')) ?>"
-                               autocomplete="off" <?= !$dbOk ? 'disabled' : '' ?>>
-                        <input class="form-control" type="password" name="client_secret"
-                               placeholder="<?= !empty($cfg['client_secret']) ? 'Client Secret (deixe vazio para manter)' : 'Client Secret' ?>"
-                               autocomplete="new-password" <?= !$dbOk ? 'disabled' : '' ?> <?= empty($cfg['client_secret']) ? 'required' : '' ?>>
-                        <?php if ($key === 'microsoft'): ?>
-                            <input class="form-control" name="tenant"
-                                   value="<?= View::e((string) ($cfg['tenant'] ?? 'common')) ?>"
-                                   placeholder="Tenant (common)" <?= !$dbOk ? 'disabled' : '' ?>>
-                        <?php endif; ?>
-                        <div class="text-xs muted">Redirect URI (cole no Azure/Google):</div>
-                        <input class="form-control" value="<?= View::e((string) ($cfg['redirect_uri'] ?? '')) ?>" readonly>
-                        <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
-                            <button class="btn btn-secondary" type="submit" name="conectar_agora" value="0" <?= !$dbOk ? 'disabled' : '' ?>>Salvar</button>
-                            <button class="btn btn-primary" type="submit" name="conectar_agora" value="1" <?= !$dbOk ? 'disabled' : '' ?>>
-                                <?= $ready ? View::e($card['oauth_label']) : 'Salvar e conectar OAuth' ?>
-                            </button>
-                        </div>
-                    </form>
-                    <?php if ($ready): ?>
-                        <a class="btn btn-ghost" href="/rh/email/conectar/<?= View::e($key) ?>">Abrir login <?= View::e($card['title']) ?></a>
-                    <?php endif; ?>
-                </div>
+            <p class="email-hint" id="emailSmtpHint"><?= View::e($hints['gmail']) ?></p>
 
-                <div style="display:flex;flex-direction:column;gap:.55rem;">
-                    <div class="fw-700 text-sm">2) Ou usuário e senha (SMTP)</div>
-                    <form method="post" action="/rh/email/conectar-smtp" class="form-grid" style="gap:.55rem;">
-                        <input type="hidden" name="provedor" value="<?= View::e($key) ?>">
-                        <input class="form-control" type="email" name="email" required
-                               placeholder="<?= View::e($card['email_ph']) ?>" <?= !$dbOk ? 'disabled' : '' ?>>
-                        <input class="form-control" type="password" name="password" required
-                               placeholder="<?= View::e($card['pass_ph']) ?>" <?= !$dbOk ? 'disabled' : '' ?>>
-                        <button class="btn btn-secondary" type="submit" <?= !$dbOk ? 'disabled' : '' ?>>Conectar com usuário e senha</button>
-                        <?php if (!empty($card['smtp'])): ?>
-                            <div class="text-xs muted"><?= View::e((string) $card['smtp']['hint']) ?></div>
-                        <?php endif; ?>
-                    </form>
+            <div class="email-smtp-extra" id="emailSmtpExtra">
+                <div class="form-field">
+                    <label class="form-label" for="smtp_host">Servidor SMTP</label>
+                    <input class="form-control" id="smtp_host" name="smtp_host"
+                           placeholder="smtp.empresa.com" autocomplete="off" <?= !$dbOk ? 'disabled' : '' ?>>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="smtp_port">Porta</label>
+                    <input class="form-control" id="smtp_port" name="smtp_port" type="number" min="1" max="65535"
+                           value="587" <?= !$dbOk ? 'disabled' : '' ?>>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="smtp_encryption">Criptografia</label>
+                    <select class="form-control" id="smtp_encryption" name="smtp_encryption" <?= !$dbOk ? 'disabled' : '' ?>>
+                        <option value="tls" selected>TLS (587)</option>
+                        <option value="ssl">SSL (465)</option>
+                        <option value="none">Nenhuma</option>
+                    </select>
                 </div>
             </div>
-        <?php endforeach; ?>
+
+            <div class="form-field">
+                <label class="form-label" for="email_smtp_email">E-mail</label>
+                <input class="form-control" id="email_smtp_email" type="email" name="email" required
+                       placeholder="seu@empresa.com" autocomplete="username" <?= !$dbOk ? 'disabled' : '' ?>>
+            </div>
+            <div class="form-field" id="smtpUserWrap" hidden>
+                <label class="form-label" for="smtp_user">Usuário SMTP (se diferente do e-mail)</label>
+                <input class="form-control" id="smtp_user" name="smtp_user"
+                       placeholder="Opcional" autocomplete="off" <?= !$dbOk ? 'disabled' : '' ?>>
+            </div>
+            <div class="form-field">
+                <label class="form-label" for="email_smtp_password">Senha</label>
+                <input class="form-control" id="email_smtp_password" type="password" name="password" required
+                       placeholder="Senha ou senha de app" autocomplete="current-password" <?= !$dbOk ? 'disabled' : '' ?>>
+            </div>
+            <div>
+                <button class="btn btn-primary" type="submit" <?= !$dbOk ? 'disabled' : '' ?>>Conectar</button>
+            </div>
+        </form>
     </div>
 </section>
 
@@ -170,7 +162,7 @@ $smtpBloqueadoMs = is_string($flashErro ?? null)
     <?php if ($contas === []): ?>
         <div class="empty-state">
             <h3>Nenhuma conta ainda</h3>
-            <p>Ative o OAuth com Client ID/Secret ou conecte com e-mail real + senha.</p>
+            <p>Informe e-mail e senha acima, ou o SMTP fornecido pela TI.</p>
         </div>
     <?php else: ?>
         <div class="table-wrap">
@@ -193,11 +185,12 @@ $smtpBloqueadoMs = is_string($flashErro ?? null)
                         'erro', 'expirado' => 'pill-danger',
                         default => 'pill-neutral',
                     };
+                    $modo = ((string) ($c['auth_mode'] ?? 'oauth')) === 'smtp' ? 'E-mail e senha' : 'OAuth';
                     ?>
                     <tr>
                         <td class="fw-700">
-                            <?= View::e(ucfirst((string) $c['provedor'])) ?>
-                            <div class="text-xs muted"><?= View::e(((string) ($c['auth_mode'] ?? 'oauth')) === 'smtp' ? 'Usuário/senha (SMTP)' : 'OAuth') ?></div>
+                            <?= View::e($provedorLabel((string) $c['provedor'])) ?>
+                            <div class="text-xs muted"><?= View::e($modo) ?></div>
                         </td>
                         <td>
                             <div class="fw-700"><?= View::e((string) $c['email']) ?></div>
@@ -256,3 +249,96 @@ $smtpBloqueadoMs = is_string($flashErro ?? null)
         </div>
     <?php endif; ?>
 </section>
+
+<details class="email-advanced" id="oauth-avancado">
+    <summary>
+        <span>Opção avançada (OAuth)</span>
+    </summary>
+    <div class="email-advanced-body">
+        <p class="text-sm muted" style="grid-column:1/-1;margin:0;">
+            Só use se a TI fornecer Client ID e Client Secret. A maioria das empresas não precisa disso.
+        </p>
+        <?php foreach ($oauthCards as $key => $card): ?>
+            <?php
+            $cfg = $card['cfg'] ?? [];
+            $ready = $dbOk && !empty($cfg['configured']);
+            ?>
+            <div class="email-oauth-card" id="oauth-<?= View::e($key) ?>">
+                <div class="email-oauth-card-head">
+                    <div>
+                        <div class="fw-700"><?= View::e($card['title']) ?></div>
+                        <div class="text-sm muted"><?= View::e($card['subtitle']) ?></div>
+                    </div>
+                    <span class="pill <?= $ready ? 'pill-success' : 'pill-neutral' ?>">
+                        OAuth <?= $ready ? 'ativo' : 'inativo' ?>
+                    </span>
+                </div>
+                <div class="text-xs muted"><?= View::e($card['help']) ?></div>
+                <form method="post" action="/rh/email/config" class="form-grid" style="gap:.55rem;">
+                    <input type="hidden" name="provedor" value="<?= View::e($key) ?>">
+                    <input type="hidden" name="redirect_uri" value="<?= View::e((string) ($cfg['redirect_uri'] ?? '')) ?>">
+                    <input class="form-control" name="client_id"
+                           placeholder="Client ID"
+                           value="<?= View::e((string) ($cfg['client_id'] ?? '')) ?>"
+                           autocomplete="off" <?= !$dbOk ? 'disabled' : '' ?>>
+                    <input class="form-control" type="password" name="client_secret"
+                           placeholder="<?= !empty($cfg['client_secret']) ? 'Client Secret (vazio = manter)' : 'Client Secret' ?>"
+                           autocomplete="new-password" <?= !$dbOk ? 'disabled' : '' ?>>
+                    <?php if ($key === 'microsoft'): ?>
+                        <input class="form-control" name="tenant"
+                               value="<?= View::e((string) ($cfg['tenant'] ?? 'common')) ?>"
+                               placeholder="Tenant (common)" <?= !$dbOk ? 'disabled' : '' ?>>
+                    <?php endif; ?>
+                    <div class="text-xs muted">Redirect URI (cole no Azure/Google):</div>
+                    <input class="form-control" value="<?= View::e((string) ($cfg['redirect_uri'] ?? '')) ?>" readonly>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                        <button class="btn btn-secondary" type="submit" name="conectar_agora" value="0" <?= !$dbOk ? 'disabled' : '' ?>>Salvar</button>
+                        <button class="btn btn-primary" type="submit" name="conectar_agora" value="1" <?= !$dbOk ? 'disabled' : '' ?>>
+                            <?= $ready ? View::e($card['oauth_label']) : 'Salvar e conectar' ?>
+                        </button>
+                    </div>
+                </form>
+                <?php if ($ready): ?>
+                    <a class="btn btn-ghost" href="/rh/email/conectar/<?= View::e($key) ?>">Abrir login <?= View::e($card['title']) ?></a>
+                <?php endif; ?>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</details>
+
+<script>
+(function () {
+    const hints = <?= json_encode($hints, JSON_UNESCAPED_UNICODE) ?>;
+    const form = document.getElementById('emailSmtpForm');
+    if (!form) return;
+    const hintEl = document.getElementById('emailSmtpHint');
+    const extra = document.getElementById('emailSmtpExtra');
+    const userWrap = document.getElementById('smtpUserWrap');
+    const tabs = form.querySelectorAll('.email-provider-tabs label');
+    const host = document.getElementById('smtp_host');
+
+    function sync() {
+        const checked = form.querySelector('input[name="provedor"]:checked');
+        const value = checked ? checked.value : 'gmail';
+        tabs.forEach((lab) => {
+            const input = lab.querySelector('input');
+            lab.classList.toggle('is-active', !!(input && input.checked));
+        });
+        if (hintEl) hintEl.textContent = hints[value] || '';
+        const custom = value === 'smtp';
+        if (extra) extra.classList.toggle('is-open', custom);
+        if (userWrap) userWrap.hidden = !custom;
+        if (host) host.required = custom;
+    }
+
+    form.querySelectorAll('input[name="provedor"]').forEach((el) => {
+        el.addEventListener('change', sync);
+    });
+    sync();
+
+    if (window.location.hash === '#oauth-avancado') {
+        const adv = document.getElementById('oauth-avancado');
+        if (adv) adv.open = true;
+    }
+})();
+</script>

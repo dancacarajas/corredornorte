@@ -1,0 +1,128 @@
+.email-hero {
+  margin-bottom: 1rem;
+}
+
+.email-hero h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+
+.email-hero p {
+  margin: 0;
+  color: var(--ink-subtle, #596270);
+  max-width: 42rem;
+  line-height: 1.45;
+}
+
+.email-provider-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+.email-provider-tabs label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 650;
+  user-select: none;
+}
+
+.email-provider-tabs input {
+  accent-color: var(--brand-primary, #E06008);
+}
+
+.email-provider-tabs label.is-active {
+  border-color: rgba(224, 96, 8, 0.45);
+  background: var(--brand-primary-soft, #FFF1E6);
+  color: #9a3f00;
+}
+
+.email-hint {
+  margin: 0 0 0.85rem;
+  font-size: 0.84rem;
+  color: var(--ink-subtle, #596270);
+  line-height: 1.4;
+}
+
+.email-smtp-extra {
+  display: none;
+  grid-template-columns: 1.4fr 0.6fr 0.8fr;
+  gap: 0.55rem;
+}
+
+.email-smtp-extra.is-open {
+  display: grid;
+}
+
+.email-advanced {
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: 12px;
+  background: #fff;
+  padding: 0;
+  overflow: hidden;
+}
+
+.email-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 1rem 1.15rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.email-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.email-advanced > summary::after {
+  content: "Mostrar";
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--ink-subtle, #596270);
+}
+
+.email-advanced[open] > summary::after {
+  content: "Ocultar";
+}
+
+.email-advanced-body {
+  padding: 0 1.15rem 1.15rem;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.email-oauth-card {
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: var(--surface-2, #f6f7f8);
+}
+
+.email-oauth-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .email-smtp-extra.is-open {
+    grid-template-columns: 1fr;
+  }
+}

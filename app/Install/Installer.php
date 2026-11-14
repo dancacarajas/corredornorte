@@ -333,7 +333,7 @@ final class Installer
         $pdo->exec(
             "CREATE TABLE IF NOT EXISTS email_contas (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                provedor ENUM('gmail','microsoft') NOT NULL,
+                provedor ENUM('gmail','microsoft','smtp') NOT NULL,
                 email VARCHAR(255) NOT NULL,
                 nome_exibicao VARCHAR(160) NULL,
                 access_token_enc TEXT NULL,
@@ -362,7 +362,7 @@ final class Installer
             "CREATE TABLE IF NOT EXISTS email_envios_log (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 conta_id BIGINT UNSIGNED NULL,
-                provedor ENUM('gmail','microsoft','local','php_mail') NULL,
+                provedor ENUM('gmail','microsoft','local','php_mail','smtp') NULL,
                 destinatario VARCHAR(255) NOT NULL,
                 assunto VARCHAR(255) NOT NULL,
                 status ENUM('enviado','erro') NOT NULL,
@@ -385,6 +385,20 @@ final class Installer
             if (!$this->hasColumn($pdo, 'email_contas', $name)) {
                 $pdo->exec("ALTER TABLE email_contas ADD COLUMN {$name} {$def}");
             }
+        }
+
+        // SMTP corporativo (provedor genérico) — além de gmail/microsoft
+        try {
+            $pdo->exec("ALTER TABLE email_contas MODIFY COLUMN provedor ENUM('gmail','microsoft','smtp') NOT NULL");
+        } catch (\Throwable) {
+            // já migrado ou sem permissão
+        }
+        try {
+            $pdo->exec(
+                "ALTER TABLE email_envios_log MODIFY COLUMN provedor ENUM('gmail','microsoft','local','php_mail','smtp') NULL"
+            );
+        } catch (\Throwable) {
+            // já migrado
         }
     }
 

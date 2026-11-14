@@ -42,8 +42,9 @@ final class EmailContaController
 
         View::render('rh/email/index', [
             'pageTitle' => 'Conta de e-mail',
-            'pageSubtitle' => 'Conecte Gmail ou Microsoft (OAuth ou usuário/senha)',
+            'pageSubtitle' => 'Conecte com e-mail e senha — sem Client ID',
             'activeMenu' => 'email',
+            'extraCss' => ['css/email.css?v=smtp-simple-20261114'],
             'dbOk' => $dbOk,
             'contas' => $contas,
             'gmail' => $gmail,
@@ -68,6 +69,10 @@ final class EmailContaController
                 'email' => (string) ($_POST['email'] ?? ''),
                 'password' => (string) ($_POST['password'] ?? ''),
                 'nome' => (string) ($_POST['nome'] ?? ''),
+                'smtp_host' => (string) ($_POST['smtp_host'] ?? ''),
+                'smtp_port' => (string) ($_POST['smtp_port'] ?? ''),
+                'smtp_encryption' => (string) ($_POST['smtp_encryption'] ?? ''),
+                'smtp_user' => (string) ($_POST['smtp_user'] ?? ''),
             ], Auth::id());
             header('Location: /rh/email?ok=smtp');
         } catch (Throwable $e) {
