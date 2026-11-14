@@ -30,13 +30,13 @@ final class EmailTemplateService
             'folha.envio_colaborador' => [
                 'label' => 'Envio da folha de ponto',
                 'group' => 'Folha de ponto',
-                'trigger' => '1º envio do PDF (folha unitária e lote da medição)',
+                'trigger' => 'Etapa 6 da jornada — só com link de assinatura (PDF + link prontos)',
                 'vars' => $folhaVars,
             ],
             'folha.reenvio_colaborador' => [
                 'label' => 'Reenvio da folha de ponto',
                 'group' => 'Folha de ponto',
-                'trigger' => '2º envio em diante do mesmo PDF',
+                'trigger' => '2º envio em diante — também exige link de assinatura',
                 'vars' => $folhaVars,
             ],
             'folha.lembrete_assinatura' => [

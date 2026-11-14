@@ -337,7 +337,7 @@ $loteBotoes = [
         'acao' => 'email',
         'route' => '/rh/medicao/lote/email',
         'label' => '6. Enviar e-mails',
-        'confirm' => 'Enviar e-mail dos elegíveis com link?',
+        'confirm' => 'Enviar e-mail só de quem já tem link de assinatura (etapa 5)?',
     ],
 ];
 $rotulosAcao = [

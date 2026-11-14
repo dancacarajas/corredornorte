@@ -261,20 +261,25 @@ final class FolhaPontoService
             'SELECT COALESCE(MAX(tentativa),0)+1 FROM emails_envios WHERE documento_id=' . (int) $documentoId
         )->fetchColumn();
 
-        $abs = dirname(__DIR__, 2) . '/' . ltrim((string) $doc['arquivo_path'], '/');
-        $portalUrl = null;
-        if (!empty($doc['portal_token'])) {
-            $app = require dirname(__DIR__, 2) . '/config/app.php';
-            $base = rtrim(trim((string) ($app['url'] ?? '')), '/');
-            if ($base === '') {
-                $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-                $base = ($https ? 'https' : 'http') . '://' . \App\Helpers\AppUrl::sanitizeHost((string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8080'));
-            }
-            if (str_ends_with(strtolower($base), '/public')) {
-                $base = rtrim(substr($base, 0, -7), '/');
-            }
-            $portalUrl = $base . '/assinar/' . $doc['portal_token'];
+        // Jornada: e-mail só na etapa 6, com ação clara (link de assinatura).
+        // Sem portal_token o colaborador receberia PDF sem o que fazer.
+        if (empty($doc['portal_token'])) {
+            throw new RuntimeException(
+                'Gere o link de assinatura antes de enviar o e-mail (etapa 5 → 6 da jornada).'
+            );
         }
+
+        $abs = dirname(__DIR__, 2) . '/' . ltrim((string) $doc['arquivo_path'], '/');
+        $app = require dirname(__DIR__, 2) . '/config/app.php';
+        $base = rtrim(trim((string) ($app['url'] ?? '')), '/');
+        if ($base === '') {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+            $base = ($https ? 'https' : 'http') . '://' . \App\Helpers\AppUrl::sanitizeHost((string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8080'));
+        }
+        if (str_ends_with(strtolower($base), '/public')) {
+            $base = rtrim(substr($base, 0, -7), '/');
+        }
+        $portalUrl = $base . '/assinar/' . $doc['portal_token'];
 
         $tplKey = $tentativa > 1 ? 'folha.reenvio_colaborador' : 'folha.envio_colaborador';
         $emailContent = self::montarEmailFolha($doc, $portalUrl, $this->db, $tplKey, [

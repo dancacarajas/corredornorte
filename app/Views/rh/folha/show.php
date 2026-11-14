@@ -134,10 +134,14 @@ $fmtMin = static function (int $min): string {
             <button class="btn btn-primary" type="submit">Gerar PDF</button>
         </form>
         <?php if ($docAtivo !== null): ?>
+            <?php if (!empty($docAtivo['portal_token'])): ?>
             <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/enviar?<?= View::e($periodoQuery) ?>">
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
-                <button class="btn btn-secondary" type="submit">Enviar PDF por e-mail</button>
+                <button class="btn btn-secondary" type="submit">Enviar e-mail com link</button>
             </form>
+            <?php else: ?>
+            <button class="btn btn-secondary" type="button" disabled title="Gere o link de assinatura antes (etapa 5)">Enviar e-mail com link</button>
+            <?php endif; ?>
             <?php if (($docAtivo['status'] ?? '') === 'enviado' && !empty($docAtivo['portal_token'])): ?>
             <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/lembrar?<?= View::e($periodoQuery) ?>">
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
@@ -201,10 +205,12 @@ $fmtMin = static function (int $min): string {
                             <?php endif; ?>
                             <a class="btn btn-ghost btn-sm" href="/verificar/<?= View::e((string)$doc['codigo_verificacao']) ?>">Validar</a>
                             <?php if ($pendente): ?>
+                            <?php if (!empty($doc['portal_token'])): ?>
                             <form method="post" action="/rh/folha/<?= (int) $doc['espelho_id'] ?>/enviar?<?= View::e($periodoQuery) ?>">
                                 <input type="hidden" name="documento_id" value="<?= (int) $doc['id'] ?>">
-                                <button class="btn btn-primary btn-sm" type="submit"><?= $modeloAtual ? 'Enviar PDF' : 'Atualizar e enviar PDF' ?></button>
+                                <button class="btn btn-primary btn-sm" type="submit">Enviar e-mail</button>
                             </form>
+                            <?php endif; ?>
                             <form method="post" action="/rh/folha/<?= (int) $doc['espelho_id'] ?>/link-assinatura?<?= View::e($periodoQuery) ?>">
                                 <input type="hidden" name="documento_id" value="<?= (int) $doc['id'] ?>">
                                 <button class="btn btn-secondary btn-sm" type="submit"><?= $modeloAtual ? 'Gerar link assinatura' : 'Atualizar e gerar link' ?></button>

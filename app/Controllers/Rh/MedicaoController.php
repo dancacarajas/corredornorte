@@ -163,8 +163,9 @@ final class MedicaoController
             if (!empty($row['etapas']['email'])) {
                 return 'já enviado';
             }
+            // Jornada: etapa 5 (link) antes da 6 (e-mail) — sem link não há ação para o colaborador.
             if (empty($row['etapas']['link'])) {
-                (new AssinaturaEletronicaService($pdo))->gerarLinkPortal($docId, Auth::id(), (int) $row['espelho_id']);
+                throw new RuntimeException('Gere o link de assinatura antes de enviar o e-mail (etapa 5).');
             }
             $result = (new FolhaPontoService($pdo))->enviarDocumento($docId, null, (int) $row['espelho_id']);
             if (empty($result['ok'])) {
