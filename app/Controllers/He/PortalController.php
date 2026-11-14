@@ -459,7 +459,8 @@ final class PortalController
         try {
             $lista = (new AssinaturaEletronicaService(Database::connection()))
                 ->listarDoColaborador((int) $user['id']);
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            error_log('HE folhas listar: ' . $e->getMessage());
             $_SESSION['he_error'] = 'Folhas indisponíveis. Contate o RH se o problema persistir.';
         }
 

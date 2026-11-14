@@ -250,7 +250,7 @@ final class AssinaturaEletronicaService
             return [];
         }
         $st = $this->db->prepare(
-            "SELECT d.id, d.status, d.portal_token, d.assinatura_em, d.created_at, d.updated_at,
+            "SELECT d.id, d.status, d.portal_token, d.assinatura_em, d.created_at,
                     e.id AS espelho_id, e.status AS espelho_status,
                     pp.data_inicio, pp.data_fim
              FROM documentos d
@@ -259,8 +259,7 @@ final class AssinaturaEletronicaService
              WHERE e.colaborador_id = :c
                AND d.status IN ('enviado', 'assinado')
                AND d.portal_token IS NOT NULL
-               AND TRIM(d.portal_token) <> ''
-               AND d.status <> 'invalidado'
+               AND d.portal_token <> ''
              ORDER BY
                CASE WHEN d.status = 'enviado' THEN 0 ELSE 1 END,
                pp.data_inicio DESC,
@@ -282,7 +281,7 @@ final class AssinaturaEletronicaService
              WHERE e.colaborador_id = :c
                AND d.status = 'enviado'
                AND d.portal_token IS NOT NULL
-               AND TRIM(d.portal_token) <> ''"
+               AND d.portal_token <> ''"
         );
         $st->execute(['c' => $colaboradorId]);
         return (int) $st->fetchColumn();
@@ -306,7 +305,7 @@ final class AssinaturaEletronicaService
                AND e.colaborador_id = :c
                AND d.status IN ('enviado', 'assinado')
                AND d.portal_token IS NOT NULL
-               AND TRIM(d.portal_token) <> ''
+               AND d.portal_token <> ''
              LIMIT 1"
         );
         $st->execute(['id' => $documentoId, 'c' => $colaboradorId]);
