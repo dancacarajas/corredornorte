@@ -91,32 +91,109 @@ final class PortalController
             // migração pode ainda não existir
         }
 
-        $relatoriosAbertos = 0;
+        $assinaturaFolha = new AssinaturaEletronicaService(Database::connection());
+        $relatorios = [];
+        $folhas = [];
         try {
-            $relatoriosAbertos = $ra->contarAbertos($id);
+            $relatorios = $ra->listarDoColaborador($id);
         } catch (Throwable) {
-            $relatoriosAbertos = 0;
+            $relatorios = [];
+        }
+        try {
+            $folhas = $assinaturaFolha->listarDoColaborador($id);
+        } catch (Throwable) {
+            $folhas = [];
         }
 
-        $folhasPendentes = 0;
+        $raAssinados = [];
         try {
-            $folhasPendentes = (new AssinaturaEletronicaService(Database::connection()))
-                ->contarPendentesDoColaborador($id);
+            $raAssinados = $ra->idsAssinadosDoColaborador($id);
         } catch (Throwable) {
-            $folhasPendentes = 0;
+            $raAssinados = [];
         }
+
+        $tarefas = [];
+        foreach ($folhas as $folha) {
+            if ((string) ($folha['status'] ?? '') !== 'enviado') {
+                continue;
+            }
+            $ini = (string) ($folha['data_inicio'] ?? '');
+            $fim = (string) ($folha['data_fim'] ?? '');
+            $tarefas[] = [
+                'tipo' => 'folha',
+                'prioridade' => 1,
+                'titulo' => 'Assinar folha de ponto',
+                'descricao' => 'Liberada pela medição — confira o PDF e assine eletronicamente.',
+                'periodo' => $this->rotuloPeriodo($ini, $fim),
+                'periodo_inicio' => $ini,
+                'cta' => 'Assinar agora',
+                'href' => '/he/folhas/' . (int) $folha['id'],
+                'tom' => 'urgente',
+            ];
+        }
+        foreach ($relatorios as $rel) {
+            $status = (string) ($rel['status'] ?? 'rascunho');
+            $relId = (int) ($rel['id'] ?? 0);
+            $ini = (string) ($rel['data_inicio'] ?? '');
+            $fim = (string) ($rel['data_fim'] ?? '');
+            $periodo = $this->rotuloPeriodo($ini, $fim);
+            if ($status === 'rascunho') {
+                $tarefas[] = [
+                    'tipo' => 'ra_preencher',
+                    'prioridade' => 2,
+                    'titulo' => 'Preencher relatório de atividades',
+                    'descricao' => 'Descreva os dias do período e, se houver, declare a hora extra.',
+                    'periodo' => $periodo,
+                    'periodo_inicio' => $ini,
+                    'cta' => 'Continuar preenchimento',
+                    'href' => '/he/relatorios/' . $relId,
+                    'tom' => 'acao',
+                ];
+                continue;
+            }
+            if (in_array($status, ['enviado', 'aprovado'], true) && !isset($raAssinados[$relId])) {
+                $tarefas[] = [
+                    'tipo' => 'ra_assinar',
+                    'prioridade' => 1,
+                    'titulo' => 'Assinar relatório de atividades',
+                    'descricao' => 'Relatório enviado — finalize com a assinatura eletrônica.',
+                    'periodo' => $periodo,
+                    'periodo_inicio' => $ini,
+                    'cta' => 'Assinar relatório',
+                    'href' => '/he/relatorios/' . $relId,
+                    'tom' => 'urgente',
+                ];
+            }
+        }
+
+        usort($tarefas, static function (array $a, array $b): int {
+            $p = ($a['prioridade'] ?? 99) <=> ($b['prioridade'] ?? 99);
+            if ($p !== 0) {
+                return $p;
+            }
+            return strcmp((string) ($b['periodo_inicio'] ?? ''), (string) ($a['periodo_inicio'] ?? ''));
+        });
+
+        $primeiroNome = trim(explode(' ', (string) ($user['nome'] ?? ''), 2)[0] ?: 'olá');
 
         View::render('he/overview', [
-            'pageTitle' => 'Visão Geral',
-            'pageSubtitle' => 'Portal do colaborador',
+            'pageTitle' => 'Olá, ' . $primeiroNome,
+            'pageSubtitle' => $tarefas === [] ? 'Tudo em dia por enquanto' : 'Sua fila de pendências',
             'activeMenu' => 'overview',
             'user' => $user,
-            'relatoriosAbertos' => $relatoriosAbertos,
-            'folhasPendentes' => $folhasPendentes,
+            'tarefas' => $tarefas,
             'flash' => $_SESSION['he_flash'] ?? null,
             'error' => $_SESSION['he_error'] ?? null,
         ], 'layouts/portal');
         unset($_SESSION['he_flash'], $_SESSION['he_error']);
+    }
+
+    private function rotuloPeriodo(string $ini, string $fim): string
+    {
+        if ($ini !== '' && $fim !== '') {
+            return date('d/m/Y', strtotime($ini) ?: time()) . ' a ' . date('d/m/Y', strtotime($fim) ?: time());
+        }
+        return 'Período não informado';
     }
 
     /** Rotas antigas de solicitação/aprovação HE → portal. */

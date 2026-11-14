@@ -20,7 +20,7 @@ $isActive = static fn(string $key): string => $activeMenu === $key ? ' is-active
                 <li>
                     <a class="nav-link<?= $isActive('overview') ?>" href="/he">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h7V4H4v9zm9 7h7V11h-7v9zM4 20h7v-5H4v5zm9-16v5h7V4h-7z"/></svg>
-                        Visão Geral
+                        Início
                     </a>
                 </li>
                 <li>

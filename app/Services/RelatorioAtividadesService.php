@@ -449,6 +449,35 @@ final class RelatorioAtividadesService
         return (int) $st->fetchColumn();
     }
 
+    /**
+     * Mapa relatorio_id => true para RAs já assinados eletronicamente.
+     *
+     * @return array<int,true>
+     */
+    public function idsAssinadosDoColaborador(int $colaboradorId): array
+    {
+        if ($colaboradorId <= 0 || !$this->hasColumn('ra_documentos', 'relatorio_id')) {
+            return [];
+        }
+        try {
+            $st = $this->db->prepare(
+                "SELECT d.relatorio_id
+                 FROM ra_documentos d
+                 INNER JOIN ra_relatorios r ON r.id = d.relatorio_id
+                 WHERE r.colaborador_id = :c
+                   AND d.status = 'assinado'"
+            );
+            $st->execute(['c' => $colaboradorId]);
+        } catch (Throwable) {
+            return [];
+        }
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_COLUMN) ?: [] as $relatorioId) {
+            $out[(int) $relatorioId] = true;
+        }
+        return $out;
+    }
+
     /** @param array<string,mixed>|null $cfg */
     private function garantirDias(
         int $relatorioId,
