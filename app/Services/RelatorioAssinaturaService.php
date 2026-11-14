@@ -129,7 +129,8 @@ final class RelatorioAssinaturaService
             return null;
         }
         $st = $this->db->prepare(
-            "SELECT d.*, r.status AS relatorio_status, c.nome, c.matricula, pp.data_inicio, pp.data_fim
+            "SELECT d.*, r.status AS relatorio_status, r.colaborador_id,
+                    c.nome, c.matricula, pp.data_inicio, pp.data_fim
              FROM ra_documentos d
              INNER JOIN ra_relatorios r ON r.id = d.relatorio_id
              INNER JOIN rh_colaboradores c ON c.id = r.colaborador_id
@@ -219,6 +220,9 @@ final class RelatorioAssinaturaService
                 'arquivo_assinado_sha256' => $hashAssinado,
                 'metodo_assinatura' => self::METODO_ASSINATURA,
                 'assinado_em' => $assinadoEm,
+                'colaborador_id' => (int) ($doc['colaborador_id'] ?? 0) ?: null,
+                'colaborador_nome' => (string) ($doc['nome'] ?? ''),
+                'ator_contexto' => 'portal_he',
             ]);
             $this->db->commit();
         } catch (Throwable $erro) {
@@ -298,10 +302,29 @@ final class RelatorioAssinaturaService
 
     private function auditar(int $id, string $acao, array $dados, ?int $usuario = null): void
     {
+        // rh_auditoria.usuario_id referencia usuarios(id). Portal HE usa colaborador_id — não misturar.
+        $usuarioId = $this->usuarioSistemaId($usuario);
+        if ($usuario !== null && $usuarioId === null) {
+            $dados['ator_colaborador_id'] = $usuario;
+            $dados['ator_contexto'] = 'portal_he';
+        }
+
         $this->db->prepare(
             "INSERT INTO rh_auditoria (entidade, entidade_id, acao, depois_json, usuario_id)
              VALUES ('ra_documentos', ?, ?, ?, ?)"
-        )->execute([$id, $acao, json_encode($dados, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), $usuario]);
+        )->execute([$id, $acao, json_encode($dados, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), $usuarioId]);
+    }
+
+    private function usuarioSistemaId(?int $usuario): ?int
+    {
+        if ($usuario === null || $usuario <= 0) {
+            return null;
+        }
+        $st = $this->db->prepare('SELECT id FROM usuarios WHERE id = ? LIMIT 1');
+        $st->execute([$usuario]);
+        $id = $st->fetchColumn();
+
+        return $id === false ? null : (int) $id;
     }
 
     private function selarSeDisponivel(string $pdf): void

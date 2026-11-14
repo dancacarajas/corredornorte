@@ -223,8 +223,9 @@ $primeiroPendenteAberto = false;
                         <div class="form-field">
                             <label class="form-label" for="raNomeAssinar">Nome completo (conforme cadastro)</label>
                             <input class="form-control" id="raNomeAssinar" name="nome" type="text" required maxlength="160"
-                                   autocomplete="name" value="<?= View::e($nomeAssinaturaInformado) ?>"
-                                   placeholder="Digite seu nome completo">
+                                   autocomplete="name"
+                                   value="<?= View::e($nomeAssinaturaInformado !== '' ? $nomeAssinaturaInformado : (string) ($rel['nome'] ?? '')) ?>"
+                                   placeholder="Digite seu nome completo conforme o cadastro">
                         </div>
                         <div class="form-field" style="align-self:end;">
                             <button class="btn btn-primary" type="submit" id="raEmbedSignBtn" style="width:100%;min-height:46px;">

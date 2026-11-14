@@ -11,6 +11,7 @@ use App\Services\RelatorioAssinaturaService;
 use App\Services\RelatorioAtividadesExcel;
 use App\Services\RelatorioAtividadesPdf;
 use App\Services\RelatorioAtividadesService;
+use PDOException;
 use RuntimeException;
 use Throwable;
 
@@ -332,7 +333,8 @@ final class PortalController
                     throw new RuntimeException('Este relatório já foi assinado eletronicamente.');
                 }
                 $pdf = (new RelatorioAtividadesPdf())->gerarArquivo($dados);
-                $assinatura->gerarLinkPortal($relatorioId, $pdf, (int) $user['id']);
+                // Auditoria FK aponta para usuarios — no portal HE não há usuario_id de sistema.
+                $assinatura->gerarLinkPortal($relatorioId, $pdf, null);
                 $doc = $assinatura->buscarPorRelatorio($relatorioId);
             }
             if ($doc === null || empty($doc['portal_token']) || empty($doc['hash_sha256'])) {
@@ -346,6 +348,9 @@ final class PortalController
                 (string) $doc['hash_sha256']
             );
             $_SESSION['he_flash'] = 'Relatório assinado eletronicamente com sucesso!';
+        } catch (PDOException) {
+            $_SESSION['he_error'] = 'Não foi possível concluir a assinatura. Tente novamente.';
+            $_SESSION['ra_nome_informado'] = $nome;
         } catch (RuntimeException $e) {
             $_SESSION['he_error'] = $e->getMessage();
             $_SESSION['ra_nome_informado'] = $nome;
