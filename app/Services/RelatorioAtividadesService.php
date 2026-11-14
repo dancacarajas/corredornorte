@@ -9,6 +9,7 @@ use DateInterval;
 use DateTimeImmutable;
 use PDO;
 use RuntimeException;
+use Throwable;
 
 final class RelatorioAtividadesService
 {
