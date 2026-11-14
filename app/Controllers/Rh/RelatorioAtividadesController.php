@@ -21,6 +21,7 @@ final class RelatorioAtividadesController
         $status = trim((string) ($_GET['status'] ?? ''));
         $dataInicio = (string) ($_GET['data_inicio'] ?? '');
         $dataFim = (string) ($_GET['data_fim'] ?? '');
+        $q = trim((string) ($_GET['q'] ?? ''));
         $lista = [];
         $dbOk = $pdo instanceof PDO;
         if ($dbOk) {
@@ -28,7 +29,9 @@ final class RelatorioAtividadesController
                 $lista = (new RelatorioAtividadesService($pdo))->listarRh(
                     $status !== '' ? $status : null,
                     preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio) ? $dataInicio : null,
-                    preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim) ? $dataFim : null
+                    preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim) ? $dataFim : null,
+                    200,
+                    $q !== '' ? $q : null
                 );
             } catch (Throwable) {
                 $lista = [];
@@ -44,6 +47,7 @@ final class RelatorioAtividadesController
             'status' => $status,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
+            'q' => $q,
             'flash' => $_SESSION['ra_flash'] ?? null,
             'error' => $_SESSION['ra_error'] ?? null,
         ]);

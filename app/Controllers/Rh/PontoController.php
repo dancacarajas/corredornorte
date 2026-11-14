@@ -829,12 +829,26 @@ final class PontoController
             . '<button class="btn btn-secondary btn-sm" type="button" data-modal-open="tiposJustModal">Tipos de justificativa</button>'
             . '<a class="btn btn-primary btn-sm" href="/rh/folha/' . $espelhoId . '?' . $qsSeguro . '">Folha / Enviar PDF</a>';
 
+        $divergenciasAbertas = [];
+        try {
+            $divStmt = $pdo->prepare(
+                "SELECT id, data_ocorrencia, motivo, status, created_at
+                 FROM ponto_divergencias
+                 WHERE espelho_id = :id AND status IN ('aberta','em_analise')
+                 ORDER BY created_at DESC, id DESC"
+            );
+            $divStmt->execute(['id' => $espelhoId]);
+            $divergenciasAbertas = $divStmt->fetchAll() ?: [];
+        } catch (Throwable) {
+            $divergenciasAbertas = [];
+        }
+
         View::render('rh/ponto/show', [
             'pageTitle' => (string) $espelho['nome'],
             'pageSubtitle' => trim(($espelho['cargo'] ?: $espelho['funcao'] ?: '') . ' · Mat. ' . $espelho['matricula']),
             'activeMenu' => 'ponto',
             'topbarActions' => $topbarActions,
-            'extraCss' => ['css/ponto.css?v=he-modal-20261112d'],
+            'extraCss' => ['css/ponto.css?v=p1-20261114'],
             'espelho' => $espelho,
             'competencias' => $competencias,
             'statusPeriodo' => $statusPeriodo,
@@ -843,6 +857,7 @@ final class PontoController
             'dias' => $dias,
             'heAutorizadas' => $heAutorizadas,
             'heDeclaracoes' => $heDeclaracoes,
+            'divergenciasAbertas' => $divergenciasAbertas,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'tiposJustificativa' => $tipos,
@@ -948,11 +963,36 @@ final class PontoController
         $pdo = Db::tryConnection();
         $espelhoId = (int) $id;
         $diaId = (int) ($_POST['ponto_dia_id'] ?? 0);
+        $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
+            || strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
+
         if (!$pdo instanceof PDO || $espelhoId <= 0 || $diaId <= 0) {
+            if ($wantsJson) {
+                http_response_code(400);
+                $this->responderJson(['ok' => false, 'error' => 'Parâmetros inválidos para salvar batida.']);
+                return;
+            }
             header('Location: /rh/ponto');
             exit;
         }
         try {
+            $normHora = static function (mixed $raw): ?string {
+                $val = trim((string) $raw);
+                if ($val === '' || $val === '--:--') {
+                    return null;
+                }
+                if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $val)) {
+                    throw new RuntimeException('Horário inválido: "' . $val . '". Use formato HH:MM.');
+                }
+                return $val;
+            };
+            $batidas = [
+                'ent1' => $normHora($_POST['ent1'] ?? null),
+                'sai1' => $normHora($_POST['sai1'] ?? null),
+                'ent2' => $normHora($_POST['ent2'] ?? null),
+                'sai2' => $normHora($_POST['sai2'] ?? null),
+            ];
+
             $pdo->beginTransaction();
             $st = $pdo->prepare('SELECT e.status FROM ponto_dias d INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
                 WHERE d.id = ? AND e.id = ? FOR UPDATE');
@@ -964,17 +1004,85 @@ final class PontoController
             if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
                 throw new RuntimeException('Reabra o período para editar as batidas.');
             }
-            (new CalculoPontoService($pdo))->salvarBatidas($diaId, [
-                'ent1' => $_POST['ent1'] ?? null,
-                'sai1' => $_POST['sai1'] ?? null,
-                'ent2' => $_POST['ent2'] ?? null,
-                'sai2' => $_POST['sai2'] ?? null,
-            ], 'manual');
+            $calc = new CalculoPontoService($pdo);
+            $calc->salvarBatidas($diaId, $batidas, 'manual');
             $pdo->commit();
+
+            if ($wantsJson) {
+                $diaRowStmt = $pdo->prepare(
+                    'SELECT d.*, e.status AS espelho_status
+                     FROM ponto_dias d
+                     INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                     WHERE d.id = ?'
+                );
+                $diaRowStmt->execute([$diaId]);
+                $diaRow = $diaRowStmt->fetch() ?: [];
+
+                $ini = (string) ($_POST['data_inicio'] ?? '');
+                $fim = (string) ($_POST['data_fim'] ?? '');
+                $filtroData = preg_match('/^\d{4}-\d{2}-\d{2}$/D', $ini) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $fim);
+                $totSql = 'SELECT
+                        COALESCE(SUM(he_50_min), 0) AS he50,
+                        COALESCE(SUM(he_100_min), 0) AS he100,
+                        COALESCE(SUM(adn_min), 0) AS adn,
+                        COALESCE(SUM(horas_falta_min), 0) AS falta,
+                        COALESCE(SUM(atraso_bruto_min), 0) AS atraso,
+                        COALESCE(SUM(desconto_min), 0) AS desconto
+                     FROM ponto_dias WHERE espelho_id = :e' . ($filtroData ? ' AND data BETWEEN :i AND :f' : '');
+                $totStmt = $pdo->prepare($totSql);
+                $totParams = ['e' => $espelhoId];
+                if ($filtroData) {
+                    $totParams['i'] = $ini;
+                    $totParams['f'] = $fim;
+                }
+                $totStmt->execute($totParams);
+                $tot = $totStmt->fetch() ?: [];
+
+                $this->responderJson([
+                    'ok' => true,
+                    'espelho_status' => (string) ($diaRow['espelho_status'] ?? $status),
+                    'dia' => [
+                        'id' => (int) ($diaRow['id'] ?? $diaId),
+                        'tipo_dia' => (string) ($diaRow['tipo_dia'] ?? ''),
+                        'ok_status' => (string) ($diaRow['ok_status'] ?? 'pendente'),
+                        'dia_falta' => (int) ($diaRow['dia_falta'] ?? 0),
+                        'total_trab_min' => (int) ($diaRow['total_trab_min'] ?? 0),
+                        'total_trab_fmt' => $calc->fmt((int) ($diaRow['total_trab_min'] ?? 0)),
+                        'horas_previstas_min' => (int) ($diaRow['horas_previstas_min'] ?? 0),
+                        'horas_previstas_fmt' => $calc->fmt((int) ($diaRow['horas_previstas_min'] ?? 0)),
+                        'horas_falta_min' => (int) ($diaRow['horas_falta_min'] ?? 0),
+                        'horas_falta_fmt' => $calc->fmt((int) ($diaRow['horas_falta_min'] ?? 0)),
+                        'atraso_bruto_min' => (int) ($diaRow['atraso_bruto_min'] ?? 0),
+                        'atraso_bruto_fmt' => $calc->fmt((int) ($diaRow['atraso_bruto_min'] ?? 0)),
+                        'he_50_min' => (int) ($diaRow['he_50_min'] ?? 0),
+                        'he_50_fmt' => $calc->fmt((int) ($diaRow['he_50_min'] ?? 0)),
+                        'he_100_min' => (int) ($diaRow['he_100_min'] ?? 0),
+                        'he_100_fmt' => $calc->fmt((int) ($diaRow['he_100_min'] ?? 0)),
+                        'adn_min' => (int) ($diaRow['adn_min'] ?? 0),
+                        'adn_fmt' => $calc->fmt((int) ($diaRow['adn_min'] ?? 0)),
+                        'desconto_min' => (int) ($diaRow['desconto_min'] ?? 0),
+                        'desconto_fmt' => $calc->fmt((int) ($diaRow['desconto_min'] ?? 0)),
+                    ],
+                    'totais' => [
+                        'he50_fmt' => $calc->fmt((int) ($tot['he50'] ?? 0)),
+                        'he100_fmt' => $calc->fmt((int) ($tot['he100'] ?? 0)),
+                        'adn_fmt' => $calc->fmt((int) ($tot['adn'] ?? 0)),
+                        'falta_fmt' => $calc->fmt((int) ($tot['falta'] ?? 0)),
+                        'atraso_fmt' => $calc->fmt((int) ($tot['atraso'] ?? 0)),
+                        'desconto_fmt' => $calc->fmt((int) ($tot['desconto'] ?? 0)),
+                    ],
+                ]);
+                return;
+            }
             $this->redirectEspelho($espelhoId, 'batida');
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
+            }
+            if ($wantsJson) {
+                http_response_code(422);
+                $this->responderJson(['ok' => false, 'error' => $e->getMessage()]);
+                return;
             }
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
         }
@@ -1032,13 +1140,19 @@ final class PontoController
                 }
             }
             $anexo = null;
-            if (isset($_FILES['anexo']) && ($_FILES['anexo']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+            if (isset($_FILES['anexo']) && ($_FILES['anexo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+                $info = \App\Helpers\UploadGuard::validate(
+                    $_FILES['anexo'],
+                    ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
+                    ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'],
+                    10485760
+                );
                 $dir = dirname(__DIR__, 3) . '/storage/uploads/anexos';
                 if (!is_dir($dir)) {
                     mkdir($dir, 0775, true);
                 }
-                $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) $_FILES['anexo']['name']) ?: 'anexo.bin';
-                $dest = $dir . '/' . bin2hex(random_bytes(8)) . '_' . $safe;
+                $safeBase = preg_replace('/[^a-zA-Z0-9._-]/', '_', pathinfo((string) $_FILES['anexo']['name'], PATHINFO_FILENAME)) ?: 'anexo';
+                $dest = $dir . '/' . bin2hex(random_bytes(8)) . '_' . $safeBase . '.' . $info['ext'];
                 if (!move_uploaded_file((string) $_FILES['anexo']['tmp_name'], $dest)) {
                     throw new RuntimeException('Não foi possível salvar o anexo.');
                 }
@@ -1085,6 +1199,50 @@ final class PontoController
             }
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
         }
+    }
+
+    public function baixarAnexo(string $justificativaId = '0'): void
+    {
+        Auth::requireLogin();
+        if (!Auth::canAny('ponto.ver', 'ponto.editar')) {
+            Auth::requirePermission('ponto.ver');
+        }
+        $pdo = Db::tryConnection();
+        $id = (int) $justificativaId;
+        if (!$pdo instanceof PDO || $id <= 0) {
+            http_response_code(404);
+            echo 'Anexo não encontrado';
+            return;
+        }
+        $stmt = $pdo->prepare('SELECT anexo_path FROM ponto_justificativas WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $id]);
+        $rel = (string) ($stmt->fetchColumn() ?: '');
+        $anexosRoot = realpath(dirname(__DIR__, 3) . '/storage/uploads/anexos');
+        $path = $rel !== '' ? realpath(dirname(__DIR__, 3) . '/' . ltrim($rel, '/')) : false;
+        if ($anexosRoot === false || $path === false || !str_starts_with($path, $anexosRoot . DIRECTORY_SEPARATOR) || !is_file($path)) {
+            http_response_code(404);
+            echo 'Arquivo ausente';
+            return;
+        }
+
+        $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
+        $mimeMap = [
+            'pdf' => 'application/pdf',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'webp' => 'image/webp',
+        ];
+        $mime = $mimeMap[$ext] ?? 'application/octet-stream';
+        $filename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($path)) ?: ('anexo_' . $id);
+
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: inline; filename="' . $filename . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        header('Cache-Control: private, no-store');
+        header('X-Content-Type-Options: nosniff');
+        readfile($path);
+        exit;
     }
 
     public function tipoJustificativa(): void
@@ -1180,4 +1338,126 @@ final class PontoController
     {
         $this->salvarDia($id);
     }
+
+    /**
+     * Preenche dias úteis pendentes (sem batidas) com o horário previsto do dia/jornada.
+     */
+    public function apontarPrevisto(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        if (!$pdo instanceof PDO || $espelhoId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $pdo->beginTransaction();
+            $st = $pdo->prepare('SELECT status FROM ponto_espelhos WHERE id = ? FOR UPDATE');
+            $st->execute([$espelhoId]);
+            $status = $st->fetchColumn();
+            if ($status === false) {
+                throw new RuntimeException('Espelho não encontrado.');
+            }
+            if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
+                throw new RuntimeException('Reabra o período para preencher os horários previstos.');
+            }
+
+            $ini = trim((string) ($_POST['data_inicio'] ?? ''));
+            $fim = trim((string) ($_POST['data_fim'] ?? ''));
+            $filtroData = preg_match('/^\d{4}-\d{2}-\d{2}$/D', $ini) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $fim);
+
+            $sqlDias = "SELECT id, previsto_entrada, previsto_intervalo_inicio, previsto_intervalo_fim, previsto_saida
+                        FROM ponto_dias
+                        WHERE espelho_id = :id
+                          AND tipo_dia = 'trabalho'
+                          AND ent1 IS NULL AND sai1 IS NULL AND ent2 IS NULL AND sai2 IS NULL"
+                . ($filtroData ? ' AND data BETWEEN :ini AND :fim' : '')
+                . ' ORDER BY data ASC';
+            $qDias = $pdo->prepare($sqlDias);
+            $params = ['id' => $espelhoId];
+            if ($filtroData) {
+                $params['ini'] = $ini;
+                $params['fim'] = $fim;
+            }
+            $qDias->execute($params);
+            $pendentes = $qDias->fetchAll() ?: [];
+
+            if ($pendentes !== []) {
+                $diaIds = array_map(static fn(array $r): int => (int) $r['id'], $pendentes);
+                $in = implode(',', $diaIds);
+                $marcacoes = [];
+                foreach ($pdo->query(
+                    "SELECT ponto_dia_id, sequencia, horario, origem
+                     FROM ponto_marcacoes
+                     WHERE ponto_dia_id IN ({$in}) AND origem IN ('gerado','previsto')"
+                ) as $mRow) {
+                    $marcacoes[(int) $mRow['ponto_dia_id']][(string) $mRow['origem']][(int) $mRow['sequencia']] = substr((string) $mRow['horario'], 0, 5);
+                }
+
+                $calc = new CalculoPontoService($pdo);
+                $aplicados = 0;
+                foreach ($pendentes as $dia) {
+                    $did = (int) $dia['id'];
+                    $map = [];
+                    foreach ($marcacoes[$did]['gerado'] ?? [] as $seq => $hora) {
+                        $slot = $seq >= 5 ? $seq - 4 : $seq;
+                        $map[$slot] = $hora;
+                    }
+                    if ($map === []) {
+                        foreach ($marcacoes[$did]['previsto'] ?? [] as $seq => $hora) {
+                            $map[$seq] = $hora;
+                        }
+                    }
+                    $e1 = $map[1] ?? (!empty($dia['previsto_entrada']) ? substr((string) $dia['previsto_entrada'], 0, 5) : null);
+                    $s1 = $map[2] ?? (!empty($dia['previsto_intervalo_inicio']) ? substr((string) $dia['previsto_intervalo_inicio'], 0, 5) : null);
+                    $e2 = $map[3] ?? (!empty($dia['previsto_intervalo_fim']) ? substr((string) $dia['previsto_intervalo_fim'], 0, 5) : null);
+                    $s2 = $map[4] ?? (!empty($dia['previsto_saida']) ? substr((string) $dia['previsto_saida'], 0, 5) : null);
+                    if (!$e1 && !$s2) {
+                        continue;
+                    }
+                    $calc->salvarBatidas($did, [
+                        'ent1' => $e1,
+                        'sai1' => $s1,
+                        'ent2' => $e2,
+                        'sai2' => $s2,
+                    ], 'gerado', false);
+                    $aplicados++;
+                }
+                if ($aplicados > 0) {
+                    $calc->atualizarTotaisEspelho($espelhoId);
+                    $pdo->prepare("UPDATE ponto_espelhos SET status='em_tratamento' WHERE id=:id AND status='em_aberto'")
+                        ->execute(['id' => $espelhoId]);
+                }
+            }
+
+            $pdo->commit();
+            $this->redirectEspelho($espelhoId, 'previsto-aplicado');
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /**
+     * Marca divergências apontadas pelo colaborador como resolvidas e devolve o espelho para tratamento.
+     */
+    public function resolverDivergencia(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        if (!$pdo instanceof PDO || $espelhoId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $obs = trim((string) ($_POST['resolucao_obs'] ?? ''));
+            (new \App\Services\AssinaturaEletronicaService($pdo))->resolverDivergencia($espelhoId, Auth::id(), $obs);
+            $this->redirectEspelho($espelhoId, 'divergencia-resolvida');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
 }
+

@@ -101,7 +101,7 @@ if ($status === 'invalidado') {
                     </div>
                     <div>
                         <dt class="muted text-xs">Período da folha</dt>
-                        <dd><?= View::e(PeriodoPonto::rotulo(PeriodoPonto::selecionar($documento['periodo_inicio'], $documento['periodo_fim'], (int) $documento['ano'], (int) $documento['mes']))) ?></dd>
+                        <dd><?= View::e(PeriodoPonto::rotulo(PeriodoPonto::selecionar($documento['periodo_inicio'] ?? $documento['periodo_cartao_inicio'] ?? null, $documento['periodo_fim'] ?? $documento['periodo_cartao_fim'] ?? null, (int) $documento['ano'], (int) $documento['mes']))) ?></dd>
                     </div>
                     <?php if ($assinado && !empty($documento['assinatura_em'])): ?>
                         <div>

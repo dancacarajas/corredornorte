@@ -104,7 +104,13 @@ final class FolhaPdfRenderer
         ]);
         $this->field($pdf, 'CONTRATO / CC / OS', $lotacao, $left, 62, 110);
 
-        $this->drawSchedule($pdf, is_array($employee['jornada_semanal'] ?? null) ? $employee['jornada_semanal'] : [], 124, 30);
+        $this->drawSchedule(
+            $pdf,
+            is_array($employee['jornada_semanal'] ?? null) ? $employee['jornada_semanal'] : [],
+            124,
+            30,
+            (string) ($employee['escala_tipo'] ?? '')
+        );
 
         $bottom = $this->drawTable(
             $pdf,
@@ -151,7 +157,7 @@ final class FolhaPdfRenderer
     }
 
     /** @param list<array<string,mixed>> $weekly */
-    private function drawSchedule(FPDF $pdf, array $weekly, float $x, float $y): void
+    private function drawSchedule(FPDF $pdf, array $weekly, float $x, float $y, string $escalaTipo = ''): void
     {
         $w = 207.5 - $x;
         $rows = [];
@@ -161,12 +167,17 @@ final class FolhaPdfRenderer
             }
         }
 
+        $tituloHorario = match ($escalaTipo) {
+            '12x36' => 'Horário de trabalho (12x36)',
+            'ciclo' => 'Horário de trabalho (Ciclo)',
+            default => 'Horário de trabalho',
+        };
         $pdf->SetFillColor(238, 240, 242);
         $pdf->Rect($x, $y, $w, 7, 'F');
         $pdf->SetFont('Helvetica', 'B', 7.5);
         $pdf->SetTextColor(34, 36, 39);
         $pdf->SetXY($x, $y + 1.5);
-        $pdf->Cell($w, 4, $this->txt('Horário de trabalho'), 0, 0, 'C');
+        $pdf->Cell($w, 4, $this->txt($tituloHorario), 0, 0, 'C');
 
         $headers = ['Dia', 'Ent.1', 'Saí.1', 'Ent.2', 'Saí.2'];
         $colW = [$w * 0.18, $w * 0.205, $w * 0.205, $w * 0.205, $w * 0.205];

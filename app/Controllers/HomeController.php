@@ -47,10 +47,6 @@ final class HomeController
             $erroPeriodo = $erro->getMessage();
         }
 
-        $inicio = new DateTimeImmutable($periodo['data_inicio']);
-        $fim = new DateTimeImmutable($periodo['data_fim']);
-        $quantidadeMeses = ((int) $fim->format('Y') - (int) $inicio->format('Y')) * 12
-            + (int) $fim->format('n') - (int) $inicio->format('n') + 1;
         $kpis = array_fill_keys(['esperadas', 'tratadas', 'fechadas', 'enviadas', 'assinadas'], 0);
         $colaboradores = [];
 
@@ -74,12 +70,12 @@ final class HomeController
             $kpis['esperadas'] = count($colaboradores);
 
             $espelhos = $pdo->prepare(
-                "SELECT e.id, e.colaborador_id, e.status
+                "SELECT e.id, e.colaborador_id, e.status, pp.data_inicio AS inicio, pp.data_fim AS fim
                  FROM ponto_espelhos e
                  INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
                  INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id AND c.status = 'ativo'
                  WHERE pp.data_inicio <= ? AND pp.data_fim >= ?
-                 ORDER BY pp.data_inicio DESC, pp.data_fim DESC"
+                 ORDER BY pp.data_inicio ASC, pp.data_fim ASC"
             );
             $espelhos->execute([$periodo['data_fim'], $periodo['data_inicio']]);
             $espelhosPorPessoa = [];
@@ -110,15 +106,22 @@ final class HomeController
                 }
             }
 
+            $statusTratados = ['em_tratamento', 'conferido', 'fechado', 'enviado', 'assinado'];
+            $statusFechados = ['fechado', 'enviado', 'assinado'];
             foreach ($colaboradores as &$pessoa) {
                 $id = (int) $pessoa['id'];
                 $mensais = $espelhosPorPessoa[$id] ?? [];
-                $pessoa['espelho_id'] = $mensais[0]['id'] ?? null;
-                $status = array_column($mensais, 'status');
-                if (count($status) === $quantidadeMeses) {
-                    $kpis['tratadas'] += (int) !array_diff($status, ['em_tratamento', 'conferido', 'fechado', 'enviado', 'assinado']);
-                    $kpis['fechadas'] += (int) !array_diff($status, ['fechado', 'enviado', 'assinado']);
-                }
+                $pessoa['espelho_id'] = $mensais !== [] ? $mensais[count($mensais) - 1]['id'] : null;
+                $tratados = array_values(array_filter(
+                    $mensais,
+                    static fn(array $m): bool => in_array((string) $m['status'], $statusTratados, true)
+                ));
+                $fechados = array_values(array_filter(
+                    $mensais,
+                    static fn(array $m): bool => in_array((string) $m['status'], $statusFechados, true)
+                ));
+                $kpis['tratadas'] += (int) $this->cobrePeriodo($tratados, $periodo);
+                $kpis['fechadas'] += (int) $this->cobrePeriodo($fechados, $periodo);
                 $pessoa['periodo_enviado'] = $this->cobrePeriodo($folhasPorPessoa[$id] ?? [], $periodo);
                 $pessoa['periodo_assinado'] = $this->cobrePeriodo($assinadasPorPessoa[$id] ?? [], $periodo);
                 $kpis['enviadas'] += (int) $pessoa['periodo_enviado'];
@@ -126,6 +129,10 @@ final class HomeController
             }
             unset($pessoa);
         }
+
+        $divergenciasAbertas = $pdo instanceof PDO
+            ? \App\Services\AssinaturaEletronicaService::listarDivergenciasAbertas($pdo, 12)
+            : [];
 
         View::render('ui/dashboard', [
             'pageTitle' => 'Visão geral',
@@ -140,6 +147,7 @@ final class HomeController
             'erroPeriodo' => $erroPeriodo,
             'colaboradores' => $colaboradores,
             'periodosGerados' => $periodosGerados,
+            'divergenciasAbertas' => $divergenciasAbertas,
         ]);
     }
 

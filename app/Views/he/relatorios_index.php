@@ -28,7 +28,7 @@ $error = $error ?? null;
                 <p>Quando o RH gerar o cartão de ponto do período, o relatório aparecerá aqui para preenchimento.</p>
             </div>
         <?php else: ?>
-            <div class="table-responsive">
+            <div class="table-wrap">
                 <table class="table">
                     <thead>
                     <tr>

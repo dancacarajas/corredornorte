@@ -21,7 +21,9 @@ use App\Controllers\Rh\UsuarioController;
 use App\Controllers\Rh\MedicaoController;
 use App\Controllers\Rh\ValeRefeicaoController;
 use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\Router;
+use App\Helpers\View;
 
 $root = dirname(__DIR__);
 
@@ -29,6 +31,13 @@ require $root . '/vendor/autoload.php';
 
 $config = require $root . '/config/app.php';
 date_default_timezone_set($config['timezone']);
+if (function_exists('mb_internal_encoding')) {
+    mb_internal_encoding('UTF-8');
+}
+
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: SAMEORIGIN');
+header('Referrer-Policy: strict-origin-when-cross-origin');
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $scriptName = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
@@ -48,15 +57,15 @@ if (!$installed && !str_starts_with($normalizedPath, '/install')) {
     exit;
 }
 
-if (str_starts_with($path, '/assinar/') || str_starts_with($path, '/assinar-relatorio/')) {
-    session_set_cookie_params([
-        'httponly' => true,
-        'samesite' => 'Lax',
-        'secure' => str_starts_with($config['url'], 'https://')
-            || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
-    ]);
-}
 Auth::start();
+
+$httpMethod = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+if ($httpMethod === 'POST') {
+    $isDedicatedPortalSign = (bool) preg_match('#^/(assinar|assinar-relatorio)/[^/]+/(assinar|divergencia)$#', $normalizedPath);
+    if (!$isDedicatedPortalSign && !str_starts_with($normalizedPath, '/install')) {
+        Csrf::requireValid();
+    }
+}
 
 $router = new Router();
 $auth = AuthController::class;
@@ -75,11 +84,12 @@ $perfisCtrl = PerfilController::class;
 
 $router->get('/login', [$auth, 'showLogin']);
 $router->post('/login', [$auth, 'login']);
-$router->get('/logout', [$auth, 'logout']);
+$router->post('/logout', [$auth, 'logout']);
 $router->get('/verificar/{codigo}', [$folha, 'verificar']);
 $router->get('/assinar/{token}', [$folha, 'portalAssinatura']);
 $router->get('/assinar/{token}/pdf', [$folha, 'portalPdf']);
 $router->post('/assinar/{token}/assinar', [$folha, 'portalAssinar']);
+$router->post('/assinar/{token}/divergencia', [$folha, 'portalDivergencia']);
 
 $raAssinatura = RelatorioAssinaturaController::class;
 $router->get('/assinar-relatorio/{token}', [$raAssinatura, 'portalAssinatura']);
@@ -90,7 +100,7 @@ $router->get('/verificar-relatorio/{codigo}', [$raAssinatura, 'verificar']);
 $hePortal = HePortalController::class;
 $router->get('/he/login', [$hePortal, 'showLogin']);
 $router->post('/he/login', [$hePortal, 'login']);
-$router->get('/he/logout', [$hePortal, 'logout']);
+$router->post('/he/logout', [$hePortal, 'logout']);
 $router->get('/he', [$hePortal, 'overview']);
 $router->get('/he/solicitar', [$hePortal, 'fluxoHeDesativado']);
 $router->post('/he/solicitar', [$hePortal, 'fluxoHeDesativado']);
@@ -104,6 +114,7 @@ $router->post('/he/relatorios/{id}', [$hePortal, 'relatorioSalvar']);
 $router->get('/he/relatorios/{id}/pdf', [$hePortal, 'relatorioPdf']);
 $router->get('/he/relatorios/{id}/excel', [$hePortal, 'relatorioExcel']);
 $router->post('/he/relatorios/{id}/link-assinatura', [$raAssinatura, 'gerarLink']);
+$router->post('/he/relatorios/{id}/assinar', [$hePortal, 'relatorioAssinar']);
 $router->get('/he/ordens', [$hePortal, 'ordensJson']);
 
 $public = ['/login', '/he/login'];
@@ -117,6 +128,51 @@ $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/install');
 if (!$isPublic) {
     Auth::requireLogin();
+
+    $requireAny = static function (string ...$perms): void {
+        if (!Auth::canAny(...$perms)) {
+            Auth::requirePermission($perms[0]);
+        }
+    };
+
+    if ($normalizedPath === '/') {
+        $requireAny('dashboard.ver');
+    } elseif ($normalizedPath === '/rh/efetivo/exportar') {
+        $requireAny('efetivo.ver', 'efetivo.editar', 'importacoes.gerenciar');
+    } elseif (str_starts_with($normalizedPath, '/rh/efetivo')) {
+        $requireAny('efetivo.ver', 'efetivo.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/colaboradores')) {
+        if ($httpMethod === 'POST' || $normalizedPath === '/rh/colaboradores/novo' || str_ends_with($normalizedPath, '/editar')) {
+            $requireAny('efetivo.editar');
+        } else {
+            $requireAny('efetivo.ver', 'efetivo.editar');
+        }
+    } elseif ($normalizedPath === '/rh/importacoes/modelo') {
+        $requireAny('importacoes.gerenciar', 'efetivo.ver', 'efetivo.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/importacoes')) {
+        $requireAny('importacoes.gerenciar');
+    } elseif (str_starts_with($normalizedPath, '/rh/email')) {
+        $requireAny('email.gerenciar');
+    } elseif (str_starts_with($normalizedPath, '/rh/usuarios')) {
+        $requireAny('usuarios.gerenciar');
+    } elseif (str_starts_with($normalizedPath, '/rh/perfis')) {
+        $requireAny('perfis.gerenciar');
+    } elseif (str_starts_with($normalizedPath, '/rh/folha')) {
+        $httpMethod === 'POST' ? $requireAny('folha.enviar') : $requireAny('folha.ver', 'folha.enviar');
+    } elseif (
+        str_starts_with($normalizedPath, '/rh/ponto')
+        || str_starts_with($normalizedPath, '/rh/medicao')
+        || str_starts_with($normalizedPath, '/rh/relatorios-atividades')
+        || str_starts_with($normalizedPath, '/rh/vale-refeicao')
+    ) {
+        $httpMethod === 'POST' ? $requireAny('ponto.editar') : $requireAny('ponto.ver', 'ponto.editar');
+    } elseif (preg_match('#^/rh/(empresas|contratos|centros-custo|ordens-servico|localidades|jornadas|escalas|lotacoes|cargos|funcoes|gestores-arcadis|gestores-cliente|supervisores|calendarios)(/|$)#', $normalizedPath)) {
+        if ($httpMethod === 'POST' || str_ends_with($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')) {
+            $requireAny('cadastros.editar');
+        } else {
+            $requireAny('cadastros.ver', 'cadastros.editar');
+        }
+    }
 }
 
 $router->get('/', [$home, 'index']);
@@ -211,6 +267,7 @@ $router->get('/rh/ponto', [$ponto, 'index']);
 $router->post('/rh/ponto/gerar', [$ponto, 'gerar']);
 $router->post('/rh/ponto/lote-status', [$ponto, 'loteStatus']);
 $router->post('/rh/ponto/justificativa-tipos', [$ponto, 'tipoJustificativa']);
+$router->get('/rh/ponto/anexos/{justificativaId}', [$ponto, 'baixarAnexo']);
 $router->get('/rh/ponto/{id}', [$ponto, 'show']);
 $router->post('/rh/ponto/{id}/dia', [$ponto, 'salvarDia']);
 $router->post('/rh/ponto/{id}/justificativa', [$ponto, 'justificativa']);
@@ -219,6 +276,8 @@ $router->post('/rh/ponto/{id}/status', [$ponto, 'status']);
 $router->post('/rh/ponto/{id}/apontar', [$ponto, 'apontar']);
 $router->post('/rh/ponto/{id}/he-ra/{raDiaId}/aplicar', [$ponto, 'aplicarHeRa']);
 $router->post('/rh/ponto/{id}/he-ra/{raDiaId}/divergente', [$ponto, 'divergenteHeRa']);
+$router->post('/rh/ponto/{id}/apontar-previsto', [$ponto, 'apontarPrevisto']);
+$router->post('/rh/ponto/{id}/resolver-divergencia', [$ponto, 'resolverDivergencia']);
 
 $raRh = RelatorioAtividadesController::class;
 $router->get('/rh/relatorios-atividades', [$raRh, 'index']);
@@ -230,6 +289,7 @@ $router->post('/rh/relatorios-atividades/{id}/reabrir', [$raRh, 'reabrir']);
 
 $vrRh = ValeRefeicaoController::class;
 $router->get('/rh/vale-refeicao', [$vrRh, 'index']);
+$router->get('/rh/vale-refeicao/exportar', [$vrRh, 'exportarCsv']);
 $router->post('/rh/vale-refeicao/config', [$vrRh, 'salvarConfig']);
 $router->post('/rh/vale-refeicao/config/{id}/excluir', [$vrRh, 'excluirConfig']);
 

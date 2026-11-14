@@ -11,6 +11,7 @@ $content = $content ?? '';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<?= View::e(\App\Helpers\Csrf::token()) ?>">
     <title><?= View::e($pageTitle) ?> · Arcadis</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -85,11 +86,15 @@ $content = $content ?? '';
         <div class="he-nav">
             <a class="btn btn-ghost" href="/he">Solicitar</a>
             <a class="btn btn-ghost" href="/he/aprovacoes">Aprovações</a>
-            <a class="btn btn-ghost" href="/he/logout">Sair</a>
+            <form method="post" action="/he/logout" style="display:inline;">
+                <?= \App\Helpers\Csrf::field() ?>
+                <button class="btn btn-ghost" type="submit">Sair</button>
+            </form>
         </div>
         <?php endif; ?>
     </div>
     <?= $content ?>
 </div>
+<script src="<?= View::asset('js/app.js') ?>" defer></script>
 </body>
 </html>

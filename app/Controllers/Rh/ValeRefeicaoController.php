@@ -16,8 +16,12 @@ final class ValeRefeicaoController
     public function index(): void
     {
         $pdo = Db::tryConnection();
-        $dataInicio = (string) ($_GET['data_inicio'] ?? '2026-10-16');
-        $dataFim = (string) ($_GET['data_fim'] ?? '2026-11-15');
+        $hoje = new \DateTimeImmutable('today');
+        $ref = ((int) $hoje->format('j') >= 16) ? $hoje : $hoje->modify('-1 month');
+        $defaultInicio = $ref->format('Y-m-16');
+        $defaultFim = $ref->modify('+1 month')->format('Y-m-15');
+        $dataInicio = (string) ($_GET['data_inicio'] ?? $defaultInicio);
+        $dataFim = (string) ($_GET['data_fim'] ?? $defaultFim);
         $editarId = (int) ($_GET['editar'] ?? 0);
         $verId = (int) ($_GET['ver'] ?? 0);
         $dbOk = $pdo instanceof PDO;
@@ -123,4 +127,67 @@ final class ValeRefeicaoController
         header('Location: /rh/vale-refeicao');
         exit;
     }
+
+    /**
+     * Escapa prefixos perigosos em células CSV contra CSV Formula Injection (=, +, -, @, tab, CR).
+     */
+    public static function csvSafeCell(string $value): string
+    {
+        $trimmed = ltrim($value);
+        if ($trimmed !== '' && in_array($trimmed[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'" . $value;
+        }
+        return $value;
+    }
+
+    public function exportarCsv(): void
+    {
+        $pdo = Db::tryConnection();
+        $dataInicio = trim((string) ($_GET['data_inicio'] ?? ''));
+        $dataFim = trim((string) ($_GET['data_fim'] ?? ''));
+        if (
+            !$pdo instanceof PDO
+            || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio)
+            || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)
+        ) {
+            $_SESSION['vr_error'] = 'Informe um período válido para exportar CSV.';
+            header('Location: /rh/vale-refeicao');
+            exit;
+        }
+
+        try {
+            $svc = new VrService($pdo);
+            $calculo = $svc->calcularPeriodo($dataInicio, $dataFim);
+        } catch (Throwable $e) {
+            $_SESSION['vr_error'] = $e->getMessage();
+            header('Location: /rh/vale-refeicao?' . http_build_query(['data_inicio' => $dataInicio, 'data_fim' => $dataFim]));
+            exit;
+        }
+
+        $filename = sprintf('vale_refeicao_%s_a_%s.csv', $dataInicio, $dataFim);
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('X-Content-Type-Options: nosniff');
+
+        $out = fopen('php://output', 'wb');
+        if ($out === false) {
+            exit;
+        }
+        // UTF-8 BOM para abertura limpa no Excel Windows PT-BR
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, ['Colaborador', 'Matrícula', 'Status Relatório', 'Dias Remoto', 'Valor Dia (R$)', 'Total VR (R$)'], ';');
+        foreach ($calculo as $row) {
+            fputcsv($out, [
+                self::csvSafeCell((string) ($row['nome'] ?? '')),
+                self::csvSafeCell((string) ($row['matricula'] ?? '')),
+                self::csvSafeCell((string) ($row['status'] ?? '')),
+                (string) ((int) ($row['dias_remoto'] ?? 0)),
+                number_format((float) ($row['valor_dia'] ?? 0), 2, ',', '.'),
+                number_format((float) ($row['valor_vr'] ?? 0), 2, ',', '.'),
+            ], ';');
+        }
+        fclose($out);
+        exit;
+    }
 }
+

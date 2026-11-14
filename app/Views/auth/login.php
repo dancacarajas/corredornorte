@@ -1,9 +1,10 @@
 <?php
 
+use App\Helpers\Csrf;
 use App\Helpers\View;
 
 $error = $error ?? null;
-$email = $email ?? 'admin@arcadis.local';
+$email = $email ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -102,14 +103,15 @@ $email = $email ?? 'admin@arcadis.local';
     <?php endif; ?>
 
     <form method="post" action="/login" class="section-stack">
+        <?= Csrf::field() ?>
         <div class="form-field">
-            <label class="form-label">E-mail</label>
-            <input class="form-control" type="email" name="email" value="<?= View::e($email) ?>" required>
+            <label class="form-label" for="loginEmail">E-mail</label>
+            <input class="form-control" id="loginEmail" type="email" name="email" value="<?= View::e($email) ?>" required autocomplete="email">
         </div>
         <div class="form-field">
             <label class="form-label" for="loginPassword">Senha</label>
             <div class="password-field">
-                <input class="form-control" id="loginPassword" type="password" name="password" value="admin123" required autocomplete="current-password">
+                <input class="form-control" id="loginPassword" type="password" name="password" value="" required autocomplete="current-password">
                 <button class="password-toggle" type="button" id="togglePassword" aria-label="Mostrar senha" aria-pressed="false" title="Mostrar senha">
                     <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                         <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>

@@ -102,10 +102,22 @@ $filtroPorEtapaKey = [
     'assinaturas' => 'assinaturas',
 ];
 $dossieUrl = '/rh/medicao/dossie?' . $qs;
+$errosLote = is_array($errosLote ?? null) ? $errosLote : [];
 ?>
 
 <?php if ($flash): ?><div class="alert alert-success"><?= View::e((string) $flash) ?></div><?php endif; ?>
-<?php if ($error): ?><div class="alert alert-danger"><?= View::e((string) $error) ?></div><?php endif; ?>
+<?php if ($error): ?>
+    <div class="alert alert-danger">
+        <div><?= View::e((string) $error) ?></div>
+        <?php if ($errosLote !== []): ?>
+            <ul class="batch-errors-list" style="margin-top:.5rem;">
+                <?php foreach ($errosLote as $errMsg): ?>
+                    <li><?= View::e((string) $errMsg) ?></li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
 <?php if (!$dbOk): ?><div class="alert alert-warning">Banco indisponível.</div><?php endif; ?>
 
 <section class="medicao-hero card">
@@ -366,16 +378,30 @@ foreach ($loteBotoes as $b) {
     <?php if ($btnExecutar !== null && $qtdExecutar > 0): ?>
         <div class="card-body medicao-lote-exec" style="padding-top:0;">
             <form method="post" action="<?= View::e((string) $btnExecutar['route']) ?>"
-                  onsubmit="return confirm(<?= htmlspecialchars(json_encode($btnExecutar['confirm'] . ' (' . $qtdExecutar . ')', JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8') ?>);">
+                  id="medicaoBatchForm"
+                  data-confirm-title="Executar lote?"
+                  data-confirm-base="<?= View::e($btnExecutar['confirm']) ?>"
+                  data-elegiveis-total="<?= $qtdExecutar ?>">
                 <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
                 <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
                 <input type="hidden" name="filtro" value="<?= View::e($filtro) ?>">
-                <button class="btn btn-primary" type="submit">
+                <button class="btn btn-primary" type="submit" id="medicaoBatchSubmit">
                     Executar lote: <?= View::e((string) $btnExecutar['label']) ?>
-                    <span class="medicao-lote-count"><?= $qtdExecutar ?></span>
+                    <span class="medicao-lote-count" id="medicaoBatchCount"><?= $qtdExecutar ?></span>
                 </button>
-                <span class="muted text-sm">Aplica só aos elegíveis desta etapa.</span>
+                <span class="muted text-sm" id="medicaoBatchHint">Aplica aos elegíveis desta etapa (ou apenas aos marcados na tabela).</span>
             </form>
+            <div class="batch-progress-card" id="medicaoBatchProgress" hidden style="margin-top:.75rem;">
+                <div class="batch-progress-head">
+                    <strong id="medicaoBatchTitle">Processando lote...</strong>
+                    <span id="medicaoBatchStats" class="muted">0 / 0</span>
+                </div>
+                <div class="progress"><span id="medicaoBatchBar" style="width:0%"></span></div>
+                <ul class="batch-errors-list" id="medicaoBatchErrors" hidden></ul>
+                <div id="medicaoBatchReloadWrap" hidden>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="window.location.reload()">Atualizar painel</button>
+                </div>
+            </div>
         </div>
     <?php elseif ($filtro === 'dossie' && $prontoDossie): ?>
         <div class="card-body medicao-lote-exec" style="padding-top:0;">
@@ -437,7 +463,7 @@ foreach ($loteBotoes as $b) {
         <?php elseif ($colaboradoresFiltrados === []): ?>
             <p class="muted">Ninguém pendente nesta etapa — filtrado zerado.</p>
         <?php elseif ($modoConsultaLinks): ?>
-            <div class="table-responsive">
+            <div class="table-wrap">
                 <table class="table medicao-table medicao-links-table">
                     <thead>
                     <tr>
@@ -482,23 +508,24 @@ foreach ($loteBotoes as $b) {
                 btn.addEventListener('click', async function () {
                   var link = btn.getAttribute('data-link') || '';
                   if (!link) return;
-                  try {
-                    await navigator.clipboard.writeText(link);
-                    var old = btn.textContent;
-                    btn.textContent = 'Copiado';
-                    setTimeout(function () { btn.textContent = old; }, 1200);
-                  } catch (e) {
-                    window.prompt('Copie o link:', link);
+                  if (window.copyTextWithToast) {
+                    const ok = await window.copyTextWithToast(link, 'Link copiado para a área de transferência!');
+                    if (ok) {
+                      var old = btn.textContent;
+                      btn.textContent = 'Copiado';
+                      setTimeout(function () { btn.textContent = old; }, 1200);
+                    }
                   }
                 });
               });
             })();
             </script>
         <?php else: ?>
-            <div class="table-responsive">
+            <div class="table-wrap">
                 <table class="table medicao-table">
                     <thead>
                     <tr>
+                        <th style="width:2.25rem;"><input type="checkbox" id="medicaoSelectAll" aria-label="Selecionar todos"></th>
                         <th>Colaborador</th>
                         <th>Status do ponto</th>
                         <th>Progresso</th>
@@ -514,8 +541,24 @@ foreach ($loteBotoes as $b) {
                         $pctC = (int) ($c['percentual'] ?? 0);
                         $etapas = $c['etapas'] ?? [];
                         $stEsp = (string) ($c['espelho_status'] ?? '');
+                        $elegivelAtual = match ($filtro) {
+                            'conferir' => empty($etapas['tratado']) && empty($c['he_pendente']),
+                            'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']),
+                            'pdf' => !empty($etapas['fechado']) && empty($etapas['pdf']),
+                            'link' => !empty($etapas['pdf']) && empty($etapas['link']),
+                            'email' => !empty($etapas['link']) && empty($etapas['email']),
+                            default => !$done,
+                        };
                         ?>
                         <tr class="<?= $done ? 'medicao-row-done' : '' ?>">
+                            <td>
+                                <input type="checkbox"
+                                       class="medicao-check"
+                                       value="<?= (int) $c['espelho_id'] ?>"
+                                       data-elegivel="<?= $elegivelAtual ? '1' : '0' ?>"
+                                       aria-label="Selecionar <?= View::e((string) $c['nome']) ?>"
+                                       <?= $done ? 'disabled' : '' ?>>
+                            </td>
                             <td>
                                 <strong><?= View::e((string) $c['nome']) ?></strong>
                                 <div class="muted text-sm"><?= View::e((string) $c['matricula']) ?></div>
@@ -566,6 +609,111 @@ foreach ($loteBotoes as $b) {
         <?php endif; ?>
     </div>
 </section>
+<script>
+(() => {
+  const form = document.getElementById('medicaoBatchForm');
+  const selectAll = document.getElementById('medicaoSelectAll');
+  const checks = () => Array.from(document.querySelectorAll('.medicao-check:not(:disabled)'));
+  const countBadge = document.getElementById('medicaoBatchCount');
+  const submitBtn = document.getElementById('medicaoBatchSubmit');
+  const progCard = document.getElementById('medicaoBatchProgress');
+  const progTitle = document.getElementById('medicaoBatchTitle');
+  const progStats = document.getElementById('medicaoBatchStats');
+  const progBar = document.getElementById('medicaoBatchBar');
+  const progErrors = document.getElementById('medicaoBatchErrors');
+  const progReload = document.getElementById('medicaoBatchReloadWrap');
+
+  const getTargetIds = () => {
+    const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
+    if (marked.length > 0) return marked;
+    return checks().filter((c) => c.getAttribute('data-elegivel') === '1').map((c) => Number(c.value)).filter((n) => n > 0);
+  };
+
+  const syncBatchCount = () => {
+    if (!form || !countBadge) return;
+    const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
+    const totalElig = Number(form.getAttribute('data-elegiveis-total') || '0');
+    countBadge.textContent = String(marked.length > 0 ? marked.length : totalElig);
+  };
+
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      checks().forEach((c) => { c.checked = selectAll.checked; });
+      syncBatchCount();
+    });
+  }
+  checks().forEach((c) => c.addEventListener('change', syncBatchCount));
+
+  if (!form || !window.BatchRunner) return;
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const ids = getTargetIds();
+    if (ids.length === 0) {
+      if (window.Toast) window.Toast.show('Nenhum colaborador elegível ou selecionado.', 'warning');
+      return;
+    }
+
+    const baseMsg = form.getAttribute('data-confirm-base') || 'Executar esta etapa em lote?';
+    const title = form.getAttribute('data-confirm-title') || 'Executar lote?';
+    const confirmed = window.uiConfirm
+      ? await window.uiConfirm({ title, message: `${baseMsg} (${ids.length} colaborador${ids.length === 1 ? '' : 'es'})`, confirmText: 'Executar', tone: 'brand' })
+      : true;
+    if (!confirmed) return;
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (progCard) progCard.hidden = false;
+    if (progErrors) { progErrors.hidden = true; progErrors.innerHTML = ''; }
+    if (progReload) progReload.hidden = true;
+    if (progBar) progBar.style.width = '5%';
+    if (progStats) progStats.textContent = `0 / ${ids.length}`;
+
+    const ini = form.querySelector('input[name="data_inicio"]')?.value || '';
+    const fim = form.querySelector('input[name="data_fim"]')?.value || '';
+    const filtro = form.querySelector('input[name="filtro"]')?.value || '';
+
+    try {
+      const summary = await window.BatchRunner.run({
+        url: form.action,
+        ids,
+        chunkSize: 3,
+        params: { data_inicio: ini, data_fim: fim, filtro },
+        onProgress(p) {
+          const pct = Math.min(100, Math.round((p.done / Math.max(1, p.total)) * 100));
+          if (progBar) progBar.style.width = `${pct}%`;
+          if (progStats) progStats.textContent = `${p.done} / ${p.total} (${p.ok} aplicado${p.ok === 1 ? '' : 's'})`;
+        },
+      });
+
+      if (summary.errors.length === 0) {
+        if (progTitle) progTitle.textContent = `Concluído: ${summary.ok} processado(s).`;
+        if (window.Toast) window.Toast.show(`Lote finalizado (${summary.ok} processados).`, 'success');
+        window.setTimeout(() => window.location.reload(), 800);
+        return;
+      }
+
+      if (progTitle) progTitle.textContent = `Concluído com ${summary.errors.length} pendência(s) (${summary.ok} ok):`;
+      if (progErrors) {
+        summary.errors.forEach((msg) => {
+          const li = document.createElement('li');
+          li.textContent = msg;
+          progErrors.appendChild(li);
+        });
+        progErrors.hidden = false;
+      }
+      if (progReload) progReload.hidden = false;
+      if (submitBtn) submitBtn.disabled = false;
+      if (window.Toast) window.Toast.show(`${summary.ok} processado(s), ${summary.errors.length} pendência(s).`, 'warning');
+    } catch (err) {
+      const msg = (err && err.message) ? err.message : 'Erro ao executar lote.';
+      if (progTitle) progTitle.textContent = msg;
+      if (progReload) progReload.hidden = false;
+      if (submitBtn) submitBtn.disabled = false;
+      if (window.Toast) window.Toast.show(msg, 'danger');
+    }
+  });
+})();
+</script>
 <?php elseif ($dbOk && $periodosGerados === []): ?>
 <section class="card">
     <div class="card-body">
@@ -573,3 +721,4 @@ foreach ($loteBotoes as $b) {
     </div>
 </section>
 <?php endif; ?>
+

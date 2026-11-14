@@ -230,7 +230,15 @@ final class ModeloEfetivoService
                 if ($c >= $colCount) {
                     break;
                 }
-                $dados->setCellValue($this->colLetter($c) . ($r + 2), $valor);
+                $safe = (string) $valor;
+                if ($safe !== '' && in_array($safe[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+                    $safe = "'" . $safe;
+                }
+                $dados->setCellValueExplicit(
+                    $this->colLetter($c) . ($r + 2),
+                    $safe,
+                    \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
+                );
             }
         }
 

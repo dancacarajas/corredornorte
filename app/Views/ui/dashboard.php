@@ -12,6 +12,7 @@ use App\Helpers\View;
 /** @var list<array<string,mixed>> $colaboradores */
 /** @var list<array{id:int,data_inicio:string,data_fim:string,status:string,espelhos:int,label:string}> $periodosGerados */
 $periodosGerados = $periodosGerados ?? [];
+$divergenciasAbertas = $divergenciasAbertas ?? [];
 ?>
 
 <?php if (empty($dbOk)): ?>
@@ -19,6 +20,38 @@ $periodosGerados = $periodosGerados ?? [];
 <?php endif; ?>
 <?php if (!empty($erroPeriodo)): ?>
     <div class="alert alert-danger" role="alert"><?= View::e($erroPeriodo) ?></div>
+<?php endif; ?>
+<?php if ($divergenciasAbertas !== []): ?>
+    <section class="card" style="border-left:4px solid var(--brand-primary);background:linear-gradient(180deg,#FFF7ED 0%,#FFFFFF 65%);" aria-label="Divergências reportadas pelos colaboradores">
+        <div class="card-header">
+            <div>
+                <h2 class="card-title" style="color:#9A3412;">Divergências de ponto aguardando análise do RH (<?= count($divergenciasAbertas) ?>)</h2>
+                <p class="card-subtitle">Colaboradores pausaram a assinatura no portal e solicitaram revisão.</p>
+            </div>
+        </div>
+        <div class="card-body" style="display:grid;gap:.65rem;">
+            <?php foreach ($divergenciasAbertas as $div):
+                $qsDiv = http_build_query([
+                    'data_inicio' => (string) ($div['data_inicio'] ?? ''),
+                    'data_fim' => (string) ($div['data_fim'] ?? ''),
+                ]);
+                ?>
+                <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.75rem;padding:.75rem .9rem;border:1px solid #FED7AA;border-radius:10px;background:#FFFFFF;">
+                    <div style="min-width:220px;flex:1 1 280px;">
+                        <div class="fw-700">
+                            <?= View::e((string) $div['colaborador_nome']) ?>
+                            <span class="muted text-sm">(Mat. <?= View::e((string) ($div['matricula'] ?? '—')) ?>)</span>
+                            <?php if (!empty($div['data_ocorrencia'])): ?>
+                                · <span class="badge-danger" style="padding:.15rem .45rem;border-radius:999px;font-size:.75rem;">Dia <?= View::e(date('d/m/Y', strtotime((string) $div['data_ocorrencia']))) ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="text-sm" style="margin-top:.25rem;color:#334155;">“<?= View::e((string) $div['motivo']) ?>”</div>
+                    </div>
+                    <a class="btn btn-primary btn-sm" href="/rh/ponto/<?= (int) $div['espelho_id'] ?>?<?= View::e($qsDiv) ?>">Abrir ponto e corrigir</a>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </section>
 <?php endif; ?>
 
 <section class="card">

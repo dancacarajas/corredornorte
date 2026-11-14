@@ -17,10 +17,29 @@ final class FolhaAssinaturaPdf
     private const CARD_Y = 635.0;
     private const CARD_WIDTH = 236.0;
     private const CARD_HEIGHT = 46.0;
+    private const FOOTER_HEIGHT = 64.0;
 
-    /** @param array{nome:string,assinado_em:string,sha256:string,codigo:string,verificar_url:string} $auditoria */
-    public function carimbar(string $original, string $saida, array $auditoria): void
-    {
+    private float $cardX = self::CARD_X;
+    private float $cardY = self::CARD_Y;
+    private float $footerY = self::PAGE_HEIGHT - 20 - self::FOOTER_HEIGHT;
+
+    /**
+     * @param array{nome:string,assinado_em:string,sha256:string,codigo:string,verificar_url:string} $auditoria
+     * @param string $titulo Título do PDF (folha ou relatório usam o mesmo layout de selo/rodapé).
+     * @param array{
+     *   card_x?:float,
+     *   card_y?:float,
+     *   footer_y?:float,
+     *   limpar?:array{y:float,h:float}
+     * }|null $layout Posições opcionais (ex.: RA).
+     */
+    public function carimbar(
+        string $original,
+        string $saida,
+        array $auditoria,
+        string $titulo = 'Cartão de Ponto | Arcadis RH',
+        ?array $layout = null
+    ): void {
         $hash = is_file($original) ? hash_file('sha256', $original) : false;
         if ($hash === false || !hash_equals($hash, $auditoria['sha256'])) {
             throw new RuntimeException('O PDF original não corresponde ao hash do registro de assinatura.');
@@ -36,21 +55,36 @@ final class FolhaAssinaturaPdf
             throw new RuntimeException('O link de validação do documento está indisponível.');
         }
 
+        $this->cardX = (float) ($layout['card_x'] ?? self::CARD_X);
+        $this->cardY = (float) ($layout['card_y'] ?? self::CARD_Y);
+        $this->footerY = (float) ($layout['footer_y'] ?? (self::PAGE_HEIGHT - 20 - self::FOOTER_HEIGHT));
+
         $pdf = new FolhaAssinaturaCanvas('P', 'pt', 'Letter');
         $pdf->SetAutoPageBreak(false);
         if ($pdf->setSourceFile($original) !== 1) {
-            throw new RuntimeException('Gere o cartão de ponto em uma página para assinar.');
+            throw new RuntimeException('O documento precisa ocupar uma página para assinar.');
         }
         $pagina = $pdf->importPage(1);
         $tamanho = $pdf->getTemplateSize($pagina);
-        if (abs($tamanho['width'] - self::PAGE_WIDTH) > 0.1 || abs($tamanho['height'] - self::PAGE_HEIGHT) > 0.1) {
-            throw new RuntimeException('Gere o cartão de ponto no modelo em retrato para assinar.');
+        if (abs($tamanho['width'] - self::PAGE_WIDTH) > 1.0 || abs($tamanho['height'] - self::PAGE_HEIGHT) > 1.0) {
+            throw new RuntimeException('Gere o documento no modelo em retrato Letter para assinar.');
         }
 
-        $pdf->SetTitle('Cartão de Ponto | Arcadis RH', true);
+        $pdf->SetTitle($titulo, true);
         $pdf->SetAuthor('Arcadis RH');
         $pdf->AddPage();
         $pdf->useTemplate($pagina);
+        $limpar = $layout['limpar'] ?? null;
+        if (is_array($limpar)) {
+            $pdf->SetFillColor(255, 255, 255);
+            $pdf->Rect(
+                self::MARGIN,
+                (float) $limpar['y'],
+                self::PAGE_WIDTH - 2 * self::MARGIN,
+                (float) $limpar['h'],
+                'F'
+            );
+        }
         $this->desenharSignatario($pdf, $auditoria, $url);
         $this->desenharValidacao($pdf, $auditoria, $url);
 
@@ -66,8 +100,8 @@ final class FolhaAssinaturaPdf
 
     private function desenharSignatario(FolhaAssinaturaCanvas $pdf, array $auditoria, string $url): void
     {
-        $x = self::CARD_X;
-        $y = self::CARD_Y;
+        $x = $this->cardX;
+        $y = $this->cardY;
         $largura = self::CARD_WIDTH;
         $altura = self::CARD_HEIGHT;
         $badge = 55.0;
@@ -112,9 +146,9 @@ final class FolhaAssinaturaPdf
     private function desenharValidacao(FolhaAssinaturaCanvas $pdf, array $auditoria, string $url): void
     {
         $x = self::MARGIN;
-        $altura = 64.0;
+        $altura = self::FOOTER_HEIGHT;
         $largura = self::PAGE_WIDTH - 2 * self::MARGIN;
-        $y = self::PAGE_HEIGHT - 20 - $altura;
+        $y = $this->footerY;
         $qrSize = 56.0;
         $qrX = $x + $largura - $qrSize - 5;
         $qrY = $y + ($altura - $qrSize) / 2;
@@ -143,7 +177,9 @@ final class FolhaAssinaturaPdf
 
     private function desenharPainel(FolhaAssinaturaCanvas $pdf, float $x, float $y, float $largura, float $altura, float $raio): void
     {
+        // Retângulo opaco por baixo evita texto do formulário vazando sob o selo.
         $pdf->SetFillColor(255, 255, 255);
+        $pdf->Rect($x, $y, $largura, $altura, 'F');
         $pdf->SetDrawColor(229, 231, 235);
         $pdf->SetLineWidth(0.65);
         $pdf->roundedRect($x, $y, $largura, $altura, $raio, 'B');

@@ -136,7 +136,7 @@ final class RelatorioAtividadesService
     }
 
     /** @return list<array<string,mixed>> */
-    public function listarRh(?string $status = null, ?string $dataInicio = null, ?string $dataFim = null, int $limit = 200): array
+    public function listarRh(?string $status = null, ?string $dataInicio = null, ?string $dataFim = null, int $limit = 200, ?string $busca = null): array
     {
         $where = ['1=1'];
         $params = [];
@@ -148,6 +148,12 @@ final class RelatorioAtividadesService
             $where[] = 'pp.data_inicio = :ini AND pp.data_fim = :fim';
             $params['ini'] = $dataInicio;
             $params['fim'] = $dataFim;
+        }
+        if ($busca !== null && trim($busca) !== '') {
+            $like = '%' . trim($busca) . '%';
+            $where[] = '(c.nome LIKE :q_nome OR c.matricula LIKE :q_mat)';
+            $params['q_nome'] = $like;
+            $params['q_mat'] = $like;
         }
         $sql = 'SELECT r.*, c.nome, c.matricula, pp.data_inicio, pp.data_fim,
                        os.codigo AS os_codigo,
@@ -245,13 +251,11 @@ final class RelatorioAtividadesService
             throw new RuntimeException('Relatório não encontrado.');
         }
         $rel = $dados['relatorio'];
-        if (in_array((string) $rel['status'], ['enviado', 'aprovado'], true) && !$enviar) {
-            // permite edição só em rascunho; enviado bloqueia salvo sem reabertura
+        $statusAtual = (string) $rel['status'];
+        if (in_array($statusAtual, ['aprovado', 'assinado'], true)) {
+            throw new RuntimeException('Relatório aprovado/assinado não pode ser alterado.');
         }
-        if ((string) $rel['status'] === 'aprovado') {
-            throw new RuntimeException('Relatório aprovado não pode ser alterado.');
-        }
-        if ((string) $rel['status'] === 'enviado' && !$enviar) {
+        if ($statusAtual === 'enviado') {
             throw new RuntimeException('Relatório já enviado. Peça ao RH para reabrir se precisar corrigir.');
         }
 
@@ -303,11 +307,24 @@ final class RelatorioAtividadesService
                     continue;
                 }
                 $data = (string) $dia['data'];
-                $ambiente = $byData[$data]['ambiente'] ?? $dia['ambiente'] ?? null;
+                $vals = $byData[$data] ?? [];
+                $descricao = trim((string) ($vals['descricao'] ?? $dia['descricao'] ?? ''));
+                $projeto = trim((string) ($vals['projeto_obra'] ?? $dia['projeto_obra'] ?? ''));
+                $ambiente = $vals['ambiente'] ?? $dia['ambiente'] ?? null;
+                $rotuloDia = date('d/m/Y', strtotime($data));
+                if ($descricao === '') {
+                    throw new RuntimeException(
+                        'Informe a descrição das atividades em todos os dias de trabalho, inclusive ' . $rotuloDia . '.'
+                    );
+                }
+                if ($projeto === '') {
+                    throw new RuntimeException(
+                        'Informe o projeto/obra em todos os dias de trabalho, inclusive ' . $rotuloDia . '.'
+                    );
+                }
                 if ($ambiente === null || $ambiente === '') {
                     throw new RuntimeException(
-                        'Informe o ambiente (Remoto/Site/Viagem) em todos os dias de trabalho, inclusive '
-                        . date('d/m/Y', strtotime($data)) . '.'
+                        'Informe o ambiente (Remoto/Site/Viagem) em todos os dias de trabalho, inclusive ' . $rotuloDia . '.'
                     );
                 }
             }

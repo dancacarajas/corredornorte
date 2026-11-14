@@ -6,6 +6,7 @@ $relatorios = $relatorios ?? [];
 $status = $status ?? '';
 $dataInicio = $dataInicio ?? '';
 $dataFim = $dataFim ?? '';
+$q = $q ?? '';
 $flash = $flash ?? null;
 $error = $error ?? null;
 $dbOk = $dbOk ?? true;
@@ -19,10 +20,14 @@ $dbOk = $dbOk ?? true;
     <div class="card-header">
         <div>
             <h2 class="card-title">Relatórios de Atividades</h2>
-            <p class="card-subtitle">Filtre por período do cartão e status de envio.</p>
+            <p class="card-subtitle">Filtre por colaborador, período do cartão e status de envio.</p>
         </div>
     </div>
     <form method="get" class="card-body ponto-filtros" style="padding-top:0;">
+        <div class="form-field">
+            <label class="form-label">Colaborador / Matrícula</label>
+            <input class="form-control" type="search" name="q" value="<?= View::e((string) $q) ?>" placeholder="Buscar nome ou matrícula...">
+        </div>
         <div class="form-field">
             <label class="form-label">Início</label>
             <input class="form-control" type="date" name="data_inicio" value="<?= View::e($dataInicio) ?>">
@@ -49,7 +54,7 @@ $dbOk = $dbOk ?? true;
         <?php if ($relatorios === []): ?>
             <div class="empty-state"><h3>Nenhum relatório</h3><p>Gere cartões de ponto para criar os relatórios automaticamente.</p></div>
         <?php else: ?>
-            <div class="table-responsive">
+            <div class="table-wrap">
                 <table class="table">
                     <thead>
                     <tr>

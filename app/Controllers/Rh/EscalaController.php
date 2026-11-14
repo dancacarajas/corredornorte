@@ -74,6 +74,9 @@ final class EscalaController
                 }
                 $ins->execute(['e' => $escalaId, 'd' => $diaNum, 't' => $tipo, 'o' => $ordem++]);
             }
+            if ($ordem === 1) {
+                throw new \RuntimeException('Informe pelo menos um dia válido para o ciclo da escala.');
+            }
             $pdo->prepare("UPDATE rh_escalas SET tipo = 'ciclo' WHERE id = :id AND tipo <> 'ciclo'")
                 ->execute(['id' => $escalaId]);
             $pdo->commit();

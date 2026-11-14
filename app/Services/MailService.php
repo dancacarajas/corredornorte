@@ -19,15 +19,25 @@ final class MailService
      *
      * @return array{ok:bool,erro:?string}
      */
-    public function send(string $to, string $subject, string $body, ?string $attachmentPath = null): array
-    {
+    public function send(
+        string $to,
+        string $subject,
+        string $body,
+        ?string $attachmentPath = null,
+        ?string $htmlBody = null
+    ): array {
+        $to = trim($to);
+        if (preg_match('/[\r\n\0]/', $to . $subject) === 1 || filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
+            return ['ok' => false, 'erro' => 'Destinatário ou assunto de e-mail inválido.'];
+        }
+
         $pdo = Db::tryConnection();
         if ($pdo instanceof PDO) {
             try {
                 $accounts = new EmailAccountService($pdo);
                 $ativa = $accounts->contaAtiva();
                 if ($ativa !== null && ($ativa['status'] ?? '') !== 'desconectado') {
-                    $result = (new AccountMailSender($accounts))->send($to, $subject, $body, $attachmentPath);
+                    $result = (new AccountMailSender($accounts))->send($to, $subject, $body, $attachmentPath, $htmlBody);
                     if ($result['ok']) {
                         return ['ok' => true, 'erro' => null];
                     }
@@ -43,37 +53,27 @@ final class MailService
         $mail = $cfg['mail'] ?? ['enabled' => false];
 
         if (empty($mail['enabled'])) {
-            if (isset($oauthErro) && is_string($oauthErro) && $oauthErro !== '') {
-                return ['ok' => false, 'erro' => $oauthErro];
-            }
+            $erro = (isset($oauthErro) && is_string($oauthErro) && $oauthErro !== '')
+                ? $oauthErro
+                : 'Nenhum canal de e-mail ativo configurado.';
 
-            return ['ok' => true, 'erro' => null];
+            return ['ok' => false, 'erro' => $erro];
         }
 
         $from = (string) ($mail['from'] ?? 'noreply@localhost');
         $fromName = (string) ($mail['from_name'] ?? 'Arcadis RH');
-        $boundary = 'b_' . bin2hex(random_bytes(8));
-        $headers = [];
-        $headers[] = 'From: ' . sprintf('"%s" <%s>', addslashes($fromName), $from);
-        $headers[] = 'MIME-Version: 1.0';
+        $mime = \App\Services\EmailOAuth\MimeMessageBuilder::build(
+            $from,
+            $fromName,
+            $to,
+            $subject,
+            $body,
+            $attachmentPath,
+            $htmlBody,
+            false
+        );
 
-        if ($attachmentPath && is_file($attachmentPath)) {
-            $headers[] = 'Content-Type: multipart/mixed; boundary="' . $boundary . '"';
-            $filename = basename($attachmentPath);
-            $fileData = chunk_split(base64_encode((string) file_get_contents($attachmentPath)));
-            $message = "--{$boundary}\r\n";
-            $message .= "Content-Type: text/plain; charset=UTF-8\r\n\r\n{$body}\r\n";
-            $message .= "--{$boundary}\r\n";
-            $message .= "Content-Type: application/pdf; name=\"{$filename}\"\r\n";
-            $message .= "Content-Transfer-Encoding: base64\r\n";
-            $message .= "Content-Disposition: attachment; filename=\"{$filename}\"\r\n\r\n";
-            $message .= $fileData . "\r\n--{$boundary}--";
-        } else {
-            $headers[] = 'Content-Type: text/plain; charset=UTF-8';
-            $message = $body;
-        }
-
-        $ok = @mail($to, '=?UTF-8?B?' . base64_encode($subject) . '?=', $message, implode("\r\n", $headers));
+        $ok = @mail($to, $mime['subject_encoded'], $mime['body_mail'], $mime['headers_mail']);
         if ($pdo instanceof PDO) {
             try {
                 (new EmailAccountService($pdo))->logEnvio(

@@ -42,7 +42,10 @@ $isActive = static fn(string $key): string => $activeMenu === $key ? ' is-active
             </div>
         </div>
         <div style="padding:0 .45rem .35rem;">
-            <a class="btn btn-ghost btn-sm" href="/he/logout" style="width:100%;">Sair</a>
+            <form method="post" action="/he/logout">
+                <?= \App\Helpers\Csrf::field() ?>
+                <button class="btn btn-ghost btn-sm" type="submit" style="width:100%;">Sair</button>
+            </form>
         </div>
     </div>
 </aside>

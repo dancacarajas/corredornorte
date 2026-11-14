@@ -269,6 +269,9 @@ final class HeClienteService
         if ($a === false || $b === false) {
             return 0;
         }
+        if ($b < $a) {
+            $b += 86400;
+        }
         return (int) (($b - $a) / 60);
     }
 }

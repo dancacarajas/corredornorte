@@ -745,3 +745,137 @@ button.ponto-he-chip:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+.ponto-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #FAFBFC;
+  box-shadow: 2px 0 6px rgba(17, 24, 39, 0.05);
+}
+
+.ponto-table td.dia {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #FFFFFF;
+  box-shadow: 2px 0 6px rgba(17, 24, 39, 0.05);
+}
+
+.ponto-table tr.is-folga td.dia {
+  background: #F8FAFC;
+}
+
+.ponto-table tr.is-falta td.dia {
+  background: #FFF8F7;
+}
+
+.ponto-table tr.is-he-autorizada td.dia {
+  background: #FFF6EE;
+}
+
+.ponto-table tr.is-saving td.batida-cell {
+  background: #FFFBEB;
+}
+
+.ponto-table tr.is-save-error td.batida-cell {
+  background: #FEF3F2;
+}
+
+.ponto-save-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  color: var(--ink-subtle);
+  background: #F3F4F6;
+}
+
+.ponto-save-pill:empty {
+  display: none;
+}
+
+.ponto-save-pill.is-saving {
+  background: var(--warning-soft);
+  border-color: #FEDF89;
+  color: #92400E;
+}
+
+.ponto-save-pill.is-saved {
+  background: var(--success-soft);
+  border-color: #A6F4C5;
+  color: #065F46;
+}
+
+.ponto-save-pill.is-error {
+  background: var(--danger-soft);
+  border-color: #FECDCA;
+  color: #991B1B;
+}
+
+.ponto-top-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0 1.25rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ponto-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.85rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ponto-tab-btn.is-active {
+  background: #111827;
+  border-color: #111827;
+  color: #FFFFFF;
+}
+
+.ponto-tab-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: var(--brand-primary);
+  color: #FFFFFF;
+}
+
+.ponto-tab-panel[hidden] {
+  display: none !important;
+}
+
+.ponto-div-banner {
+  border: 1px solid #FECDCA;
+  background: #FEF3F2;
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.2rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ponto-div-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #7F1D1D;
+}
+

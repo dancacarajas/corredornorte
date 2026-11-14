@@ -83,6 +83,7 @@ final class Installer
         $messages[] = 'Seeds iniciais';
 
         $this->migrateAssinatura($pdo);
+        \App\Services\AssinaturaEletronicaService::ensureDivergenciaSchema($pdo);
         $messages[] = 'Migração: assinatura eletrônica';
 
         $this->migrateEmail($pdo);
@@ -144,11 +145,13 @@ final class Installer
             : sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $host, $port, $database);
 
         try {
-            return new PDO($dsn, $username, $password, [
+            $pdo = new PDO($dsn, $username, $password, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::MYSQL_ATTR_MULTI_STATEMENTS => true,
             ]);
+            $pdo->exec("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+            return $pdo;
         } catch (PDOException $e) {
             throw new RuntimeException('Falha na conexão MySQL: ' . $e->getMessage(), previous: $e);
         }
@@ -160,6 +163,7 @@ final class Installer
         if ($sql === false) {
             throw new RuntimeException('Não foi possível ler ' . $file);
         }
+        $sql = \App\Helpers\TextEncoding::ensureUtf8($sql);
 
         // Remove CREATE DATABASE (pode ser multilinha) e qualquer USE — no shared hosting
         // o banco já existe e o usuário só tem acesso ao DB informado.

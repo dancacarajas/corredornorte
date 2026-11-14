@@ -18,6 +18,8 @@ final class CalculoPontoService
     private const NOTURNO_FIM = 5 * 60; // 05:00 do dia seguinte
 
     private PDO $db;
+    /** @var array<string,array<string,mixed>|null> */
+    private array $cfgCache = [];
 
     public function __construct(?PDO $db = null)
     {
@@ -39,8 +41,10 @@ final class CalculoPontoService
         }
 
         $tipo = (string) $dia['tipo_dia'];
+        $cfgDia = $this->resolverCfgDia($dia);
+        $trabalhaFeriado = !empty($cfgDia['trabalha_feriado']);
         $feriadoInfo = $this->resolverFeriadoDia($dia);
-        if ($feriadoInfo !== null) {
+        if ($feriadoInfo !== null && !$trabalhaFeriado) {
             $tipo = 'feriado';
             if ((string) $dia['tipo_dia'] !== 'feriado') {
                 $this->db->prepare('UPDATE ponto_dias SET tipo_dia = \'feriado\' WHERE id = :id')
@@ -53,7 +57,7 @@ final class CalculoPontoService
         $dow = (int) date('w', strtotime((string) $dia['data']));
 
         // Folga/DSR ou feriado com batida: todo o tempo vira HE.
-        // HE 100% somente em domingo ou feriado; sábado/outros usam o % da lotação.
+        // HE 100% SOMENTE domingo (w=0) ou feriado. Sábado e demais folgas → % da lotação/colaborador.
         if (in_array($tipo, ['folga', 'folga_escala', 'feriado'], true)) {
             $ent1 = $dia['ent1'] ?? null;
             $sai1 = $dia['sai1'] ?? null;
@@ -63,7 +67,12 @@ final class CalculoPontoService
             $adn = $this->minutosNoturnos($ent1, $sai1) + $this->minutosNoturnos($ent2, $sai2);
             $rotulo = $tipo === 'feriado'
                 ? (string) ($feriadoInfo['nome'] ?? 'Feriado')
-                : ($tipo === 'folga_escala' ? 'Folga de escala' : 'Folga');
+                : match (true) {
+                    $tipo === 'folga_escala' => 'Folga de escala',
+                    $dow === 6 => 'Folga (sábado)',
+                    $dow === 0 => 'Folga (domingo)',
+                    default => 'Folga',
+                };
 
             if ($trab <= 0) {
                 $this->persist($pontoDiaId, $this->zerado(
@@ -108,7 +117,13 @@ final class CalculoPontoService
 
         $atraso = 0;
         if ($ent1 && !empty($dia['previsto_entrada'])) {
-            $atraso = max(0, $this->toMin((string) $ent1) - $this->toMin((string) $dia['previsto_entrada']));
+            $diffAtraso = $this->toMin((string) $ent1) - $this->toMin((string) $dia['previsto_entrada']);
+            if ($diffAtraso < -720) {
+                $diffAtraso += 1440;
+            } elseif ($diffAtraso > 720) {
+                $diffAtraso -= 1440;
+            }
+            $atraso = max(0, $diffAtraso);
         }
 
         // Variação ≤3 min com jornada fechada: sem atraso/falta artificiais
@@ -118,8 +133,32 @@ final class CalculoPontoService
             $diaFalta = 0;
         }
 
+        $abonado = false;
+        if ($diaFalta === 1 || $faltaMin > 0) {
+            try {
+                $jStmt = $this->db->prepare(
+                    'SELECT 1 FROM ponto_justificativas j
+                     INNER JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
+                     WHERE j.espelho_id = :e AND :data BETWEEN j.data_inicio AND j.data_fim AND t.abona_falta = 1
+                     LIMIT 1'
+                );
+                $jStmt->execute(['e' => (int) $dia['espelho_id'], 'data' => (string) $dia['data']]);
+                if ($jStmt->fetchColumn() !== false) {
+                    $diaFalta = 0;
+                    $faltaMin = 0;
+                    $atraso = 0;
+                    $abonado = true;
+                }
+            } catch (\PDOException $e) {
+                if ($e->getCode() !== '42S02') {
+                    throw $e;
+                }
+            }
+        }
+
         $he = max(0, $trab - $prevMin);
-        // HE 100% somente domingo. Demais dias (incl. sábado): % da lotação/colaborador.
+        // Dia útil (ex.: 07–17 com saída 19): excedente = HE no % configurado.
+        // HE 100% somente domingo; feriado já cai no bloco de descanso acima.
         $he100 = ($dow === 0) ? $he : 0;
         $heAdicional = ($dow === 0) ? 0 : $he;
         $adn = $this->minutosNoturnos($ent1, $sai1) + $this->minutosNoturnos($ent2, $sai2);
@@ -127,12 +166,21 @@ final class CalculoPontoService
 
         $atrasoRelevante = $atraso > self::TOLERANCIA_MIN;
         $faltaRelevante = $faltaMin > self::TOLERANCIA_MIN;
-        $ok = ($diaFalta === 0 && !$atrasoRelevante && !$faltaRelevante) ? 'ok' : ($diaFalta ? 'falta' : 'pendente');
-        $resumo = $diaFalta
-            ? 'Falta'
-            : ($he > self::TOLERANCIA_MIN
-                ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
-                : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : 'Normal')));
+        $ok = ($abonado || ($diaFalta === 0 && !$atrasoRelevante && !$faltaRelevante))
+            ? 'ok'
+            : ($diaFalta ? 'falta' : 'pendente');
+        $normalLabel = ($feriadoInfo !== null && $trabalhaFeriado)
+            ? mb_substr('Plantão em feriado — ' . (string) ($feriadoInfo['nome'] ?? 'Feriado'), 0, 120)
+            : 'Normal';
+        $resumo = $abonado
+            ? ($he > self::TOLERANCIA_MIN
+                ? sprintf('Justificado +%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
+                : 'Justificado')
+            : ($diaFalta
+                ? 'Falta'
+                : ($he > self::TOLERANCIA_MIN
+                    ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
+                    : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : $normalLabel))));
 
         $this->persist($pontoDiaId, [
             'total_trab_min' => $trab,
@@ -299,6 +347,24 @@ final class CalculoPontoService
     }
 
     /**
+     * @param array<string,mixed> $dia
+     * @return array<string,mixed>|null
+     */
+    private function resolverCfgDia(array $dia): ?array
+    {
+        $colaboradorId = (int) ($dia['colaborador_id'] ?? 0);
+        $data = (string) ($dia['data'] ?? '');
+        if ($colaboradorId <= 0 || $data === '') {
+            return null;
+        }
+        $key = $colaboradorId . '|' . $data;
+        if (!array_key_exists($key, $this->cfgCache)) {
+            $this->cfgCache[$key] = (new LotacaoResolver($this->db))->resolveParaGeracao($colaboradorId, $data);
+        }
+        return $this->cfgCache[$key];
+    }
+
+    /**
      * Confere calendário composto (nacional + estadual + municipal) do colaborador na data.
      *
      * @param array<string,mixed> $dia
@@ -312,7 +378,7 @@ final class CalculoPontoService
             return (string) ($dia['tipo_dia'] ?? '') === 'feriado' ? ['nome' => 'Feriado'] : null;
         }
 
-        $cfg = (new LotacaoResolver($this->db))->resolve($colaboradorId, $data);
+        $cfg = $this->resolverCfgDia($dia);
         $feriados = $cfg['feriados'] ?? [];
         if ($feriados === []) {
             return null;
@@ -358,10 +424,8 @@ final class CalculoPontoService
     /** @param array<string,mixed> $dia */
     private function percentualHeDoDia(array $dia): int
     {
-        $colaboradorId = (int) ($dia['colaborador_id'] ?? 0);
-        $data = (string) ($dia['data'] ?? '');
-        if ($colaboradorId > 0 && $data !== '') {
-            $cfg = (new LotacaoResolver($this->db))->resolve($colaboradorId, $data);
+        $cfg = $this->resolverCfgDia($dia);
+        if (is_array($cfg)) {
             $pct = (int) ($cfg['percentual_he'] ?? 50);
             if ($pct >= 1 && $pct <= 200) {
                 return $pct;
@@ -379,9 +443,17 @@ final class CalculoPontoService
         }
         $ini = $this->toMin((string) $dia['previsto_entrada']);
         $fim = $this->toMin((string) $dia['previsto_saida']);
+        if ($fim < $ini) {
+            $fim += 1440;
+        }
         $bruto = max(0, $fim - $ini);
         if (!empty($dia['previsto_intervalo_inicio']) && !empty($dia['previsto_intervalo_fim'])) {
-            $bruto -= max(0, $this->toMin((string) $dia['previsto_intervalo_fim']) - $this->toMin((string) $dia['previsto_intervalo_inicio']));
+            $intIni = $this->toMin((string) $dia['previsto_intervalo_inicio']);
+            $intFim = $this->toMin((string) $dia['previsto_intervalo_fim']);
+            if ($intFim < $intIni) {
+                $intFim += 1440;
+            }
+            $bruto = max(0, $bruto - max(0, $intFim - $intIni));
         }
         return $bruto;
     }
@@ -390,10 +462,20 @@ final class CalculoPontoService
     {
         $t = 0;
         if ($e1 && $s1) {
-            $t += max(0, $this->toMin($s1) - $this->toMin($e1));
+            $a = $this->toMin($e1);
+            $b = $this->toMin($s1);
+            if ($b < $a) {
+                $b += 1440;
+            }
+            $t += max(0, $b - $a);
         }
         if ($e2 && $s2) {
-            $t += max(0, $this->toMin($s2) - $this->toMin($e2));
+            $a = $this->toMin($e2);
+            $b = $this->toMin($s2);
+            if ($b < $a) {
+                $b += 1440;
+            }
+            $t += max(0, $b - $a);
         }
         return $t;
     }

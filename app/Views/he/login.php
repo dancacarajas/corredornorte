@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\Csrf;
 use App\Helpers\View;
 
 $error = $error ?? null;
@@ -10,7 +11,7 @@ $cpf = $cpf ?? '';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hora Extra · Arcadis</title>
+    <title>Portal do Colaborador · Arcadis</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
@@ -43,14 +44,15 @@ $cpf = $cpf ?? '';
     <div class="login-brand">
         <img src="<?= View::asset('img/logo.png') ?>" alt="Arcadis">
     </div>
-    <h1>Autorização de hora extra</h1>
-    <p>Informe apenas o CPF para continuar.</p>
+    <h1>Portal do Colaborador</h1>
+    <p>Informe o CPF para acessar seus relatórios de atividades.</p>
 
     <?php if ($error): ?>
         <div class="alert alert-danger" style="margin-bottom:1rem;"><?= View::e($error) ?></div>
     <?php endif; ?>
 
     <form method="post" action="/he/login" class="section-stack">
+        <?= Csrf::field() ?>
         <div class="form-field">
             <label class="form-label" for="cpf">CPF</label>
             <input class="form-control" id="cpf" name="cpf" inputmode="numeric" autocomplete="username"

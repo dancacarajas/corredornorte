@@ -14,6 +14,7 @@ final class HePortalAuth
     public static function attempt(array $colaborador): void
     {
         self::start();
+        session_regenerate_id(true);
         $_SESSION['he_portal'] = [
             'id' => (int) $colaborador['id'],
             'nome' => (string) $colaborador['nome'],

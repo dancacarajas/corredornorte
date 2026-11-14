@@ -32,11 +32,29 @@ final class PortalController
 
     public function login(): void
     {
+        HePortalAuth::start();
+        $agora = time();
+        $janela = array_values(array_filter(
+            (array) ($_SESSION['_he_login_fails'] ?? []),
+            static fn($t): bool => is_int($t) && ($agora - $t) < 300
+        ));
+        if (count($janela) >= 10) {
+            $_SESSION['_he_login_fails'] = $janela;
+            View::render('he/login', [
+                'pageTitle' => 'Portal do Colaborador',
+                'error' => 'Muitas tentativas em sequência. Aguarde alguns minutos e tente novamente.',
+                'cpf' => '',
+            ], null);
+            return;
+        }
+
         $cpf = preg_replace('/\D+/', '', (string) ($_POST['cpf'] ?? '')) ?: '';
         $svc = new HeAutorizacaoService();
         $colab = $svc->buscarColaboradorPorCpf($cpf);
 
         if ($colab === null || (string) $colab['status'] !== 'ativo') {
+            $janela[] = $agora;
+            $_SESSION['_he_login_fails'] = $janela;
             View::render('he/login', [
                 'pageTitle' => 'Portal do Colaborador',
                 'error' => 'CPF não encontrado ou colaborador inativo.',
@@ -45,6 +63,7 @@ final class PortalController
             return;
         }
 
+        unset($_SESSION['_he_login_fails']);
         HePortalAuth::attempt($colab);
         header('Location: /he');
         exit;
@@ -155,8 +174,16 @@ final class PortalController
             // A visualização do relatório continua disponível antes da migração da assinatura.
         }
 
+        $statusRa = (string) ($dados['relatorio']['status'] ?? 'rascunho');
+        $docStatus = is_array($documentoAssinatura) ? (string) ($documentoAssinatura['status'] ?? '') : '';
+        $pageTitle = match (true) {
+            $docStatus === 'assinado' => 'Relatório concluído',
+            in_array($statusRa, ['enviado', 'aprovado'], true) => 'Assinar relatório',
+            default => 'Preencher relatório',
+        };
+
         View::render('he/relatorio_show', [
-            'pageTitle' => 'Preencher relatório',
+            'pageTitle' => $pageTitle,
             'pageSubtitle' => $rotuloPeriodo,
             'activeMenu' => 'relatorios',
             'user' => $user,
@@ -167,11 +194,13 @@ final class PortalController
             ),
             'flash' => $_SESSION['he_flash'] ?? null,
             'error' => $_SESSION['he_error'] ?? null,
-            'somenteLeitura' => in_array((string) $dados['relatorio']['status'], ['enviado', 'aprovado'], true),
+            'somenteLeitura' => in_array($statusRa, ['enviado', 'aprovado'], true),
             'documentoAssinatura' => $documentoAssinatura,
             'linkAssinatura' => $_SESSION['ra_portal_link'] ?? null,
+            'textoAceite' => RelatorioAssinaturaService::TEXTO_ACEITE,
+            'nomeAssinaturaInformado' => (string) ($_SESSION['ra_nome_informado'] ?? ''),
         ], 'layouts/portal');
-        unset($_SESSION['he_flash'], $_SESSION['he_error'], $_SESSION['ra_portal_link']);
+        unset($_SESSION['he_flash'], $_SESSION['he_error'], $_SESSION['ra_portal_link'], $_SESSION['ra_nome_informado']);
     }
 
     public function relatorioPdf(string $id = '0'): void
@@ -275,6 +304,57 @@ final class PortalController
             $_SESSION['he_error'] = 'Não foi possível salvar o relatório.';
         }
         header('Location: /he/relatorios/' . $relatorioId);
+        exit;
+    }
+
+    public function relatorioAssinar(string $id = '0'): void
+    {
+        HePortalAuth::requireLogin();
+        $user = HePortalAuth::user();
+        $relatorioId = (int) $id;
+        $nome = is_string($_POST['nome'] ?? null) ? $_POST['nome'] : '';
+        $aceite = ($_POST['aceite'] ?? '') === '1';
+
+        try {
+            $dados = (new RelatorioAtividadesService())->carregar($relatorioId, (int) $user['id']);
+            if ($dados === null) {
+                throw new RuntimeException('Relatório não encontrado.');
+            }
+            $status = (string) ($dados['relatorio']['status'] ?? '');
+            if (!in_array($status, ['enviado', 'aprovado'], true)) {
+                throw new RuntimeException('Envie o relatório antes de assinar.');
+            }
+
+            $assinatura = new RelatorioAssinaturaService(\App\Config\Database::connection());
+            $doc = $assinatura->buscarPorRelatorio($relatorioId);
+            if ($doc === null || (string) ($doc['status'] ?? '') !== 'enviado') {
+                if (is_array($doc) && (string) ($doc['status'] ?? '') === 'assinado') {
+                    throw new RuntimeException('Este relatório já foi assinado eletronicamente.');
+                }
+                $pdf = (new RelatorioAtividadesPdf())->gerarArquivo($dados);
+                $assinatura->gerarLinkPortal($relatorioId, $pdf, (int) $user['id']);
+                $doc = $assinatura->buscarPorRelatorio($relatorioId);
+            }
+            if ($doc === null || empty($doc['portal_token']) || empty($doc['hash_sha256'])) {
+                throw new RuntimeException('Não foi possível preparar o documento para assinatura.');
+            }
+
+            $assinatura->assinarNoPortal(
+                (string) $doc['portal_token'],
+                $nome,
+                $aceite,
+                (string) $doc['hash_sha256']
+            );
+            $_SESSION['he_flash'] = 'Relatório assinado eletronicamente com sucesso!';
+        } catch (RuntimeException $e) {
+            $_SESSION['he_error'] = $e->getMessage();
+            $_SESSION['ra_nome_informado'] = $nome;
+        } catch (Throwable) {
+            $_SESSION['he_error'] = 'Não foi possível concluir a assinatura.';
+            $_SESSION['ra_nome_informado'] = $nome;
+        }
+
+        header('Location: /he/relatorios/' . $relatorioId, true, 303);
         exit;
     }
 

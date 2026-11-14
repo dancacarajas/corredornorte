@@ -15,8 +15,13 @@ final class OAuthMailSender
     /**
      * @return array{ok:bool,erro:?string,provedor:?string,conta_id:?int}
      */
-    public function send(string $to, string $subject, string $body, ?string $attachmentPath = null): array
-    {
+    public function send(
+        string $to,
+        string $subject,
+        string $body,
+        ?string $attachmentPath = null,
+        ?string $htmlBody = null
+    ): array {
         try {
             $ready = $this->accounts->accessTokenPronto();
         } catch (RuntimeException $e) {
@@ -31,9 +36,9 @@ final class OAuthMailSender
 
         try {
             if ($provedor === 'gmail') {
-                $this->sendGmail($token, $from, $fromName, $to, $subject, $body, $attachmentPath);
+                $this->sendGmail($token, $from, $fromName, $to, $subject, $body, $attachmentPath, $htmlBody);
             } else {
-                $this->sendMicrosoft($token, $to, $subject, $body, $attachmentPath);
+                $this->sendMicrosoft($token, $to, $subject, $body, $attachmentPath, $htmlBody);
             }
             $this->accounts->logEnvio((int) $conta['id'], $provedor, $to, $subject, true, null);
 
@@ -53,9 +58,19 @@ final class OAuthMailSender
         string $to,
         string $subject,
         string $body,
-        ?string $attachmentPath
+        ?string $attachmentPath,
+        ?string $htmlBody = null
     ): void {
-        $raw = $this->buildMime($from, $fromName, $to, $subject, $body, $attachmentPath);
+        $raw = MimeMessageBuilder::build(
+            $from,
+            $fromName,
+            $to,
+            $subject,
+            $body,
+            $attachmentPath,
+            $htmlBody,
+            false
+        )['raw'];
         $encoded = rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
         $cfg = $this->accounts->providerConfig('gmail');
         $res = OAuthHttp::request('POST', $cfg['send_url'], [
@@ -76,14 +91,16 @@ final class OAuthMailSender
         string $to,
         string $subject,
         string $body,
-        ?string $attachmentPath
+        ?string $attachmentPath,
+        ?string $htmlBody = null
     ): void {
+        $hasHtml = $htmlBody !== null && trim($htmlBody) !== '';
         $message = [
             'message' => [
                 'subject' => $subject,
                 'body' => [
-                    'contentType' => 'Text',
-                    'content' => $body,
+                    'contentType' => $hasHtml ? 'HTML' : 'Text',
+                    'content' => $hasHtml ? $htmlBody : $body,
                 ],
                 'toRecipients' => [
                     ['emailAddress' => ['address' => $to]],
@@ -116,44 +133,5 @@ final class OAuthMailSender
                 : $res['body'];
             throw new RuntimeException('Microsoft Graph: ' . $msg);
         }
-    }
-
-    private function buildMime(
-        string $from,
-        string $fromName,
-        string $to,
-        string $subject,
-        string $body,
-        ?string $attachmentPath
-    ): string {
-        $subjectEnc = '=?UTF-8?B?' . base64_encode($subject) . '?=';
-        $fromHeader = sprintf('"%s" <%s>', addslashes($fromName), $from);
-
-        if ($attachmentPath && is_file($attachmentPath)) {
-            $boundary = 'b_' . bin2hex(random_bytes(8));
-            $filename = basename($attachmentPath);
-            $fileData = chunk_split(base64_encode((string) file_get_contents($attachmentPath)));
-            $mime = "From: {$fromHeader}\r\n";
-            $mime .= "To: {$to}\r\n";
-            $mime .= "Subject: {$subjectEnc}\r\n";
-            $mime .= "MIME-Version: 1.0\r\n";
-            $mime .= "Content-Type: multipart/mixed; boundary=\"{$boundary}\"\r\n\r\n";
-            $mime .= "--{$boundary}\r\n";
-            $mime .= "Content-Type: text/plain; charset=UTF-8\r\n\r\n{$body}\r\n";
-            $mime .= "--{$boundary}\r\n";
-            $mime .= "Content-Type: application/pdf; name=\"{$filename}\"\r\n";
-            $mime .= "Content-Transfer-Encoding: base64\r\n";
-            $mime .= "Content-Disposition: attachment; filename=\"{$filename}\"\r\n\r\n";
-            $mime .= $fileData . "\r\n--{$boundary}--";
-
-            return $mime;
-        }
-
-        return "From: {$fromHeader}\r\n"
-            . "To: {$to}\r\n"
-            . "Subject: {$subjectEnc}\r\n"
-            . "MIME-Version: 1.0\r\n"
-            . "Content-Type: text/plain; charset=UTF-8\r\n\r\n"
-            . $body;
     }
 }

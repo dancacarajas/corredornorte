@@ -72,12 +72,45 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         echo match ((string) $flash) {
             'he-aplicada' => 'HE aplicada no cartão de ponto.',
             'he-divergente' => 'HE marcada como divergente (não aplicada).',
+            'previsto-aplicado' => 'Horários previstos aplicados nos dias úteis pendentes.',
+            'divergencia-resolvida' => 'Divergência concluída! O espelho voltou para tratamento.',
             default => 'Atualizado com sucesso.',
         };
         ?>
     </div>
 <?php endif; ?>
 <?php if (!empty($error)): ?><div class="alert alert-danger"><?= View::e((string)$error) ?></div><?php endif; ?>
+
+<?php if (!empty($divergenciasAbertas) || $statusPeriodo === 'em_divergencia'): ?>
+<section class="ponto-div-banner" aria-label="Divergência apontada pelo colaborador">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:.75rem;">
+        <div>
+            <strong style="color:#991B1B;">Divergência apontada pelo colaborador — assinatura pausada</strong>
+            <p class="text-sm" style="margin:.25rem 0 0;color:#7F1D1D;">Ajuste as batidas ou justificativas abaixo e conclua o tratamento para liberar o cartão para fechamento e nova assinatura.</p>
+        </div>
+    </div>
+    <?php if (!empty($divergenciasAbertas)): ?>
+        <ul class="ponto-div-list">
+            <?php foreach ($divergenciasAbertas as $div): ?>
+                <li>
+                    <strong><?= !empty($div['data_ocorrencia']) ? date('d/m/Y', strtotime((string) $div['data_ocorrencia'])) : 'Geral do período' ?>:</strong>
+                    <?= View::e((string) ($div['motivo'] ?? '')) ?>
+                    <span class="muted">(<?= !empty($div['created_at']) ? date('d/m/Y H:i', strtotime((string) $div['created_at'])) : '' ?>)</span>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php endif; ?>
+    <form method="post" action="/rh/ponto/<?= (int) $espelhoAcaoId ?>/resolver-divergencia" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
+        <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+        <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+        <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+        <input class="form-control" type="text" name="resolucao_obs" maxlength="500"
+               placeholder="Observação da correção para o histórico (opcional)"
+               style="flex:1;min-width:220px;background:#fff;">
+        <button class="btn btn-primary btn-sm" type="submit">Concluir divergência e liberar</button>
+    </form>
+</section>
+<?php endif; ?>
 
 <section class="card">
     <div class="card-body">
@@ -93,12 +126,22 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
                 </div>
             </div>
             <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-                <span class="pill pill-brand">Período · <?= View::e($statusPeriodo) ?></span>
+                <span class="ponto-save-pill" id="pontoSaveState" aria-live="polite"></span>
+                <span class="pill pill-brand" id="pontoStatusBadge">Período · <?= View::e($statusPeriodo) ?></span>
                 <?php if ($periodoBloqueado): ?>
                     <button class="btn btn-secondary btn-sm" type="button" data-modal-open="reabrirModal"
                             data-espelho-id="<?= (int) $espelhoAcaoId ?>"
                             data-competencia="<?= View::e($rotuloPeriodo) ?>">Reabrir período</button>
                 <?php else: ?>
+                    <form method="post" action="/rh/ponto/<?= (int) $espelhoAcaoId ?>/apontar-previsto" style="display:inline;">
+                        <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+                        <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+                        <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+                        <button class="btn btn-ghost btn-sm" type="submit"
+                                data-confirm-title="Preencher dias pendentes?"
+                                data-confirm="Aplica os horários previstos da escala apenas nos dias úteis que ainda estão totalmente em branco."
+                                data-confirm-ok="Aplicar previstos">Preencher previstos</button>
+                    </form>
                     <form method="post" action="/rh/ponto/<?= (int) $espelhoAcaoId ?>/status" style="display:inline-flex;gap:.5rem;flex-wrap:wrap;">
                         <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
                         <input type="hidden" name="aplicar_periodo" value="1">
@@ -112,11 +155,29 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         </div>
     </div>
 
+    <?php if ($heDeclaracoes !== [] || $justificativas !== []): ?>
+    <div class="ponto-top-tabs" role="tablist" aria-label="Visões do cartão de ponto">
+        <button type="button" class="ponto-tab-btn is-active" role="tab" aria-selected="true" data-ponto-tab="grade">Cartão diário</button>
+        <?php if ($heDeclaracoes !== []):
+            $hePend = count(array_filter($heDeclaracoes, static fn(array $d): bool => ($d['he_status'] ?? '') === 'declarada'));
+        ?>
+            <button type="button" class="ponto-tab-btn" role="tab" aria-selected="false" data-ponto-tab="he">
+                HE Cliente <span class="ponto-tab-count"><?= $hePend > 0 ? $hePend : count($heDeclaracoes) ?></span>
+            </button>
+        <?php endif; ?>
+        <?php if ($justificativas !== []): ?>
+            <button type="button" class="ponto-tab-btn" role="tab" aria-selected="false" data-ponto-tab="just">
+                Justificativas <span class="ponto-tab-count"><?= count($justificativas) ?></span>
+            </button>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
     <?php foreach ($dias as $diaForm):
         // Folga/feriado também têm formulário: trabalho nesses dias gera HE (100% só domingo/feriado).
         $fid = 'batida-' . (int)$diaForm['id'];
     ?>
-        <form id="<?= $fid ?>" method="post" action="/rh/ponto/<?= (int) $diaForm['espelho_id'] ?>/dia" class="batida-form">
+        <form id="<?= $fid ?>" method="post" action="/rh/ponto/<?= (int) $diaForm['espelho_id'] ?>/dia" class="batida-form" data-dia-id="<?= (int) $diaForm['id'] ?>">
             <input type="hidden" name="ponto_dia_id" value="<?= (int)$diaForm['id'] ?>">
             <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
             <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
@@ -124,7 +185,7 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         </form>
     <?php endforeach; ?>
 
-    <div class="ponto-table-wrap">
+    <div class="ponto-table-wrap ponto-tab-panel" data-ponto-panel="grade">
         <table class="ponto-table">
             <thead>
             <tr>
@@ -178,7 +239,7 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
                     );
                 }
             ?>
-                <tr class="<?= View::e($rowClass) ?>">
+                <tr class="<?= View::e($rowClass) ?>" data-dia-row="<?= (int) $dia['id'] ?>" data-is-descanso="<?= ($isFolga || $isFeriado) ? '1' : '0' ?>">
                     <td class="dia">
                         <div class="ponto-dia-cell">
                             <span class="ponto-dia-label"><?= date('d/m', $ts) ?> <?= $dow ?></span>
@@ -191,7 +252,7 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
                             <?php endif; ?>
                         </div>
                     </td>
-                    <td>
+                    <td data-col="ok">
                         <?php if ($ok === 'ok' || $ok === 'folga' || $ok === 'feriado'): ?>
                             <span class="ponto-ok <?= View::e($ok) ?>" title="<?= View::e($ok) ?>">✓</span>
                         <?php else: ?>
@@ -210,19 +271,38 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
 
                     <?php
                     $isDescanso = $isFolga || $isFeriado;
+                    $dowNum = (int) date('w', $ts); // 0=dom .. 6=sab
+                    // Regra rígida: HE 100% só domingo ou feriado. Sábado/folga de escala → % da lotação.
+                    $he100Aplicavel = $isFeriado || $dowNum === 0;
+                    $pctDia = (int) ($dia['percentual_he'] ?? $pctHeLabel);
+                    if ($pctDia < 1) {
+                        $pctDia = $pctHeLabel;
+                    }
                     $temBatidaDescanso = $isDescanso && (
                         !empty($dia['ent1']) || !empty($dia['sai1']) || !empty($dia['ent2']) || !empty($dia['sai2'])
                         || (int) ($dia['total_trab_min'] ?? 0) > 0
                     );
-                    $rotuloDescanso = $isFeriado
-                        ? ('Feriado' . (!empty($dia['ocorrencia_resumo']) ? ' · ' . (string) $dia['ocorrencia_resumo'] : ''))
-                        : 'Folga';
+                    if ($isFeriado) {
+                        $resumoOc = trim((string) ($dia['ocorrencia_resumo'] ?? ''));
+                        $rotuloDescanso = ($resumoOc !== '' && str_starts_with($resumoOc, 'Feriado'))
+                            ? $resumoOc
+                            : 'Feriado';
+                    } else {
+                        $rotuloDescanso = match ($dowNum) {
+                            6 => 'Folga (sábado)',
+                            0 => 'Folga (domingo)',
+                            default => 'Folga',
+                        };
+                    }
+                    $hintHeDescanso = $he100Aplicavel
+                        ? ' — batidas geram HE 100%'
+                        : (' — batidas geram HE ' . $pctDia . '%');
                     ?>
                     <?php if ($isDescanso): ?>
                         <td colspan="4">
                             <div class="ponto-folga-cell" style="margin-bottom:.35rem;">
                                 <?= View::e($rotuloDescanso) ?>
-                                <span class="text-sm muted"> — batidas geram HE 100%</span>
+                                <span class="text-sm muted"><?= View::e($hintHeDescanso) ?></span>
                             </div>
                             <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.35rem;">
                                 <input class="ponto-time" form="<?= $formId ?>" type="text" inputmode="numeric"
@@ -239,14 +319,14 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
                                        title="HH:MM" value="<?= View::e($fmtH($dia['sai2'] ?? null)) ?>" <?= $locked ? 'readonly' : '' ?>>
                             </div>
                         </td>
-                        <td><?= $cell((int)($dia['total_trab_min'] ?? 0), $calc) ?></td>
+                        <td data-col="trab"><?= $cell((int)($dia['total_trab_min'] ?? 0), $calc) ?></td>
                         <td class="val-muted">—</td>
                         <td class="val-muted">—</td>
                         <td class="val-muted">—</td>
                         <td class="val-muted">—</td>
-                        <td class="val-muted">—</td>
-                        <td><?= $temBatidaDescanso ? $cell((int)($dia['he_100_min'] ?? 0), $calc) : '<span class="val-muted">—</span>' ?></td>
-                        <td><?= $cell((int)($dia['adn_min'] ?? 0), $calc) ?></td>
+                        <td data-col="he50"><?= $temBatidaDescanso ? $cell((int)($dia['he_50_min'] ?? 0), $calc) : '<span class="val-muted">—</span>' ?></td>
+                        <td data-col="he100"><?= $temBatidaDescanso ? $cell((int)($dia['he_100_min'] ?? 0), $calc) : '<span class="val-muted">—</span>' ?></td>
+                        <td data-col="adn"><?= $cell((int)($dia['adn_min'] ?? 0), $calc) ?></td>
                         <td class="val-muted">—</td>
                     <?php else: ?>
                         <td class="batida-cell">
@@ -269,15 +349,15 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
                                    name="sai2" placeholder="--:--" maxlength="5" pattern="^([01]\d|2[0-3]):[0-5]\d$"
                                    title="HH:MM" value="<?= View::e($fmtH($dia['sai2'] ?? null)) ?>" <?= $locked ? 'readonly' : '' ?>>
                         </td>
-                        <td><?= $cell((int)($dia['total_trab_min'] ?? 0), $calc) ?></td>
-                        <td><?= $cell((int)($dia['horas_previstas_min'] ?? 0), $calc) ?></td>
-                        <td class="<?= !empty($dia['dia_falta']) ? 'val-red' : 'val-muted' ?>"><?= !empty($dia['dia_falta']) ? '1' : '—' ?></td>
-                        <td><?= $cell((int)($dia['horas_falta_min'] ?? 0), $calc, true) ?></td>
-                        <td><?= $cell((int)($dia['atraso_bruto_min'] ?? 0), $calc, true) ?></td>
-                        <td><?= $cell((int)($dia['he_50_min'] ?? 0), $calc) ?></td>
-                        <td><?= $cell((int)($dia['he_100_min'] ?? 0), $calc) ?></td>
-                        <td><?= $cell((int)($dia['adn_min'] ?? 0), $calc) ?></td>
-                        <td><?= $cell((int)($dia['desconto_min'] ?? 0), $calc, true) ?></td>
+                        <td data-col="trab"><?= $cell((int)($dia['total_trab_min'] ?? 0), $calc) ?></td>
+                        <td data-col="prev"><?= $cell((int)($dia['horas_previstas_min'] ?? 0), $calc) ?></td>
+                        <td data-col="dia_falta" class="<?= !empty($dia['dia_falta']) ? 'val-red' : 'val-muted' ?>"><?= !empty($dia['dia_falta']) ? '1' : '—' ?></td>
+                        <td data-col="falta"><?= $cell((int)($dia['horas_falta_min'] ?? 0), $calc, true) ?></td>
+                        <td data-col="atraso"><?= $cell((int)($dia['atraso_bruto_min'] ?? 0), $calc, true) ?></td>
+                        <td data-col="he50"><?= $cell((int)($dia['he_50_min'] ?? 0), $calc) ?></td>
+                        <td data-col="he100"><?= $cell((int)($dia['he_100_min'] ?? 0), $calc) ?></td>
+                        <td data-col="adn"><?= $cell((int)($dia['adn_min'] ?? 0), $calc) ?></td>
+                        <td data-col="desc"><?= $cell((int)($dia['desconto_min'] ?? 0), $calc, true) ?></td>
                     <?php endif; ?>
                 </tr>
             <?php endforeach; ?>
@@ -285,146 +365,102 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         </table>
     </div>
 
-    <div class="ponto-totais">
-        <div class="box"><span>HE <?= (int) $pctHeLabel ?>%</span><strong><?= View::e($calc->fmt($totHe50)) ?></strong></div>
-        <div class="box"><span>HE 100%</span><strong><?= View::e($calc->fmt($totHe100)) ?></strong></div>
-        <div class="box"><span>Ad. Noturno</span><strong><?= View::e($calc->fmt($totAdn)) ?></strong></div>
-        <div class="box"><span>Horas falta</span><strong class="val-red"><?= View::e($calc->fmt($totFalta)) ?></strong></div>
-        <div class="box"><span>Atrasos</span><strong><?= View::e($calc->fmt($totAtraso)) ?></strong></div>
-        <div class="box"><span>Descontos</span><strong class="val-red"><?= View::e($calc->fmt($totDesc)) ?></strong></div>
+    <div class="ponto-totais ponto-tab-panel" data-ponto-panel="grade">
+        <div class="box"><span>HE <?= (int) $pctHeLabel ?>%</span><strong data-tot="he50"><?= View::e($calc->fmt($totHe50)) ?></strong></div>
+        <div class="box"><span>HE 100%</span><strong data-tot="he100"><?= View::e($calc->fmt($totHe100)) ?></strong></div>
+        <div class="box"><span>Ad. Noturno</span><strong data-tot="adn"><?= View::e($calc->fmt($totAdn)) ?></strong></div>
+        <div class="box"><span>Horas falta</span><strong class="val-red" data-tot="falta"><?= View::e($calc->fmt($totFalta)) ?></strong></div>
+        <div class="box"><span>Atrasos</span><strong data-tot="atraso"><?= View::e($calc->fmt($totAtraso)) ?></strong></div>
+        <div class="box"><span>Descontos</span><strong class="val-red" data-tot="desc"><?= View::e($calc->fmt($totDesc)) ?></strong></div>
         <div class="box"><span>Jornada / Escala</span><strong><?= View::e(($espelho['jornada_codigo'] ?? '—').' · '.($espelho['escala_codigo'] ?? '')) ?></strong></div>
     </div>
-</section>
 
-<?php if ($justificativas !== []): ?>
-<section class="card">
-    <div class="card-header"><div><h2 class="card-title">Justificativas</h2></div></div>
-    <div class="table-wrap">
-        <table class="table">
-            <thead><tr><th>Período</th><th>Tipo</th><th>Obs.</th><th>Anexo</th></tr></thead>
-            <tbody>
-            <?php foreach ($justificativas as $j): ?>
+    <?php if ($heDeclaracoes !== []): ?>
+    <div class="ponto-tab-panel" data-ponto-panel="he" hidden>
+        <div class="card-header">
+            <div>
+                <h2 class="card-title">HE Cliente (Relatório de Atividades)</h2>
+                <p class="card-subtitle">Confira no SharePoint e aplique no cartão, ou marque divergência.</p>
+            </div>
+        </div>
+        <div class="card-body table-wrap">
+            <table class="table">
+                <thead>
                 <tr>
-                    <td><?= View::e($j['data_inicio'].' → '.$j['data_fim']) ?></td>
-                    <td><?= View::e((string)$j['tipo_nome']) ?></td>
-                    <td><?= View::e((string)($j['observacao'] ?? '')) ?></td>
-                    <td><?= !empty($j['anexo_path']) ? '<a href="/'.$j['anexo_path'].'" target="_blank">Arquivo</a>' : '—' ?></td>
+                    <th>Data</th>
+                    <th>Início</th>
+                    <th>Fim</th>
+                    <th>Minutos</th>
+                    <th>Status</th>
+                    <th>Gestor Cliente</th>
+                    <th></th>
                 </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
-</section>
-<?php endif; ?>
-
-<?php if ($heDeclaracoes !== []): ?>
-<section class="card">
-    <div class="card-header">
-        <div>
-            <h2 class="card-title">HE Cliente (Relatório de Atividades)</h2>
-            <p class="card-subtitle">Confira no SharePoint e aplique no cartão, ou marque divergência.</p>
+                </thead>
+                <tbody>
+                <?php foreach ($heDeclaracoes as $decl):
+                    $st = (string) ($decl['he_status'] ?? '');
+                    $min = (int) ($decl['minutos'] ?? 0);
+                    ?>
+                    <tr>
+                        <td><?= View::e(date('d/m/Y', strtotime((string) $decl['data']))) ?></td>
+                        <td><?= View::e(substr((string) $decl['he_hora_inicio'], 0, 5)) ?></td>
+                        <td><?= View::e(substr((string) $decl['he_hora_fim'], 0, 5)) ?></td>
+                        <td><?= sprintf('%02d:%02d', intdiv($min, 60), $min % 60) ?></td>
+                        <td><?= View::e($st) ?></td>
+                        <td><?= View::e((string) ($decl['gestor_cliente_nome'] ?? '—')) ?></td>
+                        <td style="white-space:nowrap;">
+                            <?php if ($st === 'declarada' && empty($periodoBloqueado)): ?>
+                                <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/he-ra/<?= (int) $decl['ra_dia_id'] ?>/aplicar" style="display:inline;">
+                                    <button class="btn btn-primary btn-sm" type="submit"
+                                            data-confirm-title="Aplicar HE no cartão?"
+                                            data-confirm="A saída do dia será ajustada com base na HE declarada no relatório."
+                                            data-confirm-ok="Aplicar"
+                                            data-confirm-tone="brand">Aplicar</button>
+                                </form>
+                                <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/he-ra/<?= (int) $decl['ra_dia_id'] ?>/divergente" style="display:inline;">
+                                    <button class="btn btn-ghost btn-sm" type="submit"
+                                            data-confirm-title="Marcar como divergente?"
+                                            data-confirm="A HE não será aplicada no cartão de ponto."
+                                            data-confirm-ok="Marcar divergente"
+                                            data-confirm-tone="warning">Divergente</button>
+                                </form>
+                            <?php elseif ($st === 'aplicada'): ?>
+                                <span class="muted text-sm">Aplicada<?= !empty($decl['he_aplicada_em']) ? ' em ' . date('d/m/Y H:i', strtotime((string) $decl['he_aplicada_em'])) : '' ?></span>
+                            <?php else: ?>
+                                <span class="muted">—</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
         </div>
     </div>
-    <div class="card-body table-responsive">
-        <table class="table">
-            <thead>
-            <tr>
-                <th>Data</th>
-                <th>Início</th>
-                <th>Fim</th>
-                <th>Minutos</th>
-                <th>Status</th>
-                <th>Gestor Cliente</th>
-                <th></th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($heDeclaracoes as $decl):
-                $st = (string) ($decl['he_status'] ?? '');
-                $min = (int) ($decl['minutos'] ?? 0);
-                ?>
-                <tr>
-                    <td><?= View::e(date('d/m/Y', strtotime((string) $decl['data']))) ?></td>
-                    <td><?= View::e(substr((string) $decl['he_hora_inicio'], 0, 5)) ?></td>
-                    <td><?= View::e(substr((string) $decl['he_hora_fim'], 0, 5)) ?></td>
-                    <td><?= sprintf('%02d:%02d', intdiv($min, 60), $min % 60) ?></td>
-                    <td><?= View::e($st) ?></td>
-                    <td><?= View::e((string) ($decl['gestor_cliente_nome'] ?? '—')) ?></td>
-                    <td style="white-space:nowrap;">
-                        <?php if ($st === 'declarada' && empty($periodoBloqueado)): ?>
-                            <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/he-ra/<?= (int) $decl['ra_dia_id'] ?>/aplicar" style="display:inline;">
-                                <button class="btn btn-primary btn-sm" type="submit"
-                                        onclick="return confirm('Aplicar esta HE no cartão (ajustar saída)?');">Aplicar</button>
-                            </form>
-                            <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/he-ra/<?= (int) $decl['ra_dia_id'] ?>/divergente" style="display:inline;">
-                                <button class="btn btn-ghost btn-sm" type="submit"
-                                        onclick="return confirm('Marcar como divergente (não aplica no ponto)?');">Divergente</button>
-                            </form>
-                        <?php elseif ($st === 'aplicada'): ?>
-                            <span class="muted text-sm">Aplicada<?= !empty($decl['he_aplicada_em']) ? ' em ' . date('d/m/Y H:i', strtotime((string) $decl['he_aplicada_em'])) : '' ?></span>
-                        <?php else: ?>
-                            <span class="muted">—</span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
+    <?php endif; ?>
+
+    <?php if ($justificativas !== []): ?>
+    <div class="ponto-tab-panel" data-ponto-panel="just" hidden>
+        <div class="card-header"><div><h2 class="card-title">Justificativas lançadas</h2></div></div>
+        <div class="table-wrap">
+            <table class="table">
+                <thead><tr><th>Período</th><th>Tipo</th><th>Obs.</th><th>Anexo</th></tr></thead>
+                <tbody>
+                <?php foreach ($justificativas as $j): ?>
+                    <tr>
+                        <td><?= View::e($j['data_inicio'].' → '.$j['data_fim']) ?></td>
+                        <td><?= View::e((string)$j['tipo_nome']) ?></td>
+                        <td><?= View::e((string)($j['observacao'] ?? '')) ?></td>
+                        <td><?= !empty($j['anexo_path']) ? '<a href="/rh/ponto/anexos/' . (int) $j['id'] . '" target="_blank" rel="noopener noreferrer">Arquivo</a>' : '—' ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
+    <?php endif; ?>
 </section>
-<?php endif; ?>
 
 <?php if ($heAutorizadas !== []): ?>
-<style>
-#heDetalheModal .modal-he-detalhe{width:min(720px,100%);padding:0;overflow:hidden;border:1px solid rgba(224,96,8,.14);box-shadow:0 28px 70px rgba(17,17,17,.22)}
-#heDetalheModal .he-detalhe-panel[hidden]{display:none!important}
-#heDetalheModal .he-modal-hero{padding:1.3rem 1.4rem 1.15rem;background:radial-gradient(circle at top right,rgba(255,255,255,.22),transparent 42%),linear-gradient(135deg,#FF8A2B 0%,#E06008 48%,#C85206 100%);color:#fff}
-#heDetalheModal .he-modal-hero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}
-#heDetalheModal .he-modal-kicker{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.82);margin-bottom:.25rem}
-#heDetalheModal .he-modal-title{margin:0;font-family:"Plus Jakarta Sans",Manrope,sans-serif;font-size:1.5rem;font-weight:800;letter-spacing:-.02em}
-#heDetalheModal .he-modal-hero-actions{display:inline-flex;align-items:center;gap:.55rem}
-#heDetalheModal .he-modal-hero-actions .btn-ghost{color:rgba(255,255,255,.92)}
-#heDetalheModal .he-modal-hero-actions .btn-ghost:hover{background:rgba(255,255,255,.14);color:#fff}
-#heDetalheModal .he-status-pill{display:inline-flex;align-items:center;padding:.28rem .7rem;border-radius:999px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.42);color:#fff;font-size:.75rem;font-weight:800}
-#heDetalheModal .he-hero-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem}
-#heDetalheModal .he-metric{padding:.75rem .85rem;border-radius:12px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);backdrop-filter:blur(4px)}
-#heDetalheModal .he-metric span{display:block;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.8);margin-bottom:.25rem}
-#heDetalheModal .he-metric strong{font-size:1.02rem;font-weight:800;font-variant-numeric:tabular-nums;color:#fff}
-#heDetalheModal .he-modal-body{padding:1.2rem 1.35rem .2rem;background:linear-gradient(180deg,#FFF8F2 0%,#fff 30%)}
-#heDetalheModal .he-meta-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin-bottom:1.15rem}
-#heDetalheModal .he-meta-card{padding:.9rem;border-radius:14px;background:#fff;border:1px solid #E8E8EA;box-shadow:0 8px 22px rgba(17,17,17,.04)}
-#heDetalheModal .he-meta-card span{display:block;font-size:.7rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6B7280;margin-bottom:.3rem}
-#heDetalheModal .he-meta-card strong{display:block;font-size:.95rem;font-weight:800;color:#111}
-#heDetalheModal .he-meta-card em{display:block;margin-top:.15rem;font-style:normal;font-size:.8rem;color:#6B7280}
-#heDetalheModal .he-meta-card-wide{grid-column:1/-1}
-#heDetalheModal .he-meta-card-wide p{margin:0;font-size:.92rem;line-height:1.45;color:#111;white-space:pre-wrap}
-#heDetalheModal .he-timeline-wrap{margin:0 0 1.15rem;padding:1.05rem 1.05rem 1.1rem;border-radius:16px;background:#fff;border:1px solid #E5E7EB}
-#heDetalheModal .he-timeline-head{margin-bottom:1rem}
-#heDetalheModal .he-timeline-head h4{margin:0;font-family:"Plus Jakarta Sans",Manrope,sans-serif;font-size:1.02rem;font-weight:800}
-#heDetalheModal .he-timeline-head span{display:block;margin-top:.18rem;font-size:.82rem;color:#6B7280}
-#heDetalheModal .he-timeline{margin:0;padding:0;display:flex;flex-direction:column;gap:0}
-#heDetalheModal .he-timeline-item{display:grid;grid-template-columns:32px minmax(0,1fr);gap:.9rem;position:relative;padding-bottom:1.05rem}
-#heDetalheModal .he-timeline-item:last-child{padding-bottom:0}
-#heDetalheModal .he-timeline-rail{position:relative;width:32px;display:flex;justify-content:center}
-#heDetalheModal .he-timeline-item:not(:last-child) .he-timeline-rail::after{content:"";position:absolute;top:28px;bottom:-14px;left:50%;width:3px;transform:translateX(-50%);background:linear-gradient(180deg,#E06008 0%,#F0B989 100%);border-radius:999px}
-#heDetalheModal .he-timeline-dot{width:24px;height:24px;min-width:24px;min-height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#E06008;color:#fff;box-shadow:0 0 0 4px rgba(224,96,8,.16);z-index:2;font-size:13px;font-weight:800;line-height:1}
-#heDetalheModal .he-timeline-dot-send::before{content:"+"}
-#heDetalheModal .he-timeline-dot-ok{background:#12B76A;box-shadow:0 0 0 4px rgba(18,183,106,.16)}
-#heDetalheModal .he-timeline-dot-ok::before{content:"✓";font-size:12px}
-#heDetalheModal .he-timeline-card{padding:.9rem 1rem;border-radius:14px;background:linear-gradient(180deg,#FFF8F1 0%,#fff 100%);border:1px solid #F0E2D6}
-#heDetalheModal .he-timeline-item.is-success .he-timeline-card{background:linear-gradient(180deg,#F1FBF6 0%,#fff 100%);border-color:#D7F0E3}
-#heDetalheModal .he-timeline-card-top{display:flex;align-items:baseline;justify-content:space-between;gap:.75rem;margin-bottom:.35rem}
-#heDetalheModal .he-timeline-card-top strong{font-size:.96rem;font-weight:800}
-#heDetalheModal .he-timeline-card-top time{font-size:.78rem;color:#6B7280;white-space:nowrap;font-variant-numeric:tabular-nums}
-#heDetalheModal .he-timeline-card p{margin:0;font-size:.88rem;color:#374151;line-height:1.4}
-#heDetalheModal .he-timeline-result{margin-top:.7rem;padding:.6rem .75rem;border-radius:10px;background:rgba(18,183,106,.09);color:#027A48;font-size:.84rem;font-weight:700}
-#heDetalheModal .he-modal-footer{display:flex;justify-content:flex-end;padding:0 1.35rem 1.25rem}
-@media (max-width:700px){
-#heDetalheModal .he-hero-metrics,#heDetalheModal .he-meta-grid{grid-template-columns:1fr}
-#heDetalheModal .he-modal-hero-top{flex-direction:column}
-#heDetalheModal .he-timeline-card-top{flex-direction:column;align-items:flex-start;gap:.2rem}
-}
-</style>
 <div class="modal-backdrop" id="heDetalheModal">
     <div class="modal modal-he-detalhe">
         <?php foreach ($heAutorizadas as $heItem):
@@ -628,39 +664,204 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
 </div>
 
 <script>
-document.querySelectorAll('.ponto-time:not([readonly])').forEach((input) => {
-  input.addEventListener('input', () => {
-    let v = input.value.replace(/[^\d]/g, '').slice(0, 4);
-    if (v.length >= 3) v = v.slice(0, 2) + ':' + v.slice(2);
-    input.value = v;
-  });
-  input.addEventListener('change', () => {
-    const form = document.getElementById(input.getAttribute('form'));
-    if (form) form.requestSubmit();
-  });
-});
-document.querySelectorAll('[data-modal-open="justModal"]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.getElementById('justForm').action = '/rh/ponto/' + btn.dataset.espelhoId + '/justificativa';
-    document.getElementById('justDiaId').value = btn.dataset.diaId || '';
-    const inicio = document.getElementById('justInicio');
-    const fim = document.getElementById('justFim');
-    inicio.value = btn.dataset.diaData || inicio.defaultValue;
-    fim.value = btn.dataset.diaData || fim.defaultValue;
-  });
-});
-document.querySelectorAll('[data-modal-open="reabrirModal"]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.getElementById('reabrirForm').action = '/rh/ponto/' + btn.dataset.espelhoId + '/status';
-    document.getElementById('reabrirTitulo').textContent = 'Reabrir período ' + (btn.dataset.competencia || '');
-  });
-});
-document.querySelectorAll('[data-modal-open="heDetalheModal"]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const heId = btn.dataset.heId || '';
-    document.querySelectorAll('[data-he-panel]').forEach((panel) => {
-      panel.hidden = panel.getAttribute('data-he-panel') !== heId;
+(() => {
+  const savePill = document.getElementById('pontoSaveState');
+  const statusBadge = document.getElementById('pontoStatusBadge');
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+  const setPill = (text, tone) => {
+    if (!savePill) return;
+    savePill.textContent = text;
+    savePill.className = 'ponto-save-pill' + (tone ? ' ' + tone : '');
+  };
+
+  const renderMinCell = (cell, min, fmt, isRed) => {
+    if (!cell) return;
+    if (Number(min || 0) <= 0) {
+      cell.innerHTML = '<span class="val-muted">—</span>';
+      return;
+    }
+    const span = document.createElement('span');
+    if (isRed) span.className = 'val-red';
+    span.textContent = fmt || '00:00';
+    cell.innerHTML = '';
+    cell.appendChild(span);
+  };
+
+  const updateRowAndTotals = (diaId, data) => {
+    const tr = document.querySelector(`tr[data-dia-row="${diaId}"]`);
+    const dia = data.dia || {};
+    const totais = data.totais || {};
+    if (tr) {
+      tr.classList.remove('is-saving', 'is-save-error');
+      const isDescanso = tr.getAttribute('data-is-descanso') === '1';
+      if (!isDescanso) {
+        tr.classList.toggle('is-falta', Number(dia.dia_falta || 0) > 0);
+      }
+
+      const okTd = tr.querySelector('td[data-col="ok"]');
+      if (okTd) {
+        const ok = String(dia.ok_status || 'pendente');
+        const span = document.createElement('span');
+        if (ok === 'ok' || ok === 'folga' || ok === 'feriado') {
+          span.className = `ponto-ok ${ok}`;
+          span.title = ok;
+          span.textContent = '✓';
+        } else {
+          span.className = 'ponto-ok falta';
+          span.title = ok;
+          span.textContent = '✕';
+        }
+        okTd.innerHTML = '';
+        okTd.appendChild(span);
+      }
+
+      renderMinCell(tr.querySelector('td[data-col="trab"]'), dia.total_trab_min, dia.total_trab_fmt, false);
+      renderMinCell(tr.querySelector('td[data-col="prev"]'), dia.horas_previstas_min, dia.horas_previstas_fmt, false);
+
+      const diaFaltaTd = tr.querySelector('td[data-col="dia_falta"]');
+      if (diaFaltaTd) {
+        const falta = Number(dia.dia_falta || 0) > 0;
+        diaFaltaTd.className = falta ? 'val-red' : 'val-muted';
+        diaFaltaTd.textContent = falta ? '1' : '—';
+      }
+
+      renderMinCell(tr.querySelector('td[data-col="falta"]'), dia.horas_falta_min, dia.horas_falta_fmt, true);
+      renderMinCell(tr.querySelector('td[data-col="atraso"]'), dia.atraso_bruto_min, dia.atraso_bruto_fmt, true);
+      renderMinCell(tr.querySelector('td[data-col="he50"]'), dia.he_50_min, dia.he_50_fmt, false);
+      renderMinCell(tr.querySelector('td[data-col="he100"]'), dia.he_100_min, dia.he_100_fmt, false);
+      renderMinCell(tr.querySelector('td[data-col="adn"]'), dia.adn_min, dia.adn_fmt, false);
+      renderMinCell(tr.querySelector('td[data-col="desc"]'), dia.desconto_min, dia.desconto_fmt, true);
+    }
+
+    Object.entries({
+      he50: totais.he50_fmt,
+      he100: totais.he100_fmt,
+      adn: totais.adn_fmt,
+      falta: totais.falta_fmt,
+      atraso: totais.atraso_fmt,
+      desc: totais.desconto_fmt,
+    }).forEach(([key, val]) => {
+      const el = document.querySelector(`[data-tot="${key}"]`);
+      if (el && val !== undefined) el.textContent = val;
+    });
+
+    if (statusBadge && data.espelho_status) {
+      statusBadge.textContent = 'Período · ' + data.espelho_status;
+    }
+  };
+
+  const pendingSaves = new Map();
+  const submitInlineDia = async (form) => {
+    const diaId = form.getAttribute('data-dia-id') || '';
+    const tr = diaId ? document.querySelector(`tr[data-dia-row="${diaId}"]`) : null;
+    if (tr) {
+      tr.classList.remove('is-save-error');
+      tr.classList.add('is-saving');
+    }
+    setPill('Salvando…', 'is-saving');
+
+    const fd = new FormData(form);
+    if (csrfToken && !fd.has('_csrf')) fd.append('_csrf', csrfToken);
+    document.querySelectorAll(`input[form="${form.id}"]`).forEach((inp) => {
+      if (inp.name) fd.set(inp.name, inp.value || '');
+    });
+
+    const seq = (pendingSaves.get(diaId) || 0) + 1;
+    pendingSaves.set(diaId, seq);
+
+    try {
+      const res = await fetch(form.action, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRF-Token': csrfToken,
+        },
+        body: fd,
+      });
+      if (pendingSaves.get(diaId) !== seq) return;
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Falha ao salvar batida.');
+      }
+      updateRowAndTotals(diaId, data);
+      const hhmm = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setPill('Salvo ' + hhmm, 'is-saved');
+    } catch (err) {
+      if (tr) {
+        tr.classList.remove('is-saving');
+        tr.classList.add('is-save-error');
+      }
+      const msg = (err && err.message) ? err.message : 'Erro ao salvar batida.';
+      setPill('Erro ao salvar', 'is-error');
+      if (window.Toast && typeof window.Toast.show === 'function') {
+        window.Toast.show(msg, 'danger');
+      }
+    }
+  };
+
+  const timeInputs = Array.from(document.querySelectorAll('.ponto-time:not([readonly])'));
+  timeInputs.forEach((input, idx) => {
+    input.addEventListener('input', () => {
+      let v = input.value.replace(/[^\d]/g, '').slice(0, 4);
+      if (v.length >= 3) v = v.slice(0, 2) + ':' + v.slice(2);
+      input.value = v;
+    });
+    input.addEventListener('change', () => {
+      const form = document.getElementById(input.getAttribute('form') || '');
+      if (!form) return;
+      submitInlineDia(form);
+    });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const form = document.getElementById(input.getAttribute('form') || '');
+        if (form) submitInlineDia(form);
+        const next = timeInputs[idx + 1];
+        if (next) next.focus();
+      }
     });
   });
-});
+
+  document.querySelectorAll('[data-ponto-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-ponto-tab');
+      document.querySelectorAll('[data-ponto-tab]').forEach((b) => {
+        const active = b.getAttribute('data-ponto-tab') === target;
+        b.classList.toggle('is-active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      document.querySelectorAll('[data-ponto-panel]').forEach((panel) => {
+        panel.hidden = panel.getAttribute('data-ponto-panel') !== target;
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-modal-open="justModal"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('justForm').action = '/rh/ponto/' + btn.dataset.espelhoId + '/justificativa';
+      document.getElementById('justDiaId').value = btn.dataset.diaId || '';
+      const inicio = document.getElementById('justInicio');
+      const fim = document.getElementById('justFim');
+      inicio.value = btn.dataset.diaData || inicio.defaultValue;
+      fim.value = btn.dataset.diaData || fim.defaultValue;
+    });
+  });
+  document.querySelectorAll('[data-modal-open="reabrirModal"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('reabrirForm').action = '/rh/ponto/' + btn.dataset.espelhoId + '/status';
+      document.getElementById('reabrirTitulo').textContent = 'Reabrir período ' + (btn.dataset.competencia || '');
+    });
+  });
+  document.querySelectorAll('[data-modal-open="heDetalheModal"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const heId = btn.dataset.heId || '';
+      document.querySelectorAll('[data-he-panel]').forEach((panel) => {
+        panel.hidden = panel.getAttribute('data-he-panel') !== heId;
+      });
+    });
+  });
+})();
 </script>
+

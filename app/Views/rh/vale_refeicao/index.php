@@ -68,20 +68,26 @@ $fmtData = static function (?string $d): string {
             </div>
             <div class="form-field" style="grid-column:1/-1;">
                 <label class="form-label">Alocação (contratos)</label>
-                <label class="text-sm" style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
+                <label class="text-sm" style="display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem;">
                     <input type="checkbox" name="todos_contratos" value="1" id="vrTodos" <?= $todosForm ? 'checked' : '' ?>>
                     Todos os contratos
                 </label>
-                <select class="form-control" name="contrato_ids[]" id="vrContratos" multiple size="<?= min(6, max(3, count($contratos))) ?>"
-                    <?= $todosForm ? 'disabled' : '' ?>>
-                    <?php foreach ($contratos as $ct): ?>
-                        <option value="<?= (int) $ct['id'] ?>"
-                            <?= in_array((int) $ct['id'], array_map('intval', $contratosForm), true) ? 'selected' : '' ?>>
-                            <?= View::e($ct['codigo'] . ' — ' . $ct['nome']) ?>
-                        </option>
+                <div class="chip-group" id="vrContratos">
+                    <?php
+                    $selectedContratos = array_map('intval', $contratosForm);
+                    foreach ($contratos as $ct):
+                        $cid = (int) $ct['id'];
+                        $checked = in_array($cid, $selectedContratos, true);
+                    ?>
+                        <label class="chip-check">
+                            <input type="checkbox" name="contrato_ids[]" value="<?= $cid ?>"
+                                <?= $checked ? 'checked' : '' ?>
+                                <?= $todosForm ? 'disabled' : '' ?>>
+                            <span><?= View::e($ct['codigo'] . ' — ' . $ct['nome']) ?></span>
+                        </label>
                     <?php endforeach; ?>
-                </select>
-                <p class="muted text-sm" style="margin:.35rem 0 0;">Segure Ctrl (ou Cmd) para marcar mais de um.</p>
+                </div>
+                <p class="muted text-sm" style="margin:.4rem 0 0;">Clique nos chips para selecionar os contratos cobertos pela vigência.</p>
             </div>
             <div class="form-field">
                 <label class="form-label">Início</label>
@@ -100,7 +106,7 @@ $fmtData = static function (?string $d): string {
         </form>
 
         <?php if ($configs !== []): ?>
-            <div class="table-responsive">
+            <div class="table-wrap">
                 <table class="table">
                     <thead>
                     <tr>
@@ -127,7 +133,10 @@ $fmtData = static function (?string $d): string {
                                 <a class="btn btn-ghost btn-sm" href="/rh/vale-refeicao?editar=<?= (int) $c['id'] ?>">Editar</a>
                                 <form method="post" action="/rh/vale-refeicao/config/<?= (int) $c['id'] ?>/excluir"
                                       style="display:inline;"
-                                      onsubmit="return confirm('Excluir esta configuração?');">
+                                      data-confirm-title="Excluir configuração?"
+                                      data-confirm="Esta ação não pode ser desfeita."
+                                      data-confirm-ok="Excluir"
+                                      data-confirm-danger>
                                     <button class="btn btn-ghost btn-sm" type="submit">Excluir</button>
                                 </form>
                             </td>
@@ -146,6 +155,10 @@ $fmtData = static function (?string $d): string {
             <h2 class="card-title">Cálculo do período</h2>
             <p class="card-subtitle">Mesmo intervalo do cartão de ponto.</p>
         </div>
+        <?php if ($calculo !== []): ?>
+            <a class="btn btn-secondary btn-sm"
+               href="/rh/vale-refeicao/exportar?<?= View::e(http_build_query(['data_inicio' => $dataInicio, 'data_fim' => $dataFim])) ?>">Exportar CSV</a>
+        <?php endif; ?>
     </div>
     <form method="get" class="card-body ponto-filtros" style="padding-top:0;">
         <div class="form-field">
@@ -164,7 +177,7 @@ $fmtData = static function (?string $d): string {
         <?php if ($calculo === []): ?>
             <p class="muted">Sem dados neste período.</p>
         <?php else: ?>
-            <div class="table-responsive">
+            <div class="table-wrap">
                 <table class="table">
                     <thead>
                     <tr>
@@ -231,15 +244,18 @@ $fmtData = static function (?string $d): string {
 <script>
 (function () {
   const todos = document.getElementById('vrTodos');
-  const sel = document.getElementById('vrContratos');
-  if (!todos || !sel) return;
+  const box = document.getElementById('vrContratos');
+  if (!todos || !box) return;
   const sync = () => {
-    sel.disabled = todos.checked;
-    if (todos.checked) {
-      Array.from(sel.options).forEach((o) => { o.selected = false; });
-    }
+    const off = todos.checked;
+    box.style.opacity = off ? '0.5' : '1';
+    box.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
+      chk.disabled = off;
+      if (off) chk.checked = false;
+    });
   };
   todos.addEventListener('change', sync);
   sync();
 })();
 </script>
+

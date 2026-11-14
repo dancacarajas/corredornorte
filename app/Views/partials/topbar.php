@@ -18,13 +18,9 @@ $pageSubtitle = $pageSubtitle ?? null;
         </div>
     </div>
 
-    <div class="topbar-actions">
-        <?php if (!empty($topbarActions)): ?>
+    <?php if (!empty($topbarActions)): ?>
+        <div class="topbar-actions">
             <?= $topbarActions ?>
-        <?php else: ?>
-            <button class="btn btn-secondary btn-sm" type="button"><?= date('d/m/Y') ?></button>
-            <button class="btn btn-secondary btn-sm" type="button">Alertas</button>
-            <button class="btn btn-primary btn-sm" type="button">Ação</button>
-        <?php endif; ?>
-    </div>
+        </div>
+    <?php endif; ?>
 </header>

@@ -20,6 +20,26 @@ final class RelatorioAtividadesPdf
     private const LINHA_INICIAL = 141.12;
     private const ALTURA_LINHA = 15.96;
 
+    /** Página Letter em pontos. */
+    public const PAGINA_LARGURA = 612.0;
+    public const PAGINA_ALTURA = 792.0;
+
+    /**
+     * Escala anisotrópica: amplia só nas laterais.
+     * Eixo Y em 1.0 evita cortar cabeçalho e rodapé do R06.
+     */
+    public const ESCALA_X = 1.14;
+    public const ESCALA_Y = 1.0;
+    /** @deprecated Use ESCALA_X/ESCALA_Y — mantido para compatibilidade da assinatura. */
+    public const ESCALA = self::ESCALA_Y;
+    public const OFFSET_X = (self::PAGINA_LARGURA - self::PAGINA_LARGURA * self::ESCALA_X) / 2;
+    public const OFFSET_Y = (self::PAGINA_ALTURA - self::PAGINA_ALTURA * self::ESCALA_Y) / 2;
+
+    private float $ox = self::OFFSET_X;
+    private float $oy = self::OFFSET_Y;
+    private float $escalaX = self::ESCALA_X;
+    private float $escalaY = self::ESCALA_Y;
+
     /**
      * @param array{relatorio:array<string,mixed>,dias:list<array<string,mixed>>} $dados
      * @return string Caminho absoluto do PDF gerado.
@@ -59,13 +79,19 @@ final class RelatorioAtividadesPdf
         }
         $pagina = $pdf->importPage(1);
         $tamanho = $pdf->getTemplateSize($pagina);
-        if (abs($tamanho['width'] - 612.0) > 0.1 || abs($tamanho['height'] - 792.0) > 0.1) {
+        if (abs($tamanho['width'] - self::PAGINA_LARGURA) > 0.1 || abs($tamanho['height'] - self::PAGINA_ALTURA) > 0.1) {
             throw new RuntimeException('Dimensões do modelo PDF R06 inválidas.');
         }
         $pdf->SetTitle('Relatório de Atividades | Arcadis RH', true);
         $pdf->SetAuthor('Arcadis RH');
         $pdf->AddPage();
-        $pdf->useTemplate($pagina);
+        $pdf->useTemplate(
+            $pagina,
+            $this->ox,
+            $this->oy,
+            self::PAGINA_LARGURA * $this->escalaX,
+            self::PAGINA_ALTURA * $this->escalaY
+        );
         $pdf->SetTextColor(0, 0, 0);
 
         // A tonalidade cinza do R06 acompanha fins de semana e feriados.
@@ -187,8 +213,13 @@ final class RelatorioAtividadesPdf
             }
             $tom = $escuro ? ($indice < 9 ? 191 : 255) : 242;
             $pdf->SetFillColor($tom, $tom, $tom);
-            $pdf->Rect($inicio + 0.22, $y + 0.22,
-                $limites[$indice + 1] - $inicio - 0.44, self::ALTURA_LINHA - 0.44, 'F');
+            $pdf->Rect(
+                $this->x($inicio + 0.22),
+                $this->y($y + 0.22),
+                $this->escalarX($limites[$indice + 1] - $inicio - 0.44),
+                $this->escalarY(self::ALTURA_LINHA - 0.44),
+                'F'
+            );
         }
     }
 
@@ -210,13 +241,18 @@ final class RelatorioAtividadesPdf
         if ($convertido === false) {
             throw new RuntimeException('Texto inválido no relatório.');
         }
-        $margem = $centralizar ? 0.5 : 1.2;
+        $x = $this->x($x);
+        $y = $this->y($y);
+        $largura = $this->escalarX($largura);
+        $altura = $this->escalarY($altura);
+        $tamanho = $this->escalarY($tamanho);
+        $margem = $centralizar ? 0.5 * $this->escalaX : 1.2 * $this->escalaX;
         $disponivel = $largura - 2 * $margem;
-        for ($fonte = $tamanho; $fonte >= 3.0; $fonte -= 0.2) {
+        for ($fonte = $tamanho; $fonte >= 3.0 * $this->escalaY; $fonte -= 0.2 * $this->escalaY) {
             $pdf->SetFont('Arial', '', $fonte);
             $linhas = $this->quebrar($pdf, $convertido, $disponivel);
             $entrelinha = $fonte * 1.17;
-            if (count($linhas) * $entrelinha <= $altura - 1.0) {
+            if (count($linhas) * $entrelinha <= $altura - 1.0 * $this->escalaY) {
                 $primeiroY = $y + ($altura - count($linhas) * $entrelinha) / 2 + $entrelinha * 0.75;
                 foreach ($linhas as $indice => $linha) {
                     $textoX = $centralizar ? $x + ($largura - $pdf->GetStringWidth($linha)) / 2 : $x + $margem;
@@ -226,6 +262,26 @@ final class RelatorioAtividadesPdf
             }
         }
         throw new RuntimeException('Texto longo demais para o campo do modelo R06.');
+    }
+
+    private function x(float $valor): float
+    {
+        return $this->ox + $valor * $this->escalaX;
+    }
+
+    private function y(float $valor): float
+    {
+        return $this->oy + $valor * $this->escalaY;
+    }
+
+    private function escalarX(float $valor): float
+    {
+        return $valor * $this->escalaX;
+    }
+
+    private function escalarY(float $valor): float
+    {
+        return $valor * $this->escalaY;
     }
 
     /** @return list<string> */

@@ -118,7 +118,10 @@ $sections = [
                             <td>
                                 <form method="post"
                                       action="/rh/localidades/<?= $locId ?>/feriados/<?= (int) $f['id'] ?>/excluir"
-                                      onsubmit="return confirm('Remover este feriado?')">
+                                      data-confirm-title="Remover feriado?"
+                                      data-confirm="Confirma a remoção deste feriado?"
+                                      data-confirm-ok="Remover"
+                                      data-confirm-danger>
                                     <button class="btn btn-ghost btn-sm" type="submit">Excluir</button>
                                 </form>
                             </td>

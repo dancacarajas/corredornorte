@@ -399,8 +399,8 @@ final class CadastroController
         return [
             'empresa' => $pdo->query("SELECT id, nome AS label FROM rh_empresas WHERE status='ativo' ORDER BY nome")->fetchAll(),
             'contrato' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_contratos WHERE status='ativo' ORDER BY codigo")->fetchAll(),
-            'centro_custo' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_centros_custo WHERE status='ativo' ORDER BY codigo")->fetchAll(),
-            'ordem_servico' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_ordens_servico WHERE status='ativo' ORDER BY codigo")->fetchAll(),
+            'centro_custo' => $pdo->query("SELECT id, contrato_id, CONCAT(codigo,' — ',nome) AS label FROM rh_centros_custo WHERE status='ativo' ORDER BY codigo")->fetchAll(),
+            'ordem_servico' => $pdo->query("SELECT os.id, os.centro_custo_id, cc.contrato_id, CONCAT(os.codigo,' — ',os.nome) AS label FROM rh_ordens_servico os LEFT JOIN rh_centros_custo cc ON cc.id = os.centro_custo_id WHERE os.status='ativo' ORDER BY os.codigo")->fetchAll(),
             'localidade' => $pdo->query("SELECT id, CONCAT(municipio,'/',uf,' — ',nome) AS label FROM rh_localidades WHERE status='ativo' ORDER BY municipio")->fetchAll(),
             'jornada' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_jornadas WHERE status='ativo' ORDER BY codigo")->fetchAll(),
             'escala' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_escalas WHERE status='ativo' ORDER BY codigo")->fetchAll(),

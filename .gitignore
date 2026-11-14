@@ -8,6 +8,7 @@
 /storage/tmp/*
 !/storage/tmp/.gitkeep
 /storage/install.lock
+/storage/app.key
 /config/database.local.php
 /config/app.local.php
 /output/*

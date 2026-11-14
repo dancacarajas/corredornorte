@@ -16,8 +16,14 @@ final class SmtpMailSender
      * @param array<string,mixed> $conta
      * @return array{ok:bool,erro:?string,provedor:?string,conta_id:?int}
      */
-    public function sendWithConta(array $conta, string $to, string $subject, string $body, ?string $attachmentPath = null): array
-    {
+    public function sendWithConta(
+        array $conta,
+        string $to,
+        string $subject,
+        string $body,
+        ?string $attachmentPath = null,
+        ?string $htmlBody = null
+    ): array {
         $provedor = (string) ($conta['provedor'] ?? 'smtp');
         $contaId = (int) ($conta['id'] ?? 0);
 
@@ -34,7 +40,7 @@ final class SmtpMailSender
             $from = (string) ($conta['email'] ?? $user);
             $fromName = (string) (($conta['nome_exibicao'] ?? '') ?: 'Arcadis RH');
 
-            $this->smtpSend($host, $port, $enc, $user, $password, $from, $fromName, $to, $subject, $body, $attachmentPath);
+            $this->smtpSend($host, $port, $enc, $user, $password, $from, $fromName, $to, $subject, $body, $attachmentPath, $htmlBody);
             $this->accounts->logEnvio($contaId ?: null, $provedor, $to, $subject, true, null);
 
             return ['ok' => true, 'erro' => null, 'provedor' => $provedor, 'conta_id' => $contaId ?: null];
@@ -87,8 +93,16 @@ final class SmtpMailSender
         string $to,
         string $subject,
         string $body,
-        ?string $attachmentPath
+        ?string $attachmentPath,
+        ?string $htmlBody = null
     ): void {
+        $from = trim(str_replace(["\r", "\n", "\0"], '', $from));
+        $to = trim(str_replace(["\r", "\n", "\0"], '', $to));
+        $fromName = trim(str_replace(["\r", "\n", "\0"], '', $fromName));
+        if (filter_var($from, FILTER_VALIDATE_EMAIL) === false || filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
+            throw new RuntimeException('Endereço de remetente ou destinatário SMTP inválido.');
+        }
+
         $sock = $this->connect($host, $port, $encryption);
         $this->expect($sock, [220]);
         $this->cmd($sock, 'EHLO arcadis.local', [250]);
@@ -104,7 +118,16 @@ final class SmtpMailSender
         $this->cmd($sock, 'RCPT TO:<' . $to . '>', [250, 251]);
         $this->cmd($sock, 'DATA', [354]);
 
-        $mime = $this->buildMime($from, $fromName, $to, $subject, $body, $attachmentPath);
+        $mime = MimeMessageBuilder::build(
+            $from,
+            $fromName,
+            $to,
+            $subject,
+            $body,
+            $attachmentPath,
+            $htmlBody,
+            true
+        )['raw'];
         $mime = preg_replace('/^\./m', '..', $mime) ?? $mime;
         fwrite($sock, $mime . "\r\n.\r\n");
         $this->expect($sock, [250]);
@@ -119,9 +142,17 @@ final class SmtpMailSender
             throw new RuntimeException('Host/porta SMTP inválidos.');
         }
         $remote = ($encryption === 'ssl' ? 'ssl://' : '') . $host . ':' . $port;
+        $ctx = stream_context_create([
+            'ssl' => [
+                'verify_peer' => true,
+                'verify_peer_name' => true,
+                'allow_self_signed' => false,
+                'peer_name' => $host,
+            ],
+        ]);
         $errno = 0;
         $errstr = '';
-        $sock = @stream_socket_client($remote, $errno, $errstr, 20, STREAM_CLIENT_CONNECT);
+        $sock = @stream_socket_client($remote, $errno, $errstr, 20, STREAM_CLIENT_CONNECT, $ctx);
         if ($sock === false) {
             throw new RuntimeException("Não conectou ao SMTP {$host}:{$port} — {$errstr}");
         }
@@ -166,44 +197,5 @@ final class SmtpMailSender
             $msg = trim($response) !== '' ? trim($response) : 'sem resposta do servidor';
             throw new RuntimeException('SMTP: ' . $msg);
         }
-    }
-
-    private function buildMime(
-        string $from,
-        string $fromName,
-        string $to,
-        string $subject,
-        string $body,
-        ?string $attachmentPath
-    ): string {
-        $subjectEnc = '=?UTF-8?B?' . base64_encode($subject) . '?=';
-        $fromHeader = sprintf('"%s" <%s>', addslashes($fromName), $from);
-        $headers = "From: {$fromHeader}\r\n";
-        $headers .= "To: {$to}\r\n";
-        $headers .= "Subject: {$subjectEnc}\r\n";
-        $headers .= "MIME-Version: 1.0\r\n";
-        $headers .= 'Date: ' . date('r') . "\r\n";
-        $headers .= 'Message-ID: <' . bin2hex(random_bytes(12)) . "@arcadis.local>\r\n";
-
-        if ($attachmentPath && is_file($attachmentPath)) {
-            $boundary = 'b_' . bin2hex(random_bytes(8));
-            $filename = basename($attachmentPath);
-            $fileData = chunk_split(base64_encode((string) file_get_contents($attachmentPath)));
-            $headers .= "Content-Type: multipart/mixed; boundary=\"{$boundary}\"\r\n\r\n";
-            $headers .= "--{$boundary}\r\n";
-            $headers .= "Content-Type: text/plain; charset=UTF-8\r\n\r\n{$body}\r\n";
-            $headers .= "--{$boundary}\r\n";
-            $headers .= "Content-Type: application/pdf; name=\"{$filename}\"\r\n";
-            $headers .= "Content-Transfer-Encoding: base64\r\n";
-            $headers .= "Content-Disposition: attachment; filename=\"{$filename}\"\r\n\r\n";
-            $headers .= $fileData . "\r\n--{$boundary}--";
-
-            return $headers;
-        }
-
-        $headers .= "Content-Type: text/plain; charset=UTF-8\r\n\r\n";
-        $headers .= $body;
-
-        return $headers;
     }
 }

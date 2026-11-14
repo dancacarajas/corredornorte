@@ -49,7 +49,8 @@ $fmtMin = static function (int $min): string {
         Link de assinatura gerado. Compartilhe-o somente com o colaborador, pois ele dá acesso à folha.
         <div class="stack-row" style="margin-top:.5rem;">
             <a class="btn btn-primary btn-sm" href="<?= View::e($portalUrl) ?>" target="_blank" rel="noopener noreferrer">Abrir portal do colaborador</a>
-            <input class="form-control" aria-label="Link de assinatura" style="max-width:480px;" readonly value="<?= View::e($portalUrl) ?>" onclick="this.select()">
+            <input class="form-control" id="folhaPortalUrlInput" aria-label="Link de assinatura" style="max-width:480px;" readonly value="<?= View::e($portalUrl) ?>" onclick="this.select()">
+            <button class="btn btn-secondary btn-sm" type="button" onclick="window.copyTextWithToast && window.copyTextWithToast(document.getElementById('folhaPortalUrlInput')?.value || '', 'Link de assinatura copiado!')">Copiar link</button>
         </div>
     </div>
 <?php endif; ?>

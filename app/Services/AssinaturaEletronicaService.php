@@ -140,6 +140,9 @@ final class AssinaturaEletronicaService
             if ($doc === null || $doc['status'] !== 'enviado') {
                 throw new RuntimeException('A folha não está disponível para assinatura.');
             }
+            if ($this->espelhoEmDivergencia((int) $doc['espelho_id'])) {
+                throw new RuntimeException('Esta folha está em análise de divergência pelo RH. Aguarde a correção e o reenvio.');
+            }
             if ((int) $doc['layout_pdf'] !== FolhaPontoService::LAYOUT_PDF_ATUAL) {
                 throw new RuntimeException('Peça ao RH para atualizar esta folha antes de assinar.');
             }
@@ -151,12 +154,14 @@ final class AssinaturaEletronicaService
                     JOIN ponto_espelhos e ON e.id = v.espelho_id WHERE v.documento_id = ? FOR UPDATE');
                 $espelhos->execute([$doc['id']]);
                 $estados = $espelhos->fetchAll(PDO::FETCH_COLUMN);
+                if (in_array('em_divergencia', $estados, true)) {
+                    throw new RuntimeException('Esta folha está em análise de divergência pelo RH. Aguarde a correção e o reenvio.');
+                }
                 if ($estados === [] || array_diff($estados, ['fechado', 'enviado', 'assinado']) !== []) {
                     throw new RuntimeException('O ponto do período foi reaberto. Solicite uma nova via ao RH.');
                 }
             }
-            $nomeNormalizado = static fn (string $valor): string => mb_strtolower(trim(preg_replace('/\s+/u', ' ', $valor) ?? ''));
-            if (mb_strlen($nome) > 160 || $nomeNormalizado($nome) === '' || $nomeNormalizado($nome) !== $nomeNormalizado($doc['nome'])) {
+            if (mb_strlen($nome) > 160 || self::normalizarNome($nome) === '' || self::normalizarNome($nome) !== self::normalizarNome((string) $doc['nome'])) {
                 throw new RuntimeException('Digite o nome completo que aparece na folha.');
             }
 
@@ -234,6 +239,354 @@ final class AssinaturaEletronicaService
         return $stmt->fetch() ?: null;
     }
 
+    /**
+     * Normaliza nome completo removendo acentos, pontuações extras e múltiplos espaços.
+     */
+    public static function normalizarNome(string $valor): string
+    {
+        $limpo = trim(preg_replace('/\s+/u', ' ', $valor) ?? '');
+        if ($limpo === '') {
+            return '';
+        }
+        if (class_exists(\Normalizer::class)) {
+            $decomposed = \Normalizer::normalize($limpo, \Normalizer::FORM_D);
+            if (is_string($decomposed)) {
+                $limpo = preg_replace('/\p{Mn}+/u', '', $decomposed) ?? $limpo;
+            }
+        }
+        $ascii = strtr($limpo, [
+            'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A', 'Ä' => 'A',
+            'á' => 'a', 'à' => 'a', 'â' => 'a', 'ã' => 'a', 'ä' => 'a',
+            'É' => 'E', 'È' => 'E', 'Ê' => 'E', 'Ë' => 'E',
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'Í' => 'I', 'Ì' => 'I', 'Î' => 'I', 'Ï' => 'I',
+            'í' => 'i', 'ì' => 'i', 'î' => 'i', 'ï' => 'i',
+            'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Õ' => 'O', 'Ö' => 'O',
+            'ó' => 'o', 'ò' => 'o', 'ô' => 'o', 'õ' => 'o', 'ö' => 'o',
+            'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U', 'Ü' => 'U',
+            'ú' => 'u', 'ù' => 'u', 'û' => 'u', 'ü' => 'u',
+            'Ç' => 'C', 'ç' => 'c', 'Ñ' => 'N', 'ñ' => 'n',
+        ]);
+        return mb_strtolower($ascii);
+    }
+
+    public static function ensureDivergenciaSchema(PDO $pdo): void
+    {
+        static $checked = false;
+        if ($checked) {
+            return;
+        }
+        $checked = true;
+        try {
+            $pdo->exec(
+                "CREATE TABLE IF NOT EXISTS ponto_divergencias (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    espelho_id BIGINT UNSIGNED NOT NULL,
+                    documento_id BIGINT UNSIGNED NULL,
+                    ponto_dia_id BIGINT UNSIGNED NULL,
+                    colaborador_id BIGINT UNSIGNED NOT NULL,
+                    data_ocorrencia DATE NULL,
+                    motivo TEXT NOT NULL,
+                    status ENUM('aberta','em_analise','resolvida') NOT NULL DEFAULT 'aberta',
+                    resolucao_obs TEXT NULL,
+                    resolvido_por BIGINT UNSIGNED NULL,
+                    resolvido_em DATETIME NULL,
+                    ip VARCHAR(45) NULL,
+                    user_agent VARCHAR(255) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (id),
+                    KEY idx_pd_espelho_status (espelho_id, status),
+                    KEY idx_pd_status_created (status, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            );
+            $col = $pdo->query("SHOW COLUMNS FROM ponto_espelhos LIKE 'status'")->fetch();
+            $type = is_array($col) ? (string) ($col['Type'] ?? '') : '';
+            if ($type !== '' && !str_contains($type, 'em_divergencia')) {
+                $pdo->exec(
+                    "ALTER TABLE ponto_espelhos
+                     MODIFY COLUMN status ENUM('em_aberto','em_tratamento','conferido','fechado','enviado','assinado','em_divergencia')
+                     NOT NULL DEFAULT 'em_aberto'"
+                );
+            }
+        } catch (Throwable) {
+            // Ambiente sem permissão DDL em runtime segue com esquema instalado
+        }
+    }
+
+    public function statusEspelho(int $espelhoId): ?string
+    {
+        if ($espelhoId <= 0) {
+            return null;
+        }
+        $stmt = $this->db->prepare('SELECT status FROM ponto_espelhos WHERE id = ? LIMIT 1');
+        $stmt->execute([$espelhoId]);
+        $val = $stmt->fetchColumn();
+        return is_string($val) ? $val : null;
+    }
+
+    private function espelhoEmDivergencia(int $espelhoId): bool
+    {
+        return $this->statusEspelho($espelhoId) === 'em_divergencia';
+    }
+
+    /**
+     * Carrega totais nativos do espelho, lista diária e divergências registradas para exibição mobile-first no portal.
+     *
+     * @param array<string,mixed> $doc
+     * @return array{
+     *   espelho_status:string,
+     *   totais:array{trab_min:int,he50_min:int,he100_min:int,falta_min:int,adn_min:int,dias:int},
+     *   dias:list<array<string,mixed>>,
+     *   divergencias:list<array<string,mixed>>
+     * }
+     */
+    public function carregarResumoEspelho(array $doc): array
+    {
+        $espelhoId = (int) ($doc['espelho_id'] ?? 0);
+        $espelhoStatus = $this->statusEspelho($espelhoId) ?? 'enviado';
+
+        $totais = ['trab_min' => 0, 'he50_min' => 0, 'he100_min' => 0, 'falta_min' => 0, 'adn_min' => 0, 'dias' => 0];
+        $dias = [];
+        if ($espelhoId > 0) {
+            $espIds = [$espelhoId];
+            if (!empty($doc['periodo_inicio'])) {
+                $st = $this->db->prepare('SELECT espelho_id FROM documentos_espelhos WHERE documento_id = ?');
+                $st->execute([(int) $doc['id']]);
+                $linked = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN) ?: []);
+                if ($linked !== []) {
+                    $espIds = $linked;
+                }
+            }
+            $ph = implode(',', array_fill(0, count($espIds), '?'));
+            $where = "d.espelho_id IN ({$ph})";
+            $params = $espIds;
+            if (!empty($doc['periodo_inicio']) && !empty($doc['periodo_fim'])) {
+                $where .= ' AND d.data BETWEEN ? AND ?';
+                $params[] = (string) $doc['periodo_inicio'];
+                $params[] = (string) $doc['periodo_fim'];
+            }
+
+            $sqlDias = "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo,
+                               d.horas_trab_min, d.horas_extras_min, d.horas_falta_min, d.adicional_noturno_min
+                        FROM ponto_dias d
+                        WHERE {$where}
+                        ORDER BY d.data ASC";
+            try {
+                $stmtDias = $this->db->prepare($sqlDias);
+                $stmtDias->execute($params);
+                $rows = $stmtDias->fetchAll();
+            } catch (Throwable) {
+                // Bancos legados sem colunas calculadas retornam lista básica
+                $stmtDias = $this->db->prepare(
+                    "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
+                );
+                $stmtDias->execute($params);
+                $rows = $stmtDias->fetchAll();
+            }
+
+            $marcPorDia = [];
+            $diaIds = array_map(static fn (array $r): int => (int) $r['id'], $rows);
+            if ($diaIds !== []) {
+                $mPh = implode(',', array_fill(0, count($diaIds), '?'));
+                $stM = $this->db->prepare(
+                    "SELECT ponto_dia_id, sequencia, TIME_FORMAT(horario, '%H:%i') AS h
+                     FROM ponto_marcacoes WHERE ponto_dia_id IN ({$mPh}) ORDER BY sequencia ASC"
+                );
+                $stM->execute($diaIds);
+                foreach ($stM->fetchAll() as $m) {
+                    $marcPorDia[(int) $m['ponto_dia_id']][] = (string) $m['h'];
+                }
+            }
+
+            foreach ($rows as $r) {
+                $trab = (int) ($r['horas_trab_min'] ?? 0);
+                $he = (int) ($r['horas_extras_min'] ?? 0);
+                $falta = (int) ($r['horas_falta_min'] ?? 0);
+                $adn = (int) ($r['adicional_noturno_min'] ?? 0);
+                $tipo = (string) ($r['tipo_dia'] ?? 'trabalho');
+                $isCem = in_array($tipo, ['folga', 'feriado', 'folga_escala'], true);
+
+                $totais['trab_min'] += $trab;
+                $totais['falta_min'] += $falta;
+                $totais['adn_min'] += $adn;
+                if ($isCem) {
+                    $totais['he100_min'] += $he;
+                } else {
+                    $totais['he50_min'] += $he;
+                }
+                if ($trab > 0 || $he > 0 || $falta > 0 || !empty($marcPorDia[(int) $r['id']])) {
+                    $totais['dias']++;
+                }
+
+                $dias[] = [
+                    'data' => (string) $r['data'],
+                    'tipo_dia' => $tipo,
+                    'batidas' => $marcPorDia[(int) $r['id']] ?? [],
+                    'trab_min' => $trab,
+                    'he_min' => $he,
+                    'falta_min' => $falta,
+                    'resumo' => (string) ($r['ocorrencia_resumo'] ?? ''),
+                ];
+            }
+        }
+
+        $divergencias = [];
+        if ($espelhoId > 0) {
+            try {
+                $stDiv = $this->db->prepare(
+                    'SELECT id, data_ocorrencia, motivo, status, resolucao_obs, created_at, resolvido_em
+                     FROM ponto_divergencias WHERE espelho_id = ? ORDER BY id DESC'
+                );
+                $stDiv->execute([$espelhoId]);
+                $divergencias = $stDiv->fetchAll();
+            } catch (Throwable) {
+                $divergencias = [];
+            }
+        }
+
+        return [
+            'espelho_status' => $espelhoStatus,
+            'totais' => $totais,
+            'dias' => $dias,
+            'divergencias' => $divergencias,
+        ];
+    }
+
+    /**
+     * Registra apontamento de divergência do colaborador pelo portal e pausa o espelho para tratamento do RH.
+     */
+    public function registrarDivergencia(string $token, string $motivo, ?string $dataOcorrencia = null): void
+    {
+        $motivo = trim(preg_replace('/\s+/u', ' ', $motivo) ?? '');
+        if (mb_strlen($motivo) < 8) {
+            throw new RuntimeException('Descreva a divergência com pelo menos 8 caracteres para o RH analisar.');
+        }
+        if (mb_strlen($motivo) > 1000) {
+            $motivo = mb_substr($motivo, 0, 1000);
+        }
+        $dataValida = null;
+        if ($dataOcorrencia !== null && trim($dataOcorrencia) !== '') {
+            $d = trim($dataOcorrencia);
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) {
+                throw new RuntimeException('Data da ocorrência inválida.');
+            }
+            $dataValida = $d;
+        }
+
+        self::ensureDivergenciaSchema($this->db);
+
+        $this->db->beginTransaction();
+        try {
+            $doc = $this->buscarPorPortalToken($token, true);
+            if ($doc === null || $doc['status'] === 'invalidado') {
+                throw new RuntimeException('Documento não encontrado ou invalidado.');
+            }
+            if ($doc['status'] === 'assinado') {
+                throw new RuntimeException('Esta folha já foi assinada eletronicamente.');
+            }
+            $espelhoId = (int) $doc['espelho_id'];
+            $colabId = (int) ($doc['colaborador_id'] ?? 0);
+            if ($colabId <= 0) {
+                $stCol = $this->db->prepare('SELECT colaborador_id FROM ponto_espelhos WHERE id = ?');
+                $stCol->execute([$espelhoId]);
+                $colabId = (int) $stCol->fetchColumn();
+            }
+
+            $pontoDiaId = null;
+            if ($dataValida !== null) {
+                $stDia = $this->db->prepare('SELECT id FROM ponto_dias WHERE espelho_id = ? AND data = ? LIMIT 1');
+                $stDia->execute([$espelhoId, $dataValida]);
+                $foundDia = $stDia->fetchColumn();
+                if ($foundDia !== false) {
+                    $pontoDiaId = (int) $foundDia;
+                }
+            }
+
+            $ins = $this->db->prepare(
+                'INSERT INTO ponto_divergencias
+                 (espelho_id, documento_id, ponto_dia_id, colaborador_id, data_ocorrencia, motivo, status, ip, user_agent)
+                 VALUES (?, ?, ?, ?, ?, ?, \'aberta\', ?, ?)'
+            );
+            $ins->execute([
+                $espelhoId,
+                (int) $doc['id'],
+                $pontoDiaId,
+                $colabId,
+                $dataValida,
+                $motivo,
+                substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45) ?: null,
+                substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255) ?: null,
+            ]);
+
+            $this->db->prepare(
+                "UPDATE ponto_espelhos SET status = 'em_divergencia' WHERE id = ? AND status IN ('fechado','enviado','em_tratamento','conferido','em_divergencia')"
+            )->execute([$espelhoId]);
+
+            $this->auditar((int) $doc['id'], 'divergencia_reportada', [
+                'espelho_id' => $espelhoId,
+                'data_ocorrencia' => $dataValida,
+                'motivo' => $motivo,
+            ]);
+            $this->db->commit();
+        } catch (Throwable $e) {
+            $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * Marca divergências abertas de um espelho como resolvidas e devolve o espelho para 'em_tratamento'.
+     */
+    public function resolverDivergencia(int $espelhoId, ?int $usuarioId, string $observacao = ''): int
+    {
+        self::ensureDivergenciaSchema($this->db);
+        $obs = trim($observacao) !== '' ? trim($observacao) : 'Ajustado pelo RH.';
+        $this->db->beginTransaction();
+        try {
+            $upd = $this->db->prepare(
+                "UPDATE ponto_divergencias
+                 SET status = 'resolvida', resolucao_obs = ?, resolvido_por = ?, resolvido_em = NOW()
+                 WHERE espelho_id = ? AND status IN ('aberta','em_analise')"
+            );
+            $upd->execute([mb_substr($obs, 0, 1000), $usuarioId, $espelhoId]);
+            $count = $upd->rowCount();
+
+            $this->db->prepare(
+                "UPDATE ponto_espelhos SET status = 'em_tratamento' WHERE id = ? AND status = 'em_divergencia'"
+            )->execute([$espelhoId]);
+
+            $this->db->commit();
+            return $count;
+        } catch (Throwable $e) {
+            $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * Lista divergências em aberto para o painel inicial do RH (tolera bancos ainda não migrados).
+     *
+     * @return list<array<string,mixed>>
+     */
+    public static function listarDivergenciasAbertas(PDO $pdo, int $limite = 15): array
+    {
+        try {
+            $sql = 'SELECT d.id, d.espelho_id, d.data_ocorrencia, d.motivo, d.created_at,
+                           c.nome AS colaborador_nome, c.matricula,
+                           p.data_inicio, p.data_fim
+                    FROM ponto_divergencias d
+                    INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                    INNER JOIN ponto_periodos p ON p.id = e.periodo_id
+                    INNER JOIN rh_colaboradores c ON c.id = d.colaborador_id
+                    WHERE d.status IN (\'aberta\', \'em_analise\')
+                    ORDER BY d.created_at DESC
+                    LIMIT ' . max(1, min(100, $limite));
+            return $pdo->query($sql)->fetchAll() ?: [];
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     private function auditar(int $id, string $acao, array $dados, ?int $usuario = null): void
     {
         $this->db->prepare(
@@ -308,20 +661,7 @@ final class AssinaturaEletronicaService
 
     private function baseUrl(): string
     {
-        $app = require dirname(__DIR__, 2) . '/config/app.php';
-        $url = trim((string) ($app['url'] ?? ''));
-        if ($url === '') {
-            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-                || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
-            $host = (string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1');
-            return ($https ? 'https://' : 'http://') . $host;
-        }
-        $url = rtrim($url, '/');
-        // Document root físico é /public, mas a URL pública não deve incluir /public.
-        if (str_ends_with(strtolower($url), '/public')) {
-            $url = substr($url, 0, -7);
-        }
-        return rtrim($url, '/');
+        return \App\Helpers\AppUrl::base(dirname(__DIR__, 2));
     }
 }
 

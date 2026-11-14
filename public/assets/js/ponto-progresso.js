@@ -52,9 +52,13 @@
   const postGeracao = async (formulario, endpoint, extras = {}) => {
     const body = new FormData(formulario);
     Object.entries(extras).forEach(([k, v]) => body.set(k, String(v)));
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    if (csrf && !body.has('_csrf')) body.set('_csrf', csrf);
+    const headers = { Accept: 'application/json' };
+    if (csrf) headers['X-CSRF-Token'] = csrf;
     const resposta = await fetch(endpoint, {
       method: 'POST',
-      headers: { Accept: 'application/json' },
+      headers,
       credentials: 'same-origin',
       body,
     });
@@ -185,10 +189,13 @@
     const botao = evento.submitter;
     if (!botao?.hasAttribute('data-ponto-gerar')) return;
     evento.preventDefault();
-    if (ocupado || popup.open) return;
+    if (ocupado || popup.open || botao.disabled) return;
 
     const formulario = evento.target;
     const endpoint = botao.getAttribute('formaction') || formulario.action;
+    const textoOriginal = botao.textContent;
+    botao.disabled = true;
+    botao.textContent = 'Verificando…';
 
     try {
       const check = await postGeracao(formulario, endpoint, { phase: 'check', batch_offset: 0, batch_size: 1 });
@@ -222,6 +229,9 @@
       popup.showModal();
       ocupado = false;
       fechar.focus();
+    } finally {
+      botao.disabled = false;
+      botao.textContent = textoOriginal;
     }
   });
 })();

@@ -226,18 +226,36 @@ final class MotorPontoService
 
         $feriados = $cfg['feriados'] ?? [];
         $isFeriado = $feriados !== [];
+        $trabalhaFeriado = !empty($cfg['trabalha_feriado']);
         $tipoDia = $this->tipoDia($dia, $cfg, $isFeriado);
-        // Feriado (nacional/estadual/municipal) sempre prevalece; trabalho no dia gera HE 100%.
-        $tipoPersistido = $isFeriado ? 'feriado' : $tipoDia;
-        $resumo = $isFeriado
-            ? ('Feriado' . (isset($feriados[0]['nome']) ? ' — ' . $feriados[0]['nome'] : ''))
-            : ($tipoDia === 'trabalho' ? 'Normal' : 'Folga');
+        // Se trabalha_feriado = 1 (ex.: escala 12x36), feriado não cancela o plantão nem quebra o ciclo.
+        $tipoPersistido = ($isFeriado && !$trabalhaFeriado) ? 'feriado' : $tipoDia;
+        $dowIso = (int) $dia->format('N'); // 1=seg .. 7=dom
+        $feriadoNome = isset($feriados[0]['nome']) ? (string) $feriados[0]['nome'] : '';
+        if ($tipoPersistido === 'feriado') {
+            $resumo = 'Feriado' . ($feriadoNome !== '' ? ' — ' . $feriadoNome : '');
+        } elseif ($tipoPersistido === 'folga_escala') {
+            $resumo = 'Folga de escala' . ($isFeriado && $feriadoNome !== '' ? ' (' . $feriadoNome . ')' : '');
+        } elseif ($tipoPersistido === 'folga') {
+            $resumo = match ($dowIso) {
+                6 => 'Folga (sábado)',
+                7 => 'Folga (domingo)',
+                default => 'Folga',
+            };
+        } else {
+            $resumo = ($isFeriado && $trabalhaFeriado)
+                ? ('Plantão em feriado' . ($feriadoNome !== '' ? ' — ' . $feriadoNome : ''))
+                : 'Normal';
+        }
 
         $okStatus = match ($tipoPersistido) {
             'feriado' => 'feriado',
             'folga', 'folga_escala' => 'folga',
             default => 'pendente',
         };
+
+        // Folga/feriado não carregam jornada prevista — batidas viram HE (100% só domingo/feriado).
+        $temPrevisto = $tipoPersistido === 'trabalho';
 
         $ins = $this->db->prepare(
             'INSERT INTO ponto_dias
@@ -249,10 +267,10 @@ final class MotorPontoService
             'espelho_id' => $espelhoId,
             'data' => $data,
             'tipo_dia' => $tipoPersistido,
-            'pe' => $cfg['entrada'] ?? null,
-            'pii' => $cfg['intervalo_inicio'] ?? null,
-            'pif' => $cfg['intervalo_fim'] ?? null,
-            'ps' => $cfg['saida'] ?? null,
+            'pe' => $temPrevisto ? ($cfg['entrada'] ?? null) : null,
+            'pii' => $temPrevisto ? ($cfg['intervalo_inicio'] ?? null) : null,
+            'pif' => $temPrevisto ? ($cfg['intervalo_fim'] ?? null) : null,
+            'ps' => $temPrevisto ? ($cfg['saida'] ?? null) : null,
             'resumo' => $resumo,
             'ok_status' => $okStatus,
         ]);
@@ -350,35 +368,39 @@ final class MotorPontoService
         }
 
         if ($s1 !== null && $e2 !== null) {
-            $durManha = max(0, $s1 - $e1);
-            $durTarde = max(0, $s2 - $e2);
+            $s1Adj = $s1 < $e1 ? $s1 + 1440 : $s1;
+            $e2Adj = $e2 < $s1Adj ? $e2 + 1440 : $e2;
+            $s2Adj = $s2 < $e2Adj ? $s2 + 1440 : $s2;
+            $durManha = max(0, $s1Adj - $e1);
+            $durTarde = max(0, $s2Adj - $e2Adj);
             $e1n = $ent1Escolhido;
             $s1n = $e1n + $durManha;
-            $e2n = $e2 + $dTarde;
+            $e2n = ($e2 < $s1Adj ? $e2 + 1440 : $e2) + $dTarde;
             if ($e2n <= $s1n) {
                 $e2n = $s1n + 1;
             }
             $s2n = $e2n + $durTarde;
         } else {
-            $dur = max(0, $s2 - $e1);
+            $s2Adj = $s2 < $e1 ? $s2 + 1440 : $s2;
+            $dur = max(0, $s2Adj - $e1);
             $e1n = $ent1Escolhido;
             $s1n = null;
             $e2n = null;
             $s2n = $e1n + $dur;
         }
 
-        $clamp = static function (int $m): int {
-            return max(0, min(23 * 60 + 59, $m));
+        $wrap = static function (int $m): int {
+            return (($m % 1440) + 1440) % 1440;
         };
 
         $this->ent1Usados[$colaboradorId][] = $ent1Escolhido;
         $this->ent1Anterior[$colaboradorId] = $ent1Escolhido;
 
         return [
-            1 => $this->fromMin($clamp($e1n)),
-            2 => $s1n !== null ? $this->fromMin($clamp($s1n)) : null,
-            3 => $e2n !== null ? $this->fromMin($clamp($e2n)) : null,
-            4 => $this->fromMin($clamp($s2n)),
+            1 => $this->fromMin($wrap($e1n)),
+            2 => $s1n !== null ? $this->fromMin($wrap($s1n)) : null,
+            3 => $e2n !== null ? $this->fromMin($wrap($e2n)) : null,
+            4 => $this->fromMin($wrap($s2n)),
         ];
     }
 
@@ -452,9 +474,10 @@ final class MotorPontoService
     private function tipoCiclo12x36(DateTimeImmutable $dia, array $cfg): string
     {
         $ancora = new DateTimeImmutable((string) ($cfg['escala_ancora_data'] ?? $cfg['vigencia_inicio'] ?? $dia->format('Y-m-d')));
-        $diff = (int) $ancora->diff($dia)->days;
+        $diff = (int) $ancora->diff($dia)->format('%r%a');
+        $idx = (($diff % 2) + 2) % 2;
         // 12x36: 1 trabalho, 1 folga
-        return ($diff % 2 === 0) ? 'trabalho' : 'folga_escala';
+        return ($idx === 0) ? 'trabalho' : 'folga_escala';
     }
 
     /**
@@ -470,8 +493,9 @@ final class MotorPontoService
             return 'trabalho';
         }
         $ancora = new DateTimeImmutable((string) ($cfg['escala_ancora_data'] ?? $cfg['vigencia_inicio'] ?? $dia->format('Y-m-d')));
-        $diff = (int) $ancora->diff($dia)->days;
-        $idx = $diff % count($ciclos);
+        $diff = (int) $ancora->diff($dia)->format('%r%a');
+        $n = count($ciclos);
+        $idx = (($diff % $n) + $n) % $n;
         $tipo = (string) $ciclos[$idx]['tipo_dia'];
         return $tipo === 'folga' ? 'folga_escala' : 'trabalho';
     }
@@ -511,32 +535,7 @@ final class MotorPontoService
 
     public function recalcularTotais(int $espelhoId): void
     {
-        $sql = <<<SQL
-            SELECT
-              COALESCE(SUM(CASE WHEN o.tipo = 'hora_extra' THEN o.minutos ELSE 0 END),0) AS he,
-              COALESCE(SUM(CASE WHEN o.tipo IN ('falta','falta_justificada') THEN o.minutos ELSE 0 END),0) AS falta,
-              COALESCE(SUM(CASE WHEN o.tipo = 'atraso' THEN o.minutos ELSE 0 END),0) AS atraso,
-              COALESCE(SUM(CASE WHEN o.tipo = 'adicional_noturno' THEN o.minutos ELSE 0 END),0) AS adn
-            FROM ponto_dias d
-            LEFT JOIN ponto_ocorrencias o ON o.ponto_dia_id = d.id
-            WHERE d.espelho_id = :id
-        SQL;
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute(['id' => $espelhoId]);
-        $tot = $stmt->fetch() ?: ['he' => 0, 'falta' => 0, 'atraso' => 0, 'adn' => 0];
-
-        $upd = $this->db->prepare(
-            'UPDATE ponto_espelhos
-             SET total_he_min = :he, total_falta_min = :falta, total_atraso_min = :atraso, total_adn_min = :adn
-             WHERE id = :id'
-        );
-        $upd->execute([
-            'he' => (int) $tot['he'],
-            'falta' => (int) $tot['falta'],
-            'atraso' => (int) $tot['atraso'],
-            'adn' => (int) $tot['adn'],
-            'id' => $espelhoId,
-        ]);
+        (new CalculoPontoService($this->db))->atualizarTotaisEspelho($espelhoId);
     }
 
     public function registrarOcorrencia(

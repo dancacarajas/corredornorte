@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS ponto_espelhos (
   periodo_id BIGINT UNSIGNED NOT NULL,
   colaborador_id BIGINT UNSIGNED NOT NULL,
   lotacao_id BIGINT UNSIGNED NULL,
-  status ENUM('em_aberto','em_tratamento','conferido','fechado','enviado','assinado') NOT NULL DEFAULT 'em_aberto',
+  status ENUM('em_aberto','em_tratamento','conferido','fechado','enviado','assinado','em_divergencia') NOT NULL DEFAULT 'em_aberto',
   total_he_min INT NOT NULL DEFAULT 0,
   total_falta_min INT NOT NULL DEFAULT 0,
   total_atraso_min INT NOT NULL DEFAULT 0,
@@ -140,4 +140,25 @@ CREATE TABLE IF NOT EXISTS emails_envios (
   enviado_em DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_email_doc FOREIGN KEY (documento_id) REFERENCES documentos(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ponto_divergencias (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  espelho_id BIGINT UNSIGNED NOT NULL,
+  documento_id BIGINT UNSIGNED NULL,
+  ponto_dia_id BIGINT UNSIGNED NULL,
+  colaborador_id BIGINT UNSIGNED NOT NULL,
+  data_ocorrencia DATE NULL,
+  motivo TEXT NOT NULL,
+  status ENUM('aberta','em_analise','resolvida') NOT NULL DEFAULT 'aberta',
+  resolucao_obs TEXT NULL,
+  resolvido_por BIGINT UNSIGNED NULL,
+  resolvido_em DATETIME NULL,
+  ip VARCHAR(45) NULL,
+  user_agent VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_pd_espelho_status (espelho_id, status),
+  KEY idx_pd_status_created (status, created_at),
+  CONSTRAINT fk_pd_espelho FOREIGN KEY (espelho_id) REFERENCES ponto_espelhos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pd_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id)
 ) ENGINE=InnoDB;

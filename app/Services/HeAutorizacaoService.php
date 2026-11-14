@@ -629,6 +629,9 @@ final class HeAutorizacaoService
     {
         $a = $this->toMin($ini);
         $b = $this->toMin($fim);
+        if ($b < $a) {
+            $b += 1440;
+        }
         return $b - $a;
     }
 

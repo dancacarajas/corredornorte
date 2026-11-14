@@ -227,7 +227,11 @@ $smtpBloqueadoMs = is_string($flashErro ?? null)
                                     </form>
                                 <?php endif; ?>
                                 <?php if ($status !== 'desconectado'): ?>
-                                    <form method="post" action="/rh/email/desconectar" onsubmit="return confirm('Desconectar esta conta?');">
+                                    <form method="post" action="/rh/email/desconectar"
+                                          data-confirm-title="Desconectar conta?"
+                                          data-confirm="A conta deixará de enviar e-mails pelo sistema."
+                                          data-confirm-ok="Desconectar"
+                                          data-confirm-tone="warning">
                                         <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
                                         <button class="btn btn-ghost btn-sm" type="submit">Desconectar</button>
                                     </form>

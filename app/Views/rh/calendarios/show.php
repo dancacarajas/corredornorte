@@ -46,7 +46,11 @@
                     <td><span class="pill pill-info"><?= View::e((string)$f['tipo']) ?></span></td>
                     <td><?= !empty($f['recorrente_ano']) ? 'Sim' : 'Não' ?></td>
                     <td>
-                        <form method="post" action="/rh/calendarios/<?= (int)$calendario['id'] ?>/feriados/<?= (int)$f['id'] ?>/excluir" onsubmit="return confirm('Remover?')">
+                        <form method="post" action="/rh/calendarios/<?= (int)$calendario['id'] ?>/feriados/<?= (int)$f['id'] ?>/excluir"
+                              data-confirm-title="Remover feriado?"
+                              data-confirm="Confirma a remoção deste feriado?"
+                              data-confirm-ok="Remover"
+                              data-confirm-danger>
                             <button class="btn btn-ghost btn-sm" type="submit">Excluir</button>
                         </form>
                     </td>

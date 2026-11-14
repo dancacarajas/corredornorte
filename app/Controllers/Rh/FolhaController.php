@@ -21,9 +21,30 @@ final class FolhaController
     public function index(): void
     {
         $pdo = Db::tryConnection();
+        $q = trim((string) ($_GET['q'] ?? ''));
+        $status = trim((string) ($_GET['status'] ?? ''));
+        $dataInicio = trim((string) ($_GET['data_inicio'] ?? ''));
+        $dataFim = trim((string) ($_GET['data_fim'] ?? ''));
         $docs = [];
         if ($pdo instanceof PDO) {
-            $docs = $pdo->query(
+            $where = ['1=1'];
+            $params = [];
+            if ($q !== '') {
+                $where[] = '(c.nome LIKE :q_nome OR c.matricula LIKE :q_mat)';
+                $like = '%' . $q . '%';
+                $params['q_nome'] = $like;
+                $params['q_mat'] = $like;
+            }
+            if ($status !== '' && in_array($status, ['gerado', 'enviado', 'assinado', 'invalidado'], true)) {
+                $where[] = 'd.status = :st';
+                $params['st'] = $status;
+            }
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)) {
+                $where[] = 'pp.data_inicio >= :ini AND pp.data_fim <= :fim';
+                $params['ini'] = $dataInicio;
+                $params['fim'] = $dataFim;
+            }
+            $st = $pdo->prepare(
                 'SELECT d.*, c.nome, c.matricula, e.status AS espelho_status,
                         pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim,
                         YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
@@ -31,8 +52,11 @@ final class FolhaController
                  INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
                  INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
                  INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
-                 ORDER BY d.id DESC LIMIT 100'
-            )->fetchAll();
+                 WHERE ' . implode(' AND ', $where) . '
+                 ORDER BY d.id DESC LIMIT 200'
+            );
+            $st->execute($params);
+            $docs = $st->fetchAll();
         }
 
         View::render('rh/folha/index', [
@@ -41,6 +65,10 @@ final class FolhaController
             'activeMenu' => 'folha',
             'dbOk' => $pdo instanceof PDO,
             'docs' => $docs,
+            'q' => $q,
+            'status' => $status,
+            'dataInicio' => $dataInicio,
+            'dataFim' => $dataFim,
         ]);
     }
 
@@ -262,12 +290,21 @@ final class FolhaController
                 error_log('Falha ao atualizar o modelo da folha ' . (int) $doc['id'] . ': ' . $erro->getMessage());
             }
         }
+        $resumoEspelho = ($doc !== null && $assinatura !== null)
+            ? $assinatura->carregarResumoEspelho($doc)
+            : [
+                'espelho_status' => 'enviado',
+                'totais' => ['trab_min' => 0, 'he50_min' => 0, 'he100_min' => 0, 'falta_min' => 0, 'adn_min' => 0, 'dias' => 0],
+                'dias' => [],
+                'divergencias' => [],
+            ];
         $mensagem = $_SESSION['folha_mensagem'][$token] ?? [];
         unset($_SESSION['folha_mensagem'][$token]);
         $_SESSION['folha_csrf'] ??= bin2hex(random_bytes(32));
 
         View::render('rh/folha/portal_assinatura', [
             'documento' => $doc,
+            'resumoEspelho' => $resumoEspelho,
             'modeloAnterior' => $doc !== null && $doc['status'] !== 'assinado'
                 && (int) $doc['layout_pdf'] !== FolhaPontoService::LAYOUT_PDF_ATUAL,
             'assinaturaConfigurada' => AssinaturaEletronicaService::seloConfigurado(),
@@ -276,6 +313,7 @@ final class FolhaController
             'token' => $token,
             'flash' => $mensagem['ok'] ?? null,
             'error' => $mensagem['erro'] ?? null,
+            'nomeInformado' => (string) ($mensagem['nome'] ?? ''),
         ], null);
     }
 
@@ -284,8 +322,45 @@ final class FolhaController
         $this->headersPortal();
         $csrf = $_POST['csrf'] ?? '';
         if (!is_string($csrf) || empty($_SESSION['folha_csrf']) || !hash_equals($_SESSION['folha_csrf'], $csrf)) {
-            http_response_code(403);
-            echo 'Sessão inválida. Volte ao portal e tente novamente.';
+            $this->renderPortalErro(
+                403,
+                'Sessão expirada',
+                'Por segurança, o formulário desta folha expirou. Recarregue a página do portal e tente novamente.',
+                '/assinar/' . rawurlencode($token)
+            );
+            return;
+        }
+        $mensagem = [];
+        $nome = is_string($_POST['nome'] ?? null) ? $_POST['nome'] : '';
+        try {
+            $pdo = Db::tryConnection();
+            if (!$pdo instanceof PDO) {
+                throw new RuntimeException('Sistema indisponível. Tente novamente em instantes.');
+            }
+            $hashVisualizado = is_string($_POST['hash_sha256'] ?? null) ? $_POST['hash_sha256'] : '';
+            (new AssinaturaEletronicaService($pdo))->assinarNoPortal($token, $nome, ($_POST['aceite'] ?? '') === '1', $hashVisualizado);
+            $mensagem['ok'] = 'assinado';
+        } catch (Throwable $e) {
+            $mensagem['erro'] = $e instanceof RuntimeException && !$e instanceof PDOException
+                ? $e->getMessage() : 'Não foi possível concluir a operação. Tente novamente ou fale com o RH.';
+            $mensagem['nome'] = $nome;
+        }
+        $_SESSION['folha_mensagem'] = [$token => $mensagem];
+        header('Location: /assinar/' . rawurlencode($token), true, 303);
+        exit;
+    }
+
+    public function portalDivergencia(string $token = ''): void
+    {
+        $this->headersPortal();
+        $csrf = $_POST['csrf'] ?? '';
+        if (!is_string($csrf) || empty($_SESSION['folha_csrf']) || !hash_equals($_SESSION['folha_csrf'], $csrf)) {
+            $this->renderPortalErro(
+                403,
+                'Sessão expirada',
+                'Sua sessão de conferência expirou. Volte para a folha e tente enviar o apontamento novamente.',
+                '/assinar/' . rawurlencode($token)
+            );
             return;
         }
         $mensagem = [];
@@ -294,17 +369,35 @@ final class FolhaController
             if (!$pdo instanceof PDO) {
                 throw new RuntimeException('Sistema indisponível. Tente novamente em instantes.');
             }
-            $nome = is_string($_POST['nome'] ?? null) ? $_POST['nome'] : '';
-            $hashVisualizado = is_string($_POST['hash_sha256'] ?? null) ? $_POST['hash_sha256'] : '';
-            (new AssinaturaEletronicaService($pdo))->assinarNoPortal($token, $nome, ($_POST['aceite'] ?? '') === '1', $hashVisualizado);
-            $mensagem['ok'] = 'assinado';
+            $motivo = is_string($_POST['motivo'] ?? null) ? $_POST['motivo'] : '';
+            $dataOcorrencia = is_string($_POST['data_ocorrencia'] ?? null) ? $_POST['data_ocorrencia'] : null;
+            (new AssinaturaEletronicaService($pdo))->registrarDivergencia($token, $motivo, $dataOcorrencia);
+            $mensagem['ok'] = 'divergencia';
         } catch (Throwable $e) {
             $mensagem['erro'] = $e instanceof RuntimeException && !$e instanceof PDOException
-                ? $e->getMessage() : 'Não foi possível concluir a operação. Tente novamente ou fale com o RH.';
+                ? $e->getMessage() : 'Não foi possível registrar a divergência. Tente novamente ou contate o RH.';
         }
         $_SESSION['folha_mensagem'] = [$token => $mensagem];
         header('Location: /assinar/' . rawurlencode($token), true, 303);
         exit;
+    }
+
+    private function renderPortalErro(int $status, string $titulo, string $descricao, ?string $voltarUrl = null): void
+    {
+        http_response_code($status);
+        $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $btn = $voltarUrl !== null
+            ? '<a href="' . $e($voltarUrl) . '" style="display:inline-block;margin-top:16px;padding:12px 18px;border-radius:10px;background:#EA580C;color:#fff;font-weight:700;text-decoration:none;">Voltar para a folha</a>'
+            : '';
+        echo '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>' . $e($titulo) . ' — Arcadis RH</title></head>'
+            . '<body style="margin:0;padding:24px;background:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;color:#0F172A;display:grid;place-items:center;min-height:100vh;">'
+            . '<div style="max-width:460px;width:100%;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:24px;box-shadow:0 10px 25px rgba(15,23,42,.08);">'
+            . '<div style="font-size:12px;font-weight:700;color:#EA580C;text-transform:uppercase;letter-spacing:.06em;">Arcadis · Portal de Assinatura</div>'
+            . '<h1 style="margin:8px 0 10px;font-size:20px;">' . $e($titulo) . '</h1>'
+            . '<p style="margin:0;color:#475569;line-height:1.55;">' . $e($descricao) . '</p>'
+            . $btn
+            . '</div></body></html>';
     }
 
     public function portalPdf(string $token = ''): void
@@ -428,14 +521,17 @@ final class FolhaController
         }
         $versaoAssinada = ($_GET['versao'] ?? '') === 'assinada';
         $rel = $versaoAssinada ? (string) ($doc['arquivo_assinado_path'] ?? '') : (string) $doc['arquivo_path'];
-        $path = dirname(__DIR__, 3) . '/' . ltrim($rel, '/');
-        if (!is_file($path)) {
+        $storageRoot = realpath(dirname(__DIR__, 3) . '/storage');
+        $path = $rel !== '' ? realpath(dirname(__DIR__, 3) . '/' . ltrim($rel, '/')) : false;
+        if ($storageRoot === false || $path === false || !str_starts_with($path, $storageRoot . DIRECTORY_SEPARATOR) || !is_file($path)) {
             http_response_code(404);
             echo 'Arquivo ausente';
             return;
         }
-        $hash = (string) ($doc['arquivo_assinado_sha256'] ?? '');
-        if ($versaoAssinada && $hash !== '' && !hash_equals($hash, (string) hash_file('sha256', $path))) {
+        $expectedHash = $versaoAssinada
+            ? (string) ($doc['arquivo_assinado_sha256'] ?? '')
+            : (string) ($doc['hash_sha256'] ?? '');
+        if ($expectedHash !== '' && !hash_equals($expectedHash, (string) hash_file('sha256', $path))) {
             http_response_code(409);
             echo 'Integridade do PDF comprometida';
             return;

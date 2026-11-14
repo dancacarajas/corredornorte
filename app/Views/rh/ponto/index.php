@@ -347,6 +347,26 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
     <script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-periodo-20261113" defer></script>
 <?php endif; ?>
 
+<div class="modal-backdrop" id="pontoReabrirModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="card-title">Reabrir tratamento</h3>
+            <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
+        </div>
+        <div class="modal-body section-stack">
+            <div class="alert alert-warning">Reabrir devolve os cartões selecionados para tratamento e invalida PDFs anteriores.</div>
+            <div class="form-field">
+                <label class="form-label" for="pontoReabrirMotivo">Justificativa da reabertura</label>
+                <textarea class="form-control" id="pontoReabrirMotivo" rows="3" placeholder="Descreva o motivo da reabertura..." required></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" type="button" data-modal-close>Cancelar</button>
+            <button class="btn btn-primary" type="button" id="pontoReabrirConfirmar">Confirmar reabertura</button>
+        </div>
+    </div>
+</div>
+
 <script>
 (() => {
   const form = document.getElementById('pontoLoteForm');
@@ -354,7 +374,16 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
   const checks = () => Array.from(document.querySelectorAll('.ponto-check'));
   const statusInput = document.getElementById('pontoLoteStatus');
   const justInput = document.getElementById('pontoLoteJustificativa');
+  const reabrirModal = document.getElementById('pontoReabrirModal');
+  const reabrirMotivo = document.getElementById('pontoReabrirMotivo');
+  const reabrirConfirmar = document.getElementById('pontoReabrirConfirmar');
   if (!form) return;
+
+  const notifyWarn = (msg) => {
+    if (window.Toast && typeof window.Toast.show === 'function') {
+      window.Toast.show(msg, 'warning');
+    }
+  };
 
   if (all) {
     all.addEventListener('change', () => {
@@ -370,36 +399,91 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
       const statusValue = btn.getAttribute('data-status-value') || 'conferido';
       if (selectedCount() === 0) {
         ev.preventDefault();
-        alert('Selecione ao menos um colaborador.');
+        notifyWarn('Selecione ao menos um colaborador.');
         return;
       }
       if (statusInput) statusInput.value = statusValue;
-      if (action === 'fechado' && !confirm('Fechar o período dos colaboradores selecionados?')) {
+      if (action === 'fechado') {
         ev.preventDefault();
+        const targetForm = btn.closest('form');
+        const run = window.uiConfirm
+          ? window.uiConfirm({
+              title: 'Fechar período?',
+              message: 'Fechar o período dos colaboradores selecionados?',
+              confirmText: 'Fechar',
+              tone: 'warning',
+            })
+          : Promise.resolve(true);
+        run.then((ok) => {
+          if (!ok || !targetForm) return;
+          if (statusInput) statusInput.value = statusValue;
+          if (typeof targetForm.requestSubmit === 'function') targetForm.requestSubmit();
+          else targetForm.submit();
+        });
         return;
       }
       if (action === 'reabrir') {
-        const motivo = prompt('Informe a justificativa da reabertura:');
-        if (!motivo || !motivo.trim()) {
-          ev.preventDefault();
-          alert('Reabertura exige justificativa.');
-          return;
+        ev.preventDefault();
+        if (reabrirModal && reabrirMotivo) {
+          reabrirMotivo.value = '';
+          reabrirModal.classList.add('is-open');
+          window.setTimeout(() => reabrirMotivo.focus(), 40);
         }
-        if (justInput) justInput.value = motivo.trim();
-      } else if (justInput) {
+        return;
+      }
+      if (justInput) {
         justInput.value = '';
       }
     });
   });
 
+  if (reabrirConfirmar && reabrirModal && reabrirMotivo) {
+    reabrirConfirmar.addEventListener('click', () => {
+      const motivo = (reabrirMotivo.value || '').trim();
+      if (!motivo) {
+        notifyWarn('Reabertura exige justificativa.');
+        reabrirMotivo.focus();
+        return;
+      }
+      if (statusInput) statusInput.value = 'em_tratamento';
+      if (justInput) justInput.value = motivo;
+      reabrirModal.classList.remove('is-open');
+      if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.submit();
+    });
+  }
+
   document.querySelectorAll('[data-conferir-um]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-conferir-um');
-      checks().forEach((c) => { c.checked = c.value === id; });
-      if (statusInput) statusInput.value = 'conferido';
-      if (justInput) justInput.value = '';
-      form.requestSubmit();
+      const id = btn.getAttribute('data-conferir-um') || '';
+      if (!id) return;
+      const singleForm = document.createElement('form');
+      singleForm.method = 'post';
+      singleForm.action = form.action || '/rh/ponto/lote-status';
+      singleForm.style.display = 'none';
+
+      const appendHidden = (name, value) => {
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = name;
+        inp.value = value;
+        singleForm.appendChild(inp);
+      };
+
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+      if (csrf) appendHidden('_csrf', csrf);
+      const ini = form.querySelector('input[name="data_inicio"]')?.value || '';
+      const fim = form.querySelector('input[name="data_fim"]')?.value || '';
+      if (ini) appendHidden('data_inicio', ini);
+      if (fim) appendHidden('data_fim', fim);
+      appendHidden('status', 'conferido');
+      appendHidden('justificativa', '');
+      appendHidden('espelho_ids[]', id);
+
+      document.body.appendChild(singleForm);
+      singleForm.submit();
     });
   });
 })();
 </script>
+

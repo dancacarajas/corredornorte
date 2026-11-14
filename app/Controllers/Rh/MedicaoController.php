@@ -56,17 +56,18 @@ final class MedicaoController
             'pageTitle' => 'Medição',
             'pageSubtitle' => 'Jornada do período até o dossiê assinado',
             'activeMenu' => 'medicao',
-            'extraCss' => ['css/medicao.css?v=medicao-20261113f'],
+            'extraCss' => ['css/medicao.css?v=p1-20261114'],
             'dbOk' => $dbOk,
             'periodosGerados' => $periodos,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'filtro' => $filtro,
             'painel' => $painel,
+            'errosLote' => $_SESSION['medicao_errors_list'] ?? [],
             'flash' => $_SESSION['medicao_flash'] ?? null,
             'error' => $erro ?? ($_SESSION['medicao_error'] ?? null),
         ]);
-        unset($_SESSION['medicao_flash'], $_SESSION['medicao_error']);
+        unset($_SESSION['medicao_flash'], $_SESSION['medicao_error'], $_SESSION['medicao_errors_list']);
     }
 
     public function conferirLote(): void
@@ -208,29 +209,51 @@ final class MedicaoController
         $ini = (string) ($_POST['data_inicio'] ?? '');
         $fim = (string) ($_POST['data_fim'] ?? '');
         $filtro = (string) ($_POST['filtro'] ?? '');
+        $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
+            || strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
+
         $qsParams = ['data_inicio' => $ini, 'data_fim' => $fim];
         if (in_array($filtro, ['conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas'], true)) {
             $qsParams['filtro'] = $filtro;
         }
         $qs = http_build_query($qsParams);
         if (!$pdo instanceof PDO || $ini === '' || $fim === '') {
+            if ($wantsJson) {
+                http_response_code(400);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'error' => 'Período inválido.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
             $_SESSION['medicao_error'] = 'Período inválido.';
             header('Location: /rh/medicao');
             exit;
         }
 
+        $selectedIds = array_values(array_filter(
+            array_map('intval', (array) ($_POST['espelho_ids'] ?? [])),
+            static fn(int $v): bool => $v > 0
+        ));
+        $selectedMap = $selectedIds !== [] ? array_flip($selectedIds) : null;
+
         try {
             $painel = (new MedicaoService($pdo))->painel($ini, $fim);
             $ok = 0;
+            $skipped = 0;
             $erros = [];
             foreach ($painel['colaboradores'] as $row) {
+                $espId = (int) ($row['espelho_id'] ?? 0);
+                if ($selectedMap !== null && !isset($selectedMap[$espId])) {
+                    continue;
+                }
                 if (!empty($row['concluido'])) {
+                    $skipped++;
                     continue;
                 }
                 try {
                     $resultado = $fn($pdo, $row, $ini, $fim);
                     // Strings "já ..." não contam como avanço real do lote.
                     if (is_string($resultado) && str_starts_with(mb_strtolower($resultado), 'já ')) {
+                        $skipped++;
                         continue;
                     }
                     $ok++;
@@ -238,12 +261,31 @@ final class MedicaoController
                     $erros[] = $row['nome'] . ': ' . $e->getMessage();
                 }
             }
+
+            if ($wantsJson) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'ok' => true,
+                    'processed' => $ok,
+                    'skipped' => $skipped,
+                    'errors' => $erros,
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
             if ($erros !== []) {
-                $_SESSION['medicao_error'] = $flashOk . " ({$ok} ok). Pendências: " . implode(' · ', array_slice($erros, 0, 5));
+                $_SESSION['medicao_errors_list'] = $erros;
+                $_SESSION['medicao_error'] = $flashOk . " ({$ok} ok). " . count($erros) . ' pendência(s) encontrada(s) — veja a lista completa abaixo.';
             } else {
                 $_SESSION['medicao_flash'] = $flashOk . ($ok > 0 ? " ({$ok})" : ' (nada pendente)');
             }
         } catch (Throwable $e) {
+            if ($wantsJson) {
+                http_response_code(422);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
             $_SESSION['medicao_error'] = $e->getMessage();
         }
         header('Location: /rh/medicao?' . $qs);

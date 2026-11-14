@@ -65,7 +65,7 @@ final class ImportacaoController
             $path = (new ModeloEfetivoService())->gerarArquivo();
         } catch (Throwable $e) {
             http_response_code(500);
-            echo 'Falha ao gerar modelo: ' . $e->getMessage();
+            echo 'Falha ao gerar modelo: ' . View::e($e->getMessage());
             return;
         }
 
@@ -85,13 +85,26 @@ final class ImportacaoController
             exit;
         }
 
-        if (!isset($_FILES['arquivo']) || ($_FILES['arquivo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        try {
+            $info = \App\Helpers\UploadGuard::validate(
+                $_FILES['arquivo'] ?? [],
+                ['xlsx', 'xls'],
+                [
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'application/vnd.ms-excel',
+                    'application/zip',
+                    'application/x-zip-compressed',
+                    'application/CDFV2',
+                ],
+                26214400
+            );
+        } catch (Throwable $e) {
             View::render('rh/importacoes/upload', [
                 'pageTitle' => 'Importar efetivo',
                 'pageSubtitle' => 'Falha no upload',
                 'activeMenu' => 'importacoes',
                 'dbOk' => true,
-                'error' => 'Selecione um arquivo .xlsx/.xls válido.',
+                'error' => $e->getMessage(),
             ]);
             return;
         }
@@ -102,7 +115,8 @@ final class ImportacaoController
         if (!is_dir($destDir)) {
             mkdir($destDir, 0775, true);
         }
-        $dest = $destDir . '/' . date('Ymd_His') . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $name);
+        $safeBase = preg_replace('/[^a-zA-Z0-9._-]/', '_', pathinfo($name, PATHINFO_FILENAME)) ?: 'planilha';
+        $dest = $destDir . '/' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '_' . $safeBase . '.' . $info['ext'];
         if (!move_uploaded_file($tmp, $dest)) {
             View::render('rh/importacoes/upload', [
                 'pageTitle' => 'Importar efetivo',

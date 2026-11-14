@@ -266,19 +266,7 @@ final class MedicaoService
 
     private function baseUrl(): string
     {
-        $app = require $this->root . '/config/app.php';
-        $url = trim((string) ($app['url'] ?? ''));
-        if ($url === '') {
-            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-                || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
-            $host = (string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1');
-            return ($https ? 'https://' : 'http://') . $host;
-        }
-        $url = rtrim($url, '/');
-        if (str_ends_with(strtolower($url), '/public')) {
-            $url = substr($url, 0, -7);
-        }
-        return rtrim($url, '/');
+        return \App\Helpers\AppUrl::base($this->root);
     }
 
     /**

@@ -12,11 +12,31 @@ $app = require __DIR__ . '/app.php';
 $base = rtrim((string) ($app['url'] ?? ''), '/');
 if ($base === '') {
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-    $base = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost:8080');
+    $rawHost = trim((string) ($_SERVER['HTTP_HOST'] ?? 'localhost:8080'));
+    $host = preg_match('/^[a-zA-Z0-9.\-]+(?::\d{1,5})?$/', $rawHost) === 1 ? $rawHost : 'localhost:8080';
+    $base = ($https ? 'https' : 'http') . '://' . $host;
+}
+$env = (string) ($app['env'] ?? 'local');
+$appKey = trim((string) (getenv('ARCADIS_APP_KEY') ?: ($app['key'] ?? '')));
+if ($appKey === '') {
+    $keyFile = dirname(__DIR__) . '/storage/app.key';
+    if (is_file($keyFile)) {
+        $appKey = trim((string) @file_get_contents($keyFile));
+    }
+    if ($appKey === '' && is_writable(dirname($keyFile))) {
+        $generated = bin2hex(random_bytes(32));
+        if (@file_put_contents($keyFile, $generated . PHP_EOL, LOCK_EX) !== false) {
+            @chmod($keyFile, 0600);
+            $appKey = $generated;
+        }
+    }
+}
+if ($appKey === '' && $env === 'local') {
+    $appKey = 'arcadis-local-dev-key-change-me';
 }
 
 return [
-    'encryption_key' => getenv('ARCADIS_APP_KEY') ?: 'arcadis-local-dev-key-change-me',
+    'encryption_key' => $appKey,
     'providers' => [
         'gmail' => [
             'label' => 'Gmail',

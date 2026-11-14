@@ -235,9 +235,10 @@ final class FolhaPontoService
     {
         $documentoId = $this->atualizarModeloPendente($documentoId, null, $espelhoId);
         $stmt = $this->db->prepare(
-            'SELECT d.*, c.email_corp, c.nome, e.id AS espelho_id
+            'SELECT d.*, c.email_corp, c.nome, c.matricula, e.id AS espelho_id, p.competencia, p.data_inicio, p.data_fim
              FROM documentos d
              INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+             INNER JOIN ponto_periodos p ON p.id = e.periodo_id
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
              WHERE d.id = :id'
         );
@@ -260,32 +261,162 @@ final class FolhaPontoService
         )->fetchColumn();
 
         $abs = dirname(__DIR__, 2) . '/' . ltrim((string) $doc['arquivo_path'], '/');
-        $portalLinha = '';
+        $portalUrl = null;
         if (!empty($doc['portal_token'])) {
             $app = require dirname(__DIR__, 2) . '/config/app.php';
             $base = rtrim(trim((string) ($app['url'] ?? '')), '/');
             if ($base === '') {
                 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-                $base = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8080');
+                $base = ($https ? 'https' : 'http') . '://' . \App\Helpers\AppUrl::sanitizeHost((string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8080'));
             }
             if (str_ends_with(strtolower($base), '/public')) {
                 $base = rtrim(substr($base, 0, -7), '/');
             }
-            $portalLinha = "\nAssinar eletronicamente (somente leitura, sem editar ponto):\n"
-                . $base . '/assinar/' . $doc['portal_token'] . "\n";
+            $portalUrl = $base . '/assinar/' . $doc['portal_token'];
         }
+
+        $emailContent = self::montarEmailFolha($doc, $portalUrl);
         $mail = new MailService();
         $result = $mail->send(
             $to,
-            'Folha de Ponto — ' . $doc['nome'],
-            "Olá,\n\nSegue sua folha de ponto.\nCódigo de verificação: {$doc['codigo_verificacao']}\n"
-            . $portalLinha
-            . "\nArcadis RH",
-            is_file($abs) ? $abs : null
+            'Folha de Ponto (' . ($doc['competencia'] ?? '') . ') — ' . $doc['nome'],
+            $emailContent['text'],
+            is_file($abs) ? $abs : null,
+            $emailContent['html']
         );
 
         $this->registrarEnvio($documentoId, $to, $result['ok'], $result['erro'], $tentativa);
         return $result;
+    }
+
+    /**
+     * Monta versão texto e HTML responsivo transacional (alto contraste) para envio da folha.
+     *
+     * @param array<string,mixed> $doc
+     * @return array{text:string,html:string}
+     */
+    public static function montarEmailFolha(array $doc, ?string $portalUrl): array
+    {
+        $nome = trim((string) ($doc['nome'] ?? 'Colaborador'));
+        $matricula = trim((string) ($doc['matricula'] ?? ''));
+        $competencia = trim((string) ($doc['competencia'] ?? ''));
+        $ini = !empty($doc['data_inicio']) ? date('d/m/Y', strtotime((string) $doc['data_inicio'])) : '';
+        $fim = !empty($doc['data_fim']) ? date('d/m/Y', strtotime((string) $doc['data_fim'])) : '';
+        $periodo = ($ini !== '' && $fim !== '') ? "{$ini} a {$fim}" : $competencia;
+        $codigo = trim((string) ($doc['codigo_verificacao'] ?? ''));
+
+        $textLines = [
+            "Olá, {$nome},",
+            '',
+            "Sua Folha de Ponto ({$periodo}) está pronta para conferência.",
+        ];
+        if ($codigo !== '') {
+            $textLines[] = "Código de verificação: {$codigo}";
+        }
+        if ($portalUrl !== null && $portalUrl !== '') {
+            $textLines[] = '';
+            $textLines[] = 'Para revisar os apontamentos e assinar eletronicamente, acesse:';
+            $textLines[] = $portalUrl;
+            $textLines[] = 'Caso identifique qualquer divergência, utilize o botão "Reportar divergência ao RH" dentro do portal antes de assinar.';
+        }
+        $textLines[] = '';
+        $textLines[] = 'Arcadis RH — Corredor Norte';
+        $text = implode("\n", $textLines);
+
+        $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $ctaHtml = '';
+        $fallbackLinkHtml = '';
+        if ($portalUrl !== null && $portalUrl !== '') {
+            $urlEsc = $e($portalUrl);
+            $ctaHtml = <<<HTML
+              <tr>
+                <td style="padding: 8px 0 20px;">
+                  <a href="{$urlEsc}" target="_blank" rel="noopener"
+                     style="display:inline-block;background-color:#EA580C;color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;font-weight:700;text-decoration:none;padding:14px 26px;border-radius:8px;">
+                    Conferir e Assinar Folha de Ponto
+                  </a>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:12px 14px;background-color:#FFF7ED;border-left:4px solid #EA580C;border-radius:6px;font-size:13px;line-height:1.5;color:#7C2D12;">
+                  <strong>Encontrou alguma divergência?</strong> Não assine com erro — abra o link acima e clique em <strong>Reportar divergência ao RH</strong> para correção antes da assinatura.
+                </td>
+              </tr>
+            HTML;
+            $fallbackLinkHtml = <<<HTML
+              <tr>
+                <td style="padding-top:16px;font-size:12px;line-height:1.5;color:#64748B;word-break:break-all;">
+                  Se o botão não abrir, copie e cole este endereço no navegador:<br>
+                  <a href="{$urlEsc}" style="color:#EA580C;text-decoration:underline;">{$urlEsc}</a>
+                </td>
+              </tr>
+            HTML;
+        }
+
+        $matriculaBadge = $matricula !== ''
+            ? '<div style="font-size:13px;color:#64748B;margin-top:2px;">Matrícula: ' . $e($matricula) . '</div>'
+            : '';
+        $codigoHtml = $codigo !== ''
+            ? '<td style="padding:10px 12px;border-top:1px solid #E2E8F0;font-size:13px;color:#0F172A;"><strong>Código:</strong> <span style="font-family:Consolas,monospace;font-weight:700;">' . $e($codigo) . '</span></td>'
+            : '';
+
+        $html = <<<HTML
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1.0">
+          <title>Folha de Ponto — Arcadis RH</title>
+        </head>
+        <body style="margin:0;padding:0;background-color:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0F172A;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F1F5F9;padding:24px 12px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background-color:#FFFFFF;border-radius:12px;border:1px solid #E2E8F0;overflow:hidden;">
+                  <tr>
+                    <td style="background-color:#0F172A;padding:20px 24px;border-bottom:4px solid #EA580C;">
+                      <div style="font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#FDBA74;">ARCADIS — CORREDOR NORTE</div>
+                      <div style="font-size:20px;font-weight:700;color:#FFFFFF;margin-top:4px;">Folha de Ponto para Conferência</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:24px;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                        <tr>
+                          <td style="font-size:15px;line-height:1.6;color:#1E293B;padding-bottom:16px;">
+                            Olá, <strong>{$e($nome)}</strong>.{$matriculaBadge}
+                            <p style="margin:12px 0 0;">Sua folha de ponto referente ao período indicado abaixo está disponível. Confira os dias trabalhados, horas extras e ocorrências diretamente pelo celular ou computador e registre sua assinatura eletrônica.</p>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding-bottom:20px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
+                              <tr>
+                                <td style="padding:10px 12px;font-size:13px;color:#0F172A;"><strong>Período:</strong> {$e($periodo)}</td>
+                              </tr>
+                              <tr>{$codigoHtml}</tr>
+                            </table>
+                          </td>
+                        </tr>
+                        {$ctaHtml}
+                        {$fallbackLinkHtml}
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="background-color:#F8FAFC;padding:14px 24px;border-top:1px solid #E2E8F0;font-size:12px;color:#64748B;">
+                      Arcadis RH — O PDF da folha também segue anexado para sua guarda. Em caso de dúvida, contate o RH pelo portal.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
+        HTML;
+
+        return ['text' => $text, 'html' => $html];
     }
 
     /**
@@ -352,12 +483,14 @@ final class FolhaPontoService
                     l.codigo AS lotacao_codigo,
                     ct.codigo AS contrato_codigo, cc.codigo AS cc_codigo, os.codigo AS os_codigo,
                     loc.municipio, loc.uf,
+                    esc.tipo AS escala_tipo, esc.codigo AS escala_codigo,
                     j.entrada AS jornada_entrada, j.intervalo_inicio AS jornada_intervalo_inicio,
                     j.intervalo_fim AS jornada_intervalo_fim, j.saida AS jornada_saida
              FROM ponto_espelhos e
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
              INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              LEFT JOIN rh_lotacoes l ON l.id = e.lotacao_id
+             LEFT JOIN rh_escalas esc ON esc.id = l.escala_id
              LEFT JOIN rh_contratos ct ON ct.id = l.contrato_id
              LEFT JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
              LEFT JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
@@ -496,9 +629,21 @@ final class FolhaPontoService
             $totais['atestado'] += $atestadoMin ?? 0;
         }
 
+        $escalaTipo = (string) ($e['escala_tipo'] ?? '');
+        $escalaAlternada = in_array($escalaTipo, ['12x36', 'ciclo'], true);
+
         $jornadaSemanal = [];
         foreach ($diasSemana as $numero => $rotulo) {
             $variantes = array_values($jornadas[$numero] ?? []);
+            if ($escalaAlternada && count($variantes) > 1) {
+                $trabalhoVariantes = array_values(array_filter(
+                    $variantes,
+                    static fn (array $v): bool => ($v['tipo'] ?? '') === 'trabalho'
+                ));
+                if (count($trabalhoVariantes) === 1) {
+                    $variantes = $trabalhoVariantes;
+                }
+            }
             $jornada = match (count($variantes)) {
                 0 => ['tipo' => 'indisponivel'],
                 1 => $variantes[0],
@@ -522,6 +667,8 @@ final class FolhaPontoService
                 'os_codigo' => $e['os_codigo'] ?? '',
                 'municipio' => $e['municipio'] ?? '',
                 'uf' => $e['uf'] ?? '',
+                'escala_tipo' => $escalaTipo,
+                'escala_codigo' => $e['escala_codigo'] ?? '',
                 'jornada' => [
                     'entrada' => $e['jornada_entrada'] ?? null,
                     'intervalo_inicio' => $e['jornada_intervalo_inicio'] ?? null,
@@ -586,7 +733,7 @@ final class FolhaPontoService
                  INNER JOIN ponto_justificativas j ON j.espelho_id = d.espelho_id
                      AND d.data BETWEEN j.data_inicio AND j.data_fim
                  INNER JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
-                 WHERE d.id IN ($params) AND d.tipo_dia = 'trabalho' AND t.codigo = 'ATST'"
+                 WHERE d.id IN ($params) AND d.tipo_dia = 'trabalho' AND UPPER(t.codigo) IN ('ATST', 'ATESTADO')"
             );
             $stmt->execute($dias);
             foreach ($stmt as $row) {

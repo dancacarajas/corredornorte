@@ -180,7 +180,7 @@ final class ImportacaoEfetivoService
     {
         $out = [];
         foreach ($map as $field => $col) {
-            $out[$field] = trim((string) ($row[$col] ?? ''));
+            $out[$field] = \App\Helpers\TextEncoding::ensureUtf8(trim((string) ($row[$col] ?? '')));
         }
         if (isset($out['cpf'])) {
             $out['cpf'] = preg_replace('/\D+/', '', $out['cpf']) ?: '';

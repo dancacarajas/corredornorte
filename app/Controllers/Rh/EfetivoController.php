@@ -89,7 +89,8 @@ final class EfetivoController
         }
 
         $exportQs = http_build_query(array_filter($filters, static fn ($v) => $v !== '' && $v !== 0));
-        $topbarActions = '<a class="btn btn-secondary btn-sm" href="/rh/efetivo/exportar' . ($exportQs !== '' ? '?' . $exportQs : '') . '">Exportar efetivo</a>'
+        $exportUrl = '/rh/efetivo/exportar' . ($exportQs !== '' ? '?' . View::e($exportQs) : '');
+        $topbarActions = '<a class="btn btn-secondary btn-sm" href="' . $exportUrl . '">Exportar efetivo</a>'
             . '<a class="btn btn-secondary btn-sm" href="/rh/importacoes/modelo">Baixar modelo matriz</a>'
             . '<a class="btn btn-secondary btn-sm" href="/rh/calendarios">Feriados</a>'
             . '<a class="btn btn-secondary btn-sm" href="/rh/importacoes/nova">Importar Excel</a>'
@@ -126,7 +127,7 @@ final class EfetivoController
             $path = (new ModeloEfetivoService())->exportar($pdo, $this->filtersFromRequest());
         } catch (Throwable $e) {
             http_response_code(500);
-            echo 'Falha ao exportar: ' . $e->getMessage();
+            echo 'Falha ao exportar: ' . View::e($e->getMessage());
             return;
         }
 

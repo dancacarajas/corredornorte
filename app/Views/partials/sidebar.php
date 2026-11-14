@@ -231,7 +231,10 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
             </div>
         </div>
         <div style="padding:0 .45rem .35rem;">
-            <a class="btn btn-ghost btn-sm" href="/logout" style="width:100%;">Sair</a>
+            <form method="post" action="/logout">
+                <?= \App\Helpers\Csrf::field() ?>
+                <button class="btn btn-ghost btn-sm" type="submit" style="width:100%;">Sair</button>
+            </form>
         </div>
     </div>
 </aside>

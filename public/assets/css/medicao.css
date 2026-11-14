@@ -1,8 +1,8 @@
 .medicao-hero {
   overflow: hidden;
   background:
-    radial-gradient(1200px 280px at 10% -20%, rgba(14, 116, 144, 0.12), transparent 60%),
-    radial-gradient(900px 240px at 90% 0%, rgba(15, 107, 58, 0.08), transparent 55%),
+    radial-gradient(1100px 280px at 8% -15%, rgba(224, 96, 8, 0.14), transparent 60%),
+    radial-gradient(880px 240px at 92% 0%, rgba(17, 24, 39, 0.06), transparent 55%),
     var(--surface, #fff);
 }
 
@@ -23,7 +23,7 @@
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--brand-primary, #0e7490);
+  color: var(--brand-primary, #E06008);
 }
 
 .medicao-title {
@@ -36,7 +36,7 @@
 
 .medicao-lead {
   margin: 0 0 1.1rem;
-  color: var(--text-muted, #5b6472);
+  color: var(--ink-subtle, #596270);
   max-width: 42rem;
 }
 
@@ -63,7 +63,7 @@
   padding: 1rem;
   border: 1px solid var(--border, #e5eaf0);
   border-radius: var(--radius-lg, 14px);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .medicao-score.is-complete {
@@ -81,7 +81,13 @@
   flex-shrink: 0;
   background:
     radial-gradient(circle at center, #fff 58%, transparent 59%),
-    conic-gradient(var(--success, #0f6b3a) calc(var(--pct) * 1%), #e8eef4 0);
+    conic-gradient(var(--brand-primary, #E06008) calc(var(--pct) * 1%), #e8eef4 0);
+}
+
+.medicao-score.is-complete .medicao-score-ring {
+  background:
+    radial-gradient(circle at center, #fff 58%, transparent 59%),
+    conic-gradient(var(--success, #12B76A) calc(var(--pct) * 1%), #e8eef4 0);
 }
 
 .medicao-score-ring strong {
@@ -91,7 +97,7 @@
 
 .medicao-score-ring span {
   font-size: 0.68rem;
-  color: var(--text-muted, #5b6472);
+  color: var(--ink-subtle, #596270);
 }
 
 .medicao-score-meta {
@@ -135,8 +141,8 @@
 }
 
 .medicao-step.is-selected {
-  border-color: rgba(14, 116, 144, 0.55);
-  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.12);
+  border-color: rgba(224, 96, 8, 0.55);
+  box-shadow: 0 0 0 2px rgba(224, 96, 8, 0.14);
 }
 
 .medicao-step.is-done {
@@ -145,8 +151,8 @@
 }
 
 .medicao-step.is-active {
-  border-color: rgba(14, 116, 144, 0.35);
-  background: #f3fafc;
+  border-color: rgba(224, 96, 8, 0.35);
+  background: var(--brand-primary-soft, #FFF1E6);
 }
 
 .medicao-step-num {
@@ -158,7 +164,7 @@
   font-size: 0.78rem;
   font-weight: 800;
   background: #eef2f6;
-  color: #334155;
+  color: #111827;
   flex-shrink: 0;
 }
 
@@ -168,7 +174,7 @@
 }
 
 .medicao-step.is-active .medicao-step-num {
-  background: #0e7490;
+  background: var(--brand-primary, #E06008);
   color: #fff;
 }
 
@@ -181,13 +187,13 @@
 .medicao-step p {
   margin: 0 0 0.45rem;
   font-size: 0.78rem;
-  color: var(--text-muted, #5b6472);
+  color: var(--ink-subtle, #596270);
 }
 
 .medicao-step small {
   display: block;
   margin-top: 0.25rem;
-  color: var(--text-muted, #5b6472);
+  color: var(--ink-subtle, #596270);
 }
 
 .medicao-lote-actions {
@@ -225,7 +231,7 @@
 }
 
 .medicao-lote-actions .btn.is-filter-on {
-  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.18);
+  box-shadow: 0 0 0 2px rgba(224, 96, 8, 0.2);
 }
 
 .medicao-lote-exec form {
@@ -262,7 +268,7 @@
 
 .medicao-dossie-ready p {
   margin: 0;
-  color: var(--text-muted, #5b6472);
+  color: var(--ink-subtle, #596270);
 }
 
 .medicao-table tr.medicao-row-done {
@@ -299,6 +305,29 @@
 .text-right {
   text-align: right;
   white-space: nowrap;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.24rem 0.6rem;
+  border-radius: var(--radius-full, 999px);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.badge-aprovada {
+  background: var(--success-soft, #ecfdf3);
+  color: #027a48;
+  border: 1px solid rgba(18, 183, 106, 0.25);
+}
+
+.badge-pendente {
+  background: var(--warning-soft, #fffaeb);
+  color: #b54708;
+  border: 1px solid rgba(247, 144, 9, 0.3);
 }
 
 @media (max-width: 900px) {

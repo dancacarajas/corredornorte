@@ -177,9 +177,8 @@ final class RelatorioAssinaturaService
             if ($hashVisualizado === '' || !hash_equals((string) $doc['hash_sha256'], $hashVisualizado)) {
                 throw new RuntimeException('Atualize a página e confira a via atual do relatório antes de assinar.');
             }
-            $nomeNormalizado = static fn (string $valor): string => mb_strtolower(trim(preg_replace('/\s+/u', ' ', $valor) ?? ''));
-            if (mb_strlen($nome) > 160 || $nomeNormalizado($nome) === ''
-                || $nomeNormalizado($nome) !== $nomeNormalizado((string) $doc['nome'])) {
+            if (mb_strlen($nome) > 160 || AssinaturaEletronicaService::normalizarNome($nome) === ''
+                || AssinaturaEletronicaService::normalizarNome($nome) !== AssinaturaEletronicaService::normalizarNome((string) $doc['nome'])) {
                 throw new RuntimeException('Digite o nome completo que aparece no relatório.');
             }
             $original = $this->caminhoPdfOriginal((string) $doc['arquivo_path']);
@@ -386,17 +385,6 @@ final class RelatorioAssinaturaService
 
     private function baseUrl(): string
     {
-        $app = require dirname(__DIR__, 2) . '/config/app.php';
-        $url = trim((string) ($app['url'] ?? ''));
-        if ($url === '') {
-            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-                || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
-            return ($https ? 'https://' : 'http://') . (string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1');
-        }
-        $url = rtrim($url, '/');
-        if (str_ends_with(strtolower($url), '/public')) {
-            $url = substr($url, 0, -7);
-        }
-        return rtrim($url, '/');
+        return \App\Helpers\AppUrl::base(dirname(__DIR__, 2));
     }
 }

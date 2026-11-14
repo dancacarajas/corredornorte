@@ -12,14 +12,12 @@ from pathlib import Path
 
 import paramiko
 
-HOST = os.environ.get("HOSTINGER_SSH_HOST", "82.198.236.39")
+HOST = os.environ.get("HOSTINGER_SSH_HOST", "")
 PORT = int(os.environ.get("HOSTINGER_SSH_PORT", "65002"))
-USER = os.environ.get("HOSTINGER_SSH_USER", "u482227589")
+USER = os.environ.get("HOSTINGER_SSH_USER", "")
 PASSWORD = os.environ.get("HOSTINGER_SSH_PASSWORD", "")
-REMOTE_ROOT = os.environ.get(
-    "HOSTINGER_REMOTE_ROOT",
-    "/home/u482227589/domains/feston.net.br/public_html/corredornorte",
-)
+REMOTE_ROOT = os.environ.get("HOSTINGER_REMOTE_ROOT", "")
+DEPLOY_URL = os.environ.get("HOSTINGER_DEPLOY_URL", "")
 
 LOCAL_ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,7 +28,18 @@ SKIP_DIR_NAMES = {
     "agent-transcripts",
     "__pycache__",
 }
-SKIP_FILE_NAMES = {".env", "database.local.php", "app.local.php", "install.lock"}
+SKIP_FILE_NAMES = {".env", "database.local.php", "app.local.php", "install.lock", "app.key"}
+DEV_SCRIPT_EXACT = {"deploy_hostinger.py", "install_db.php", "e2e_verify.php"}
+DEV_SCRIPT_PREFIXES = (
+    "_tmp_",
+    "http_smoke",
+    "seed_",
+    "bench_",
+    "verify_",
+    "check_",
+    "regen_",
+    "recalc_",
+)
 
 
 def should_skip(path: Path, rel: Path) -> bool:
@@ -40,6 +49,11 @@ def should_skip(path: Path, rel: Path) -> bool:
         return True
     if path.suffix in {".pyc", ".pyo"}:
         return True
+    if rel.parts and rel.parts[0] == "scripts" and path.is_file():
+        if path.name in DEV_SCRIPT_EXACT or any(
+            path.name.startswith(p) for p in DEV_SCRIPT_PREFIXES
+        ):
+            return True
     if rel.parts and rel.parts[0] == "output" and path.name != ".gitkeep":
         return True
     if len(rel.parts) >= 2 and rel.parts[0] == "storage":
@@ -87,8 +101,18 @@ def run_remote(ssh: paramiko.SSHClient, cmd: str) -> str:
 
 
 def main() -> int:
-    if not PASSWORD:
-        print("Defina HOSTINGER_SSH_PASSWORD", file=sys.stderr)
+    missing = [
+        name
+        for name, val in (
+            ("HOSTINGER_SSH_HOST", HOST),
+            ("HOSTINGER_SSH_USER", USER),
+            ("HOSTINGER_SSH_PASSWORD", PASSWORD),
+            ("HOSTINGER_REMOTE_ROOT", REMOTE_ROOT),
+        )
+        if not val
+    ]
+    if missing:
+        print(f"Defina as variáveis de ambiente: {', '.join(missing)}", file=sys.stderr)
         return 1
 
     print("Empacotando projeto...", flush=True)
@@ -102,7 +126,11 @@ def main() -> int:
 
     print(f"Conectando {USER}@{HOST}:{PORT} ...", flush=True)
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.load_system_host_keys()
+    if os.environ.get("HOSTINGER_SSH_STRICT", "1") == "0":
+        ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
+    else:
+        ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
     ssh.connect(
         HOST,
         port=PORT,
@@ -154,7 +182,7 @@ def main() -> int:
         with sftp.file(f"{remote_root}/.htaccess", "w") as hf:
             hf.write(htaccess)
 
-        # Restaura configs locais da instalação (não vão no pacote)
+        # Restaura configs locais e diretórios voláteis de storage da instalação anterior
         bak = f"{remote_root}.bak"
         run_remote(
             ssh,
@@ -162,11 +190,16 @@ def main() -> int:
             f"if [ -f {bak}/config/database.local.php ]; then cp -a {bak}/config/database.local.php {remote_root}/config/; fi; "
             f"if [ -f {bak}/config/app.local.php ]; then cp -a {bak}/config/app.local.php {remote_root}/config/; fi; "
             f"if [ -f {bak}/storage/install.lock ]; then cp -a {bak}/storage/install.lock {remote_root}/storage/; fi; "
+            f"if [ -f {bak}/storage/app.key ]; then cp -a {bak}/storage/app.key {remote_root}/storage/; fi; "
+            f"for d in uploads assinaturas logs; do "
+            f"  if [ -d {bak}/storage/$d ]; then cp -a {bak}/storage/$d/. {remote_root}/storage/$d/; fi; "
+            f"done; "
             f"echo CONFIG_RESTORED",
         )
 
         print("Deploy concluído.", flush=True)
-        print("URL do instalador: https://corredornorte.feston.net.br/install/", flush=True)
+        if DEPLOY_URL:
+            print(f"URL da aplicação: {DEPLOY_URL}", flush=True)
         return 0
     finally:
         sftp.close()

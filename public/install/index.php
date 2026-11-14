@@ -13,24 +13,24 @@ $installed = $installer->isInstalled();
 $error = null;
 $result = null;
 
-$hostHeader = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$rawHost = (string) ($_SERVER['HTTP_HOST'] ?? 'localhost');
+$hostHeader = preg_replace('/[^a-zA-Z0-9.\-:]/', '', $rawHost) ?: 'localhost';
 $isLocal = str_starts_with($hostHeader, '127.0.0.1')
     || str_starts_with($hostHeader, 'localhost');
 
-// Local usa MySQL de desenvolvimento; Hostinger usa o banco do Corredor Norte.
 $defaults = $isLocal
     ? [
-        'host' => '127.0.0.1',
-        'port' => '3306',
-        'database' => 'arcadis_rh',
-        'username' => 'root',
-        'password' => 'root',
+        'host' => getenv('DB_HOST') ?: '127.0.0.1',
+        'port' => getenv('DB_PORT') ?: '3306',
+        'database' => getenv('DB_NAME') ?: 'arcadis_rh',
+        'username' => getenv('DB_USER') ?: 'root',
+        'password' => '',
     ]
     : [
-        'host' => 'localhost',
-        'port' => '3306',
-        'database' => 'u482227589_corredornorte',
-        'username' => 'u482227589_corredornorte',
+        'host' => getenv('DB_HOST') ?: 'localhost',
+        'port' => getenv('DB_PORT') ?: '3306',
+        'database' => getenv('DB_NAME') ?: '',
+        'username' => getenv('DB_USER') ?: '',
         'password' => '',
     ];
 
@@ -42,17 +42,23 @@ if ($basePath === '/' || $basePath === '\\') {
 }
 $appUrl = $scheme . '://' . $hostHeader . $basePath;
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$installed) {
+if ($installed) {
+    http_response_code(403);
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        $host = trim((string) ($_POST['host'] ?? $defaults['host']));
+        $port = trim((string) ($_POST['port'] ?? $defaults['port']));
+        $database = trim((string) ($_POST['database'] ?? $defaults['database']));
+        $username = trim((string) ($_POST['username'] ?? $defaults['username']));
         $password = (string) ($_POST['password'] ?? '');
-        if ($password === '' && $isLocal) {
-            $password = (string) $defaults['password'];
+        if ($database === '' || $username === '') {
+            throw new RuntimeException('Informe banco de dados e usuário MySQL.');
         }
         $result = $installer->install([
-            'host' => $defaults['host'],
-            'port' => $defaults['port'],
-            'database' => $defaults['database'],
-            'username' => $defaults['username'],
+            'host' => $host !== '' ? $host : 'localhost',
+            'port' => $port !== '' ? $port : '3306',
+            'database' => $database,
+            'username' => $username,
             'password' => $password,
             'app_url' => $appUrl,
             'app_name' => 'Corredor Norte RH',
@@ -238,17 +244,25 @@ $loginUrl = ($basePath === '' ? '' : $basePath) . '/login';
         <div class="alert alert-ok">O sistema já foi instalado neste servidor.</div>
         <a class="btn" href="<?= htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8') ?>">Ir para o login</a>
     <?php else: ?>
-        <div class="meta">
-            <div><span>Host</span><strong><?= htmlspecialchars($defaults['host'], ENT_QUOTES, 'UTF-8') ?></strong></div>
-            <div><span>Porta</span><strong><?= htmlspecialchars($defaults['port'], ENT_QUOTES, 'UTF-8') ?></strong></div>
-            <div><span>Banco</span><strong><?= htmlspecialchars($defaults['database'], ENT_QUOTES, 'UTF-8') ?></strong></div>
-            <div><span>Usuário</span><strong><?= htmlspecialchars($defaults['username'], ENT_QUOTES, 'UTF-8') ?></strong></div>
-        </div>
+        <?php
+            $formHost = (string) ($_POST['host'] ?? $defaults['host']);
+            $formPort = (string) ($_POST['port'] ?? $defaults['port']);
+            $formDatabase = (string) ($_POST['database'] ?? $defaults['database']);
+            $formUsername = (string) ($_POST['username'] ?? $defaults['username']);
+        ?>
         <form method="post" autocomplete="off">
+            <label for="host">Host MySQL</label>
+            <input id="host" name="host" type="text" required value="<?= htmlspecialchars($formHost, ENT_QUOTES, 'UTF-8') ?>" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:#e5e7eb;margin-bottom:10px;">
+            <label for="port">Porta MySQL</label>
+            <input id="port" name="port" type="text" required value="<?= htmlspecialchars($formPort, ENT_QUOTES, 'UTF-8') ?>" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:#e5e7eb;margin-bottom:10px;">
+            <label for="database">Banco de dados</label>
+            <input id="database" name="database" type="text" required value="<?= htmlspecialchars($formDatabase, ENT_QUOTES, 'UTF-8') ?>" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:#e5e7eb;margin-bottom:10px;">
+            <label for="username">Usuário MySQL</label>
+            <input id="username" name="username" type="text" required value="<?= htmlspecialchars($formUsername, ENT_QUOTES, 'UTF-8') ?>" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:#e5e7eb;margin-bottom:10px;">
             <label for="password">Senha do banco de dados</label>
             <input id="password" name="password" type="password" <?= $isLocal ? '' : 'required' ?> autofocus
-                   value="<?= htmlspecialchars((string) ($defaults['password'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
-                   placeholder="<?= $isLocal ? 'root' : 'Senha MySQL da Hostinger' ?>">
+                   value=""
+                   placeholder="<?= $isLocal ? 'Senha do MySQL local (se houver)' : 'Senha MySQL do servidor' ?>">
             <button type="submit">Instalar</button>
         </form>
     <?php endif; ?>

@@ -10,9 +10,18 @@ use Throwable;
 
 final class Auth
 {
+    private static ?bool $activeChecked = null;
+
     public static function start(): void
     {
         if (session_status() !== PHP_SESSION_ACTIVE) {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+            session_set_cookie_params([
+                'httponly' => true,
+                'samesite' => 'Lax',
+                'secure' => $https,
+            ]);
             session_start();
         }
     }
@@ -33,6 +42,8 @@ final class Auth
             return false;
         }
 
+        session_regenerate_id(true);
+        self::$activeChecked = true;
         $acesso = self::carregarAcesso($pdo, (int) $user['id']);
         $_SESSION['user'] = [
             'id' => (int) $user['id'],
@@ -125,8 +136,31 @@ final class Auth
     public static function check(): bool
     {
         self::start();
+        if (!isset($_SESSION['user']['id'])) {
+            return false;
+        }
+        if (self::$activeChecked === null) {
+            self::$activeChecked = true;
+            try {
+                $pdo = Database::connection();
+                $st = $pdo->prepare("SELECT status FROM usuarios WHERE id = :id LIMIT 1");
+                $st->execute(['id' => (int) $_SESSION['user']['id']]);
+                $status = $st->fetchColumn();
+                if ($status !== 'ativo') {
+                    $_SESSION = [];
+                    self::$activeChecked = false;
+                    return false;
+                }
+                $acesso = self::carregarAcesso($pdo, (int) $_SESSION['user']['id']);
+                $_SESSION['user']['role'] = $acesso['role'];
+                $_SESSION['user']['perfis'] = $acesso['perfis'];
+                $_SESSION['user']['permissoes'] = $acesso['permissoes'];
+            } catch (Throwable) {
+                // Se DB estiver indisponível, mantém sessão atual sem derrubar o fallback
+            }
+        }
 
-        return isset($_SESSION['user']['id']);
+        return self::$activeChecked && isset($_SESSION['user']['id']);
     }
 
     public static function user(): ?array

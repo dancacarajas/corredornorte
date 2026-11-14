@@ -90,7 +90,10 @@ use App\Helpers\View;
                     <select class="form-control" name="<?= View::e($field) ?>" <?= $type === 'calendario' ? '' : 'required' ?>>
                         <option value="">Selecione</option>
                         <?php foreach (($lookups[$type] ?? []) as $opt): ?>
-                            <option value="<?= (int) $opt['id'] ?>" <?= ((string) ($row[$field] ?? '') === (string) $opt['id']) ? 'selected' : '' ?>>
+                            <option value="<?= (int) $opt['id'] ?>"
+                                <?= isset($opt['contrato_id']) ? ' data-contrato-id="' . (int) $opt['contrato_id'] . '"' : '' ?>
+                                <?= isset($opt['centro_custo_id']) ? ' data-centro-custo-id="' . (int) $opt['centro_custo_id'] . '"' : '' ?>
+                                <?= ((string) ($row[$field] ?? '') === (string) $opt['id']) ? 'selected' : '' ?>>
                                 <?= View::e((string) $opt['label']) ?>
                             </option>
                         <?php endforeach; ?>
@@ -232,3 +235,62 @@ use App\Helpers\View;
 })();
 </script>
 <?php endif; ?>
+
+<script>
+(() => {
+  const ctSel = document.querySelector('select[name="contrato_id"]');
+  const ccSel = document.querySelector('select[name="centro_custo_id"]');
+  const osSel = document.querySelector('select[name="ordem_servico_id"]');
+  if (!ccSel && !osSel) return;
+
+  const filterSelect = (sel, predicate) => {
+    if (!sel) return;
+    const opts = Array.from(sel.options);
+    let currentStillVisible = false;
+    opts.forEach((opt) => {
+      if (!opt.value) {
+        opt.hidden = false;
+        opt.disabled = false;
+        return;
+      }
+      const match = predicate(opt);
+      opt.hidden = !match;
+      opt.disabled = !match;
+      if (match && opt.value === sel.value) {
+        currentStillVisible = true;
+      }
+    });
+    if (sel.value && !currentStillVisible) {
+      sel.value = '';
+    }
+  };
+
+  const syncCascade = () => {
+    const ctVal = ctSel ? ctSel.value : '';
+    if (ccSel && ctSel) {
+      filterSelect(ccSel, (opt) => !ctVal || (opt.dataset.contratoId || '') === ctVal);
+    }
+    const ccVal = ccSel ? ccSel.value : '';
+    if (osSel) {
+      filterSelect(osSel, (opt) => {
+        if (ccVal) return (opt.dataset.centroCustoId || '') === ccVal;
+        if (ctVal) return (opt.dataset.contratoId || '') === ctVal;
+        return true;
+      });
+    }
+  };
+
+  if (ctSel) ctSel.addEventListener('change', syncCascade);
+  if (ccSel) {
+    ccSel.addEventListener('change', () => {
+      const selOpt = ccSel.options[ccSel.selectedIndex];
+      if (ctSel && selOpt && selOpt.dataset.contratoId && !ctSel.value) {
+        ctSel.value = selOpt.dataset.contratoId;
+      }
+      syncCascade();
+    });
+  }
+  syncCascade();
+})();
+</script>
+
