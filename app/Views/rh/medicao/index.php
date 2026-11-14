@@ -23,6 +23,10 @@ $prontoDossie = !empty($resumo['pronto_dossie']);
 $proximaAcao = $resumo['proxima_acao'] ?? null;
 $elegiveis = is_array($resumo['elegiveis'] ?? null) ? $resumo['elegiveis'] : [];
 $filtro = (string) ($filtro ?? '');
+$statusPonto = (string) ($statusPonto ?? '');
+if ($filtro !== 'assinaturas' || !in_array($statusPonto, ['enviado', 'assinado'], true)) {
+    $statusPonto = '';
+}
 $qsBase = ['data_inicio' => $dataInicio, 'data_fim' => $dataFim];
 $qs = http_build_query($qsBase);
 $acaoHeroMap = [
@@ -90,6 +94,13 @@ if ($filtro !== '' && !$modoDossie) {
         $colaboradoresFiltrados = $alvosReenvioEmail;
         $modoConsultaEmail = true;
     }
+    // Etapa 7: subfiltro por status do ponto (enviado | assinado).
+    if ($filtro === 'assinaturas' && $statusPonto !== '') {
+        $colaboradoresFiltrados = array_values(array_filter(
+            $colaboradoresFiltrados,
+            static fn(array $c): bool => (string) ($c['espelho_status'] ?? '') === $statusPonto
+        ));
+    }
 } elseif ($modoDossie && !$prontoDossie) {
     // Dossiê ainda bloqueado: mostra quem falta chegar a 100%.
     $colaboradoresFiltrados = array_values(array_filter(
@@ -151,13 +162,34 @@ $proximaEtapa = static function (array $etapas) use ($etapasDef): string {
     return 'Concluído';
 };
 
-$urlFiltro = static function (string $acao) use ($qsBase): string {
+$urlFiltro = static function (string $acao, string $status = '') use ($qsBase): string {
     $params = $qsBase;
     if ($acao !== '') {
         $params['filtro'] = $acao;
     }
+    if ($acao === 'assinaturas' && in_array($status, ['enviado', 'assinado'], true)) {
+        $params['status_ponto'] = $status;
+    }
     return '/rh/medicao?' . http_build_query($params);
 };
+
+$contagemStatusAssinaturas = ['enviado' => 0, 'assinado' => 0, 'outros' => 0];
+if ($filtro === 'assinaturas') {
+    foreach ($colaboradores as $cStatus) {
+        if (!$pendenteNaEtapa($cStatus, 'assinaturas')) {
+            continue;
+        }
+        $st = (string) ($cStatus['espelho_status'] ?? '');
+        if ($st === 'enviado' || $st === 'assinado') {
+            $contagemStatusAssinaturas[$st]++;
+        } else {
+            $contagemStatusAssinaturas['outros']++;
+        }
+    }
+}
+$qtdAssinaturasTodos = $contagemStatusAssinaturas['enviado']
+    + $contagemStatusAssinaturas['assinado']
+    + $contagemStatusAssinaturas['outros'];
 
 $filtroPorEtapaKey = [
     'gerado' => '',
@@ -593,6 +625,13 @@ foreach ($loteBotoes as $b) {
                 <?php elseif ($modoConsultaEmail): ?>
                     E-mails já enviados — <?= count($colaboradoresFiltrados) ?> aguardando assinatura (reenvio)
                     · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
+                <?php elseif ($filtro === 'assinaturas'): ?>
+                    Filtro: <strong>Assinaturas</strong>
+                    — <?= count($colaboradoresFiltrados) ?> pendente<?= count($colaboradoresFiltrados) === 1 ? '' : 's' ?>
+                    <?php if ($statusPonto !== ''): ?>
+                        · status do ponto: <strong><?= View::e($statusLabel($statusPonto)) ?></strong>
+                    <?php endif; ?>
+                    · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
                 <?php elseif ($filtro !== ''): ?>
                     Filtro: <strong><?= View::e($filtroAtivoLabel) ?></strong>
                     — <?= count($colaboradoresFiltrados) ?> pendente<?= count($colaboradoresFiltrados) === 1 ? '' : 's' ?>
@@ -602,12 +641,32 @@ foreach ($loteBotoes as $b) {
                 <?php endif; ?>
             </p>
         </div>
-        <?php if ($colaboradoresFiltrados !== [] && !($modoDossie && $prontoDossie)): ?>
-            <div class="medicao-colab-search">
-                <label class="visually-hidden" for="medicaoBuscaNome">Buscar colaborador</label>
-                <input type="search" class="form-control" id="medicaoBuscaNome"
-                       placeholder="Buscar por nome ou matrícula…"
-                       autocomplete="off">
+        <?php if (($colaboradoresFiltrados !== [] || $filtro === 'assinaturas') && !($modoDossie && $prontoDossie)): ?>
+            <div class="medicao-colab-tools">
+                <?php if ($filtro === 'assinaturas'): ?>
+                    <div class="medicao-status-filters" role="group" aria-label="Filtrar por status do ponto">
+                        <a class="medicao-status-filter <?= $statusPonto === '' ? 'is-active' : '' ?>"
+                           href="<?= View::e($urlFiltro('assinaturas')) ?>">
+                            Todos <span><?= (int) $qtdAssinaturasTodos ?></span>
+                        </a>
+                        <a class="medicao-status-filter <?= $statusPonto === 'enviado' ? 'is-active' : '' ?>"
+                           href="<?= View::e($urlFiltro('assinaturas', 'enviado')) ?>">
+                            Enviado <span><?= (int) $contagemStatusAssinaturas['enviado'] ?></span>
+                        </a>
+                        <a class="medicao-status-filter <?= $statusPonto === 'assinado' ? 'is-active' : '' ?>"
+                           href="<?= View::e($urlFiltro('assinaturas', 'assinado')) ?>">
+                            Assinado <span><?= (int) $contagemStatusAssinaturas['assinado'] ?></span>
+                        </a>
+                    </div>
+                <?php endif; ?>
+                <?php if ($colaboradoresFiltrados !== []): ?>
+                    <div class="medicao-colab-search">
+                        <label class="visually-hidden" for="medicaoBuscaNome">Buscar colaborador</label>
+                        <input type="search" class="form-control" id="medicaoBuscaNome"
+                               placeholder="Buscar por nome ou matrícula…"
+                               autocomplete="off">
+                    </div>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
     </div>

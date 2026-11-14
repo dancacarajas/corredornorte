@@ -328,9 +328,60 @@
   flex-wrap: wrap;
 }
 
+.medicao-colab-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  min-width: min(100%, 320px);
+  flex: 1 1 320px;
+}
+
 .medicao-colab-search {
-  min-width: min(100%, 260px);
-  flex: 0 1 280px;
+  min-width: min(100%, 220px);
+  flex: 0 1 260px;
+}
+
+.medicao-status-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.medicao-status-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink, #111);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.medicao-status-filter span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.2rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: #eef2f6;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.medicao-status-filter.is-active {
+  border-color: var(--brand-primary, #ea580c);
+  color: var(--brand-primary, #ea580c);
+  background: rgba(234, 88, 12, 0.06);
+}
+
+.medicao-status-filter:hover {
+  border-color: var(--brand-primary, #ea580c);
 }
 
 .medicao-colab-empty {

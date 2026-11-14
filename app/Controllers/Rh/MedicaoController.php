@@ -32,6 +32,10 @@ final class MedicaoController
         if (!in_array($filtro, $filtrosValidos, true)) {
             $filtro = '';
         }
+        $statusPonto = strtolower(trim((string) ($_GET['status_ponto'] ?? '')));
+        if ($filtro !== 'assinaturas' || !in_array($statusPonto, ['enviado', 'assinado'], true)) {
+            $statusPonto = '';
+        }
 
         if ($dbOk) {
             $svc = new MedicaoService($pdo);
@@ -65,12 +69,13 @@ final class MedicaoController
             'pageTitle' => 'Medição',
             'pageSubtitle' => 'Jornada do período até o dossiê assinado',
             'activeMenu' => 'medicao',
-            'extraCss' => ['css/medicao.css?v=email-report-20261114b'],
+            'extraCss' => ['css/medicao.css?v=status-assinaturas-20261114'],
             'dbOk' => $dbOk,
             'periodosGerados' => $periodos,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'filtro' => $filtro,
+            'statusPonto' => $statusPonto,
             'painel' => $painel,
             'relatorioEnvios' => $relatorioEnvios,
             'errosLote' => $_SESSION['medicao_errors_list'] ?? [],
