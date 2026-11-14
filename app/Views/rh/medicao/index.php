@@ -660,107 +660,127 @@ foreach ($loteBotoes as $b) {
 </section>
 <script>
 (() => {
-  const form = document.getElementById('medicaoBatchForm');
-  const selectAll = document.getElementById('medicaoSelectAll');
-  const checks = () => Array.from(document.querySelectorAll('.medicao-check:not(:disabled)'));
-  const countBadge = document.getElementById('medicaoBatchCount');
-  const submitBtn = document.getElementById('medicaoBatchSubmit');
-  const progCard = document.getElementById('medicaoBatchProgress');
-  const progTitle = document.getElementById('medicaoBatchTitle');
-  const progStats = document.getElementById('medicaoBatchStats');
-  const progBar = document.getElementById('medicaoBatchBar');
-  const progErrors = document.getElementById('medicaoBatchErrors');
-  const progReload = document.getElementById('medicaoBatchReloadWrap');
+  const boot = () => {
+    const form = document.getElementById('medicaoBatchForm');
+    const selectAll = document.getElementById('medicaoSelectAll');
+    const checks = () => Array.from(document.querySelectorAll('.medicao-check:not(:disabled)'));
+    const countBadge = document.getElementById('medicaoBatchCount');
+    const submitBtn = document.getElementById('medicaoBatchSubmit');
+    const progCard = document.getElementById('medicaoBatchProgress');
+    const progTitle = document.getElementById('medicaoBatchTitle');
+    const progStats = document.getElementById('medicaoBatchStats');
+    const progBar = document.getElementById('medicaoBatchBar');
+    const progErrors = document.getElementById('medicaoBatchErrors');
+    const progReload = document.getElementById('medicaoBatchReloadWrap');
 
-  const getTargetIds = () => {
-    const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
-    if (marked.length > 0) return marked;
-    return checks().filter((c) => c.getAttribute('data-elegivel') === '1').map((c) => Number(c.value)).filter((n) => n > 0);
-  };
+    const getTargetIds = () => {
+      const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
+      if (marked.length > 0) return marked;
+      return checks().filter((c) => c.getAttribute('data-elegivel') === '1').map((c) => Number(c.value)).filter((n) => n > 0);
+    };
 
-  const syncBatchCount = () => {
-    if (!form || !countBadge) return;
-    const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
-    const totalElig = Number(form.getAttribute('data-elegiveis-total') || '0');
-    countBadge.textContent = String(marked.length > 0 ? marked.length : totalElig);
-  };
+    const syncBatchCount = () => {
+      if (!form || !countBadge) return;
+      const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
+      const totalElig = Number(form.getAttribute('data-elegiveis-total') || '0');
+      countBadge.textContent = String(marked.length > 0 ? marked.length : totalElig);
+    };
 
-  if (selectAll) {
-    selectAll.addEventListener('change', () => {
-      checks().forEach((c) => { c.checked = selectAll.checked; });
-      syncBatchCount();
-    });
-  }
-  checks().forEach((c) => c.addEventListener('change', syncBatchCount));
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        checks().forEach((c) => { c.checked = selectAll.checked; });
+        syncBatchCount();
+      });
+    }
+    checks().forEach((c) => c.addEventListener('change', syncBatchCount));
 
-  if (!form || !window.BatchRunner) return;
-
-  form.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const ids = getTargetIds();
-    if (ids.length === 0) {
-      if (window.Toast) window.Toast.show('Nenhum colaborador elegível ou selecionado.', 'warning');
+    if (!form) return;
+    // Sem BatchRunner o POST único estoura 504 no Hostinger (49 e-mails).
+    if (!window.BatchRunner) {
+      form.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        if (window.Toast) window.Toast.show('Recarregue a página: o enviador em lote não carregou.', 'danger');
+      });
       return;
     }
 
-    const baseMsg = form.getAttribute('data-confirm-base') || 'Executar esta etapa em lote?';
-    const title = form.getAttribute('data-confirm-title') || 'Executar lote?';
-    const confirmed = window.uiConfirm
-      ? await window.uiConfirm({ title, message: `${baseMsg} (${ids.length} colaborador${ids.length === 1 ? '' : 'es'})`, confirmText: 'Executar', tone: 'brand' })
-      : true;
-    if (!confirmed) return;
-
-    if (submitBtn) submitBtn.disabled = true;
-    if (progCard) progCard.hidden = false;
-    if (progErrors) { progErrors.hidden = true; progErrors.innerHTML = ''; }
-    if (progReload) progReload.hidden = true;
-    if (progBar) progBar.style.width = '5%';
-    if (progStats) progStats.textContent = `0 / ${ids.length}`;
-
-    const ini = form.querySelector('input[name="data_inicio"]')?.value || '';
-    const fim = form.querySelector('input[name="data_fim"]')?.value || '';
-    const filtro = form.querySelector('input[name="filtro"]')?.value || '';
-
-    try {
-      const summary = await window.BatchRunner.run({
-        url: form.action,
-        ids,
-        chunkSize: 3,
-        params: { data_inicio: ini, data_fim: fim, filtro },
-        onProgress(p) {
-          const pct = Math.min(100, Math.round((p.done / Math.max(1, p.total)) * 100));
-          if (progBar) progBar.style.width = `${pct}%`;
-          if (progStats) progStats.textContent = `${p.done} / ${p.total} (${p.ok} aplicado${p.ok === 1 ? '' : 's'})`;
-        },
-      });
-
-      if (summary.errors.length === 0) {
-        if (progTitle) progTitle.textContent = `Concluído: ${summary.ok} processado(s).`;
-        if (window.Toast) window.Toast.show(`Lote finalizado (${summary.ok} processados).`, 'success');
-        window.setTimeout(() => window.location.reload(), 800);
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const ids = getTargetIds();
+      if (ids.length === 0) {
+        if (window.Toast) window.Toast.show('Nenhum colaborador elegível ou selecionado.', 'warning');
         return;
       }
 
-      if (progTitle) progTitle.textContent = `Concluído com ${summary.errors.length} pendência(s) (${summary.ok} ok):`;
-      if (progErrors) {
-        summary.errors.forEach((msg) => {
-          const li = document.createElement('li');
-          li.textContent = msg;
-          progErrors.appendChild(li);
+      const baseMsg = form.getAttribute('data-confirm-base') || 'Executar esta etapa em lote?';
+      const title = form.getAttribute('data-confirm-title') || 'Executar lote?';
+      const confirmed = window.uiConfirm
+        ? await window.uiConfirm({ title, message: `${baseMsg} (${ids.length} colaborador${ids.length === 1 ? '' : 'es'})`, confirmText: 'Executar', tone: 'brand' })
+        : true;
+      if (!confirmed) return;
+
+      if (submitBtn) submitBtn.disabled = true;
+      if (progCard) progCard.hidden = false;
+      if (progErrors) { progErrors.hidden = true; progErrors.innerHTML = ''; }
+      if (progReload) progReload.hidden = true;
+      if (progBar) progBar.style.width = '5%';
+      if (progStats) progStats.textContent = `0 / ${ids.length}`;
+
+      const ini = form.querySelector('input[name="data_inicio"]')?.value || '';
+      const fim = form.querySelector('input[name="data_fim"]')?.value || '';
+      const filtro = form.querySelector('input[name="filtro"]')?.value || '';
+      const isEmail = String(form.action || '').includes('/lote/email');
+      // E-mail com PDF é lento (SMTP/OAuth): 1 por request evita 504.
+      const chunkSize = isEmail ? 1 : 5;
+
+      try {
+        const summary = await window.BatchRunner.run({
+          url: form.action,
+          ids,
+          chunkSize,
+          params: { data_inicio: ini, data_fim: fim, filtro },
+          onProgress(p) {
+            const pct = Math.min(100, Math.round((p.done / Math.max(1, p.total)) * 100));
+            if (progBar) progBar.style.width = `${pct}%`;
+            if (progStats) progStats.textContent = `${p.done} / ${p.total} (${p.ok} aplicado${p.ok === 1 ? '' : 's'})`;
+            if (progTitle) progTitle.textContent = isEmail ? 'Enviando e-mails...' : 'Processando lote...';
+          },
         });
-        progErrors.hidden = false;
+
+        if (summary.errors.length === 0) {
+          if (progTitle) progTitle.textContent = `Concluído: ${summary.ok} processado(s).`;
+          if (window.Toast) window.Toast.show(`Lote finalizado (${summary.ok} processados).`, 'success');
+          window.setTimeout(() => window.location.reload(), 800);
+          return;
+        }
+
+        if (progTitle) progTitle.textContent = `Concluído com ${summary.errors.length} pendência(s) (${summary.ok} ok):`;
+        if (progErrors) {
+          summary.errors.forEach((msg) => {
+            const li = document.createElement('li');
+            li.textContent = msg;
+            progErrors.appendChild(li);
+          });
+          progErrors.hidden = false;
+        }
+        if (progReload) progReload.hidden = false;
+        if (submitBtn) submitBtn.disabled = false;
+        if (window.Toast) window.Toast.show(`${summary.ok} processado(s), ${summary.errors.length} pendência(s).`, 'warning');
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : 'Erro ao executar lote.';
+        if (progTitle) progTitle.textContent = msg;
+        if (progReload) progReload.hidden = false;
+        if (submitBtn) submitBtn.disabled = false;
+        if (window.Toast) window.Toast.show(msg, 'danger');
       }
-      if (progReload) progReload.hidden = false;
-      if (submitBtn) submitBtn.disabled = false;
-      if (window.Toast) window.Toast.show(`${summary.ok} processado(s), ${summary.errors.length} pendência(s).`, 'warning');
-    } catch (err) {
-      const msg = (err && err.message) ? err.message : 'Erro ao executar lote.';
-      if (progTitle) progTitle.textContent = msg;
-      if (progReload) progReload.hidden = false;
-      if (submitBtn) submitBtn.disabled = false;
-      if (window.Toast) window.Toast.show(msg, 'danger');
-    }
-  });
+    });
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
 })();
 </script>
 <?php elseif ($dbOk && $periodosGerados === []): ?>

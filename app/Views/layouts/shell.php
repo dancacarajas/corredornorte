@@ -52,6 +52,9 @@ $currentUser = $currentUser ?? ($authUser ? [
     </div>
 </div>
 <script src="<?= View::asset('js/app.js') ?>?v=p1-20261114"></script>
-<script src="<?= View::asset('js/batch-runner.js') ?>?v=p1-20261114" defer></script>
+<script src="<?= View::asset('js/batch-runner.js') ?>?v=email-chunk-20261114"></script>
+<?php foreach (($extraJs ?? []) as $jsFile): ?>
+<script src="<?= View::asset($jsFile) ?>"></script>
+<?php endforeach; ?>
 </body>
 </html>

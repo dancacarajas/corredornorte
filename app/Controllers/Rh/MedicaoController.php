@@ -152,6 +152,8 @@ final class MedicaoController
 
     public function emailLote(): void
     {
+        @set_time_limit(120);
+        @ini_set('max_execution_time', '120');
         $this->rodarLote(static function (PDO $pdo, array $row): string {
             $docId = (int) ($row['documento_id'] ?? 0);
             if ($docId <= 0) {
@@ -172,7 +174,7 @@ final class MedicaoController
                 throw new RuntimeException((string) ($result['erro'] ?? 'Falha no envio'));
             }
             return 'e-mail enviado';
-        }, 'E-mails enviados em lote.');
+        }, 'E-mails enviados em lote.', true);
     }
 
     public function dossie(): void
@@ -204,7 +206,10 @@ final class MedicaoController
     /**
      * @param callable(PDO,array,string,string):string $fn
      */
-    private function rodarLote(callable $fn, string $flashOk): void
+    /**
+     * @param bool $requireChunkedJson Se true (e-mail), bloqueia POST clássico sem AJAX para evitar 504.
+     */
+    private function rodarLote(callable $fn, string $flashOk, bool $requireChunkedJson = false): void
     {
         $pdo = Db::tryConnection();
         $ini = (string) ($_POST['data_inicio'] ?? '');
@@ -235,6 +240,21 @@ final class MedicaoController
             static fn(int $v): bool => $v > 0
         ));
         $selectedMap = $selectedIds !== [] ? array_flip($selectedIds) : null;
+
+        // E-mail em massa sem chunk AJAX → 504 no proxy. Exige ids + JSON.
+        if ($requireChunkedJson && !$wantsJson) {
+            $_SESSION['medicao_error'] = 'Envio de e-mails em lote precisa do modo progressivo. Recarregue a página (Ctrl+F5) e tente de novo.';
+            header('Location: /rh/medicao?' . $qs);
+            exit;
+        }
+        if ($requireChunkedJson && $selectedMap === null) {
+            if ($wantsJson) {
+                http_response_code(400);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'error' => 'Selecione colaboradores (chunk) para enviar e-mail.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        }
 
         try {
             $painel = (new MedicaoService($pdo))->painel($ini, $fim);
