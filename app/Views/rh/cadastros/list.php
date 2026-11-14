@@ -51,7 +51,13 @@ use App\Helpers\View;
                     <tr>
                         <td><?= (int) $row['id'] ?></td>
                         <?php foreach ($columns as $col): ?>
-                            <td><?= View::e((string) ($row[$col] ?? '')) ?></td>
+                            <td><?php
+                                $val = (string) ($row[$col] ?? '');
+                                if ($col === 'percentual_he' && $val !== '') {
+                                    $val .= '%';
+                                }
+                                echo View::e($val);
+                            ?></td>
                         <?php endforeach; ?>
                         <td style="white-space:nowrap;">
                             <?php if ($entity !== ''): ?>

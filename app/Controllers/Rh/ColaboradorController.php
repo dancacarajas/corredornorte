@@ -6,6 +6,7 @@ namespace App\Controllers\Rh;
 
 use App\Helpers\Db;
 use App\Helpers\View;
+use App\Services\HeClienteService;
 use App\Services\LotacaoResolver;
 use App\Services\TransferenciaLotacaoService;
 use DateTimeImmutable;
@@ -29,6 +30,7 @@ final class ColaboradorController
             'lotacoes' => $this->lotacoesAtivas($pdo),
             'empresas' => $this->empresas($pdo),
             'colaboradores' => $this->colaboradoresAtivos($pdo),
+            'gestoresCliente' => $this->gestoresCliente($pdo),
             'errors' => [],
         ]);
     }
@@ -63,6 +65,7 @@ final class ColaboradorController
                 'lotacoes' => $this->lotacoesAtivas($pdo),
                 'empresas' => $this->empresas($pdo),
                 'colaboradores' => $this->colaboradoresAtivos($pdo),
+            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => $errors,
             ]);
             return;
@@ -72,9 +75,9 @@ final class ColaboradorController
         try {
             $stmt = $pdo->prepare(
                 'INSERT INTO rh_colaboradores
-                (empresa_id, matricula, nome, cpf, email_corp, email_alt, telefone, data_admissao, cargo, funcao, status, gestor_id, supervisor_id)
+                (empresa_id, matricula, nome, cpf, email_corp, email_alt, telefone, data_admissao, cargo, funcao, status, gestor_id, supervisor_id, he_fluxo, gestor_cliente_id)
                 VALUES
-                (:empresa_id, :matricula, :nome, :cpf, :email_corp, :email_alt, :telefone, :data_admissao, :cargo, :funcao, :status, :gestor_id, :supervisor_id)'
+                (:empresa_id, :matricula, :nome, :cpf, :email_corp, :email_alt, :telefone, :data_admissao, :cargo, :funcao, :status, :gestor_id, :supervisor_id, :he_fluxo, :gestor_cliente_id)'
             );
             $stmt->execute([
                 'empresa_id' => (int) $data['empresa_id'],
@@ -90,6 +93,8 @@ final class ColaboradorController
                 'status' => $data['status'] ?: 'ativo',
                 'gestor_id' => $data['gestor_id'] !== '' ? (int) $data['gestor_id'] : null,
                 'supervisor_id' => $data['supervisor_id'] !== '' ? (int) $data['supervisor_id'] : null,
+                'he_fluxo' => ($data['he_fluxo'] ?? '') === 'cliente' ? 'cliente' : 'off',
+                'gestor_cliente_id' => $data['gestor_cliente_id'] !== '' ? (int) $data['gestor_cliente_id'] : null,
             ]);
             $id = (int) $pdo->lastInsertId();
 
@@ -121,6 +126,7 @@ final class ColaboradorController
                 'lotacoes' => $this->lotacoesAtivas($pdo),
                 'empresas' => $this->empresas($pdo),
                 'colaboradores' => $this->colaboradoresAtivos($pdo),
+            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => ['geral' => $e->getMessage()],
             ]);
         }
@@ -154,6 +160,7 @@ final class ColaboradorController
             'lotacoes' => $this->lotacoesAtivas($pdo),
             'empresas' => $this->empresas($pdo),
             'colaboradores' => $this->colaboradoresAtivos($pdo, $id),
+            'gestoresCliente' => $this->gestoresCliente($pdo),
             'errors' => [],
         ]);
     }
@@ -193,6 +200,7 @@ final class ColaboradorController
                 'lotacoes' => $this->lotacoesAtivas($pdo),
                 'empresas' => $this->empresas($pdo),
                 'colaboradores' => $this->colaboradoresAtivos($pdo, $id),
+            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => $errors,
             ]);
             return;
@@ -213,7 +221,9 @@ final class ColaboradorController
                     funcao = :funcao,
                     status = :status,
                     gestor_id = :gestor_id,
-                    supervisor_id = :supervisor_id
+                    supervisor_id = :supervisor_id,
+                    he_fluxo = :he_fluxo,
+                    gestor_cliente_id = :gestor_cliente_id
                  WHERE id = :id'
             );
             $stmt->execute([
@@ -231,6 +241,8 @@ final class ColaboradorController
                 'status' => $data['status'] ?: 'ativo',
                 'gestor_id' => $data['gestor_id'] !== '' ? (int) $data['gestor_id'] : null,
                 'supervisor_id' => $data['supervisor_id'] !== '' ? (int) $data['supervisor_id'] : null,
+                'he_fluxo' => ($data['he_fluxo'] ?? '') === 'cliente' ? 'cliente' : 'off',
+                'gestor_cliente_id' => $data['gestor_cliente_id'] !== '' ? (int) $data['gestor_cliente_id'] : null,
             ]);
 
             $pdo->prepare(
@@ -258,6 +270,7 @@ final class ColaboradorController
                 'lotacoes' => $this->lotacoesAtivas($pdo),
                 'empresas' => $this->empresas($pdo),
                 'colaboradores' => $this->colaboradoresAtivos($pdo, $id),
+            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => ['geral' => $e->getMessage()],
             ]);
         }
@@ -361,11 +374,46 @@ final class ColaboradorController
         $lotacaoId = (int) ($_POST['lotacao_id'] ?? 0);
         $data = (string) ($_POST['data_transferencia'] ?? date('Y-m-d'));
         $observacao = trim((string) ($_POST['observacao'] ?? '')) ?: null;
+        $pctRaw = trim((string) ($_POST['percentual_he'] ?? ''));
+        $percentualHe = $pctRaw === '' ? null : (int) $pctRaw;
 
         try {
             $service = new TransferenciaLotacaoService($pdo);
-            $service->transferir($id, $lotacaoId, $data, 'transferencia', $observacao);
+            $service->transferir(
+                $id,
+                $lotacaoId,
+                $data,
+                'transferencia',
+                $observacao,
+                \App\Helpers\Auth::id(),
+                null,
+                $percentualHe
+            );
             header('Location: /rh/colaboradores/' . $id . '?ok=transferencia');
+            exit;
+        } catch (Throwable $e) {
+            $msg = rawurlencode($e->getMessage());
+            header('Location: /rh/colaboradores/' . $id . '?erro=' . $msg);
+            exit;
+        }
+    }
+
+    public function atualizarPercentualHe(string $id = '0'): void
+    {
+        $id = (int) $id;
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO || $id <= 0) {
+            $this->redirectDbMissing();
+            return;
+        }
+
+        $pctRaw = trim((string) ($_POST['percentual_he'] ?? ''));
+        $percentualHe = $pctRaw === '' ? null : (int) $pctRaw;
+
+        try {
+            $service = new TransferenciaLotacaoService($pdo);
+            $service->atualizarPercentualHe($id, $percentualHe);
+            header('Location: /rh/colaboradores/' . $id . '?ok=percentual_he');
             exit;
         } catch (Throwable $e) {
             $msg = rawurlencode($e->getMessage());
@@ -393,6 +441,8 @@ final class ColaboradorController
             'status' => trim((string) ($_POST['status'] ?? 'ativo')),
             'gestor_id' => trim((string) ($_POST['gestor_id'] ?? '')),
             'supervisor_id' => trim((string) ($_POST['supervisor_id'] ?? '')),
+            'he_fluxo' => trim((string) ($_POST['he_fluxo'] ?? 'off')),
+            'gestor_cliente_id' => trim((string) ($_POST['gestor_cliente_id'] ?? '')),
             'lotacao_id' => (string) ($_POST['lotacao_id'] ?? ''),
         ];
     }
@@ -471,6 +521,8 @@ final class ColaboradorController
     {
         $sql = <<<SQL
             SELECT cl.*, l.codigo AS lotacao_codigo, l.nome AS lotacao_nome,
+                   l.percentual_he AS lotacao_percentual_he,
+                   COALESCE(cl.percentual_he, l.percentual_he, 50) AS percentual_he_efetivo,
                    ct.codigo AS contrato_codigo, cc.codigo AS cc_codigo, os.codigo AS os_codigo,
                    loc.municipio, loc.uf
             FROM rh_colaborador_lotacoes cl
@@ -490,12 +542,27 @@ final class ColaboradorController
     /**
      * @return list<array<string,mixed>>
      */
+    /** @return list<array{id:int,nome:string,cliente:?string}> */
+    private function gestoresCliente(?PDO $pdo): array
+    {
+        if (!$pdo instanceof PDO) {
+            return [];
+        }
+        try {
+            return (new HeClienteService($pdo))->listarGestoresCliente();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     private function lotacoesAtivas(?PDO $pdo): array
     {
         if (!$pdo instanceof PDO) {
             return [];
         }
-        return $pdo->query("SELECT id, codigo, nome FROM rh_lotacoes WHERE status = 'ativo' ORDER BY nome")->fetchAll();
+        return $pdo->query(
+            "SELECT id, codigo, nome, percentual_he FROM rh_lotacoes WHERE status = 'ativo' ORDER BY nome"
+        )->fetchAll();
     }
 
     /**

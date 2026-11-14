@@ -1,0 +1,252 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Controllers\Rh;
+
+use App\Helpers\Auth;
+use App\Helpers\Db;
+use App\Helpers\View;
+use App\Services\AssinaturaEletronicaService;
+use App\Services\FolhaPontoService;
+use App\Services\MedicaoService;
+use App\Services\MotorPontoService;
+use PDO;
+use RuntimeException;
+use Throwable;
+
+final class MedicaoController
+{
+    public function index(): void
+    {
+        $pdo = Db::tryConnection();
+        $dbOk = $pdo instanceof PDO;
+        $periodos = [];
+        $painel = null;
+        $erro = null;
+
+        $dataInicio = (string) ($_GET['data_inicio'] ?? '');
+        $dataFim = (string) ($_GET['data_fim'] ?? '');
+        $filtro = (string) ($_GET['filtro'] ?? '');
+        $filtrosValidos = ['conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas', 'dossie'];
+        if (!in_array($filtro, $filtrosValidos, true)) {
+            $filtro = '';
+        }
+
+        if ($dbOk) {
+            $svc = new MedicaoService($pdo);
+            $periodos = $svc->listarPeriodosGerados();
+            if (($dataInicio === '' || $dataFim === '') && $periodos !== []) {
+                $dataInicio = $periodos[0]['data_inicio'];
+                $dataFim = $periodos[0]['data_fim'];
+            }
+            if (
+                preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio)
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)
+            ) {
+                try {
+                    $painel = $svc->painel($dataInicio, $dataFim);
+                } catch (Throwable $e) {
+                    $erro = $e->getMessage();
+                }
+            }
+        }
+
+        View::render('rh/medicao/index', [
+            'pageTitle' => 'Medição',
+            'pageSubtitle' => 'Jornada do período até o dossiê assinado',
+            'activeMenu' => 'medicao',
+            'extraCss' => ['css/medicao.css?v=medicao-20261113f'],
+            'dbOk' => $dbOk,
+            'periodosGerados' => $periodos,
+            'dataInicio' => $dataInicio,
+            'dataFim' => $dataFim,
+            'filtro' => $filtro,
+            'painel' => $painel,
+            'flash' => $_SESSION['medicao_flash'] ?? null,
+            'error' => $erro ?? ($_SESSION['medicao_error'] ?? null),
+        ]);
+        unset($_SESSION['medicao_flash'], $_SESSION['medicao_error']);
+    }
+
+    public function conferirLote(): void
+    {
+        $this->rodarLote(static function (PDO $pdo, array $row): string {
+            $status = (string) ($row['espelho_status'] ?? '');
+            if (in_array($status, ['conferido', 'fechado', 'enviado', 'assinado'], true)) {
+                return 'já conferido';
+            }
+            if (!empty($row['he_pendente'])) {
+                throw new RuntimeException('Há HE declarada pendente de aplicação.');
+            }
+            $motor = new MotorPontoService($pdo);
+            if (in_array($status, ['em_aberto'], true)) {
+                $motor->alterarStatus((int) $row['espelho_id'], 'em_tratamento', 'Início via Medição (lote)', Auth::id());
+            }
+            $motor->alterarStatus(
+                (int) $row['espelho_id'],
+                'conferido',
+                'Conferência via Medição (lote)',
+                Auth::id()
+            );
+            return 'conferido';
+        }, 'Pontos conferidos em lote.');
+    }
+
+    public function fecharLote(): void
+    {
+        $this->rodarLote(static function (PDO $pdo, array $row): string {
+            $status = (string) ($row['espelho_status'] ?? '');
+            if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
+                return 'já fechado';
+            }
+            if (!empty($row['he_pendente'])) {
+                throw new RuntimeException('Há HE declarada pendente de aplicação.');
+            }
+            if (!in_array($status, ['conferido'], true)) {
+                throw new RuntimeException('Confera o período antes de fechar (status atual: ' . $status . ').');
+            }
+            (new MotorPontoService($pdo))->alterarStatus(
+                (int) $row['espelho_id'],
+                'fechado',
+                'Fechamento via Medição (lote)',
+                Auth::id()
+            );
+            return 'fechado';
+        }, 'Pontos fechados em lote.');
+    }
+
+    public function gerarPdfLote(): void
+    {
+        $this->rodarLote(static function (PDO $pdo, array $row, string $ini, string $fim): string {
+            if (!empty($row['etapas']['pdf'])) {
+                return 'PDF já existe';
+            }
+            if (!empty($row['he_pendente'])) {
+                throw new RuntimeException('HE pendente — trate antes de gerar PDF.');
+            }
+            $status = (string) ($row['espelho_status'] ?? '');
+            if (!in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
+                throw new RuntimeException('Feche o período antes de gerar o PDF (status: ' . $status . ').');
+            }
+            (new FolhaPontoService($pdo))->gerarPdf((int) $row['espelho_id'], Auth::id(), $ini, $fim);
+            return 'PDF gerado';
+        }, 'PDFs gerados em lote.');
+    }
+
+    public function linkLote(): void
+    {
+        $this->rodarLote(static function (PDO $pdo, array $row): string {
+            $docId = (int) ($row['documento_id'] ?? 0);
+            if ($docId <= 0) {
+                throw new RuntimeException('Gere o PDF antes do link.');
+            }
+            if (!empty($row['etapas']['link'])) {
+                return 'link já existe';
+            }
+            (new AssinaturaEletronicaService($pdo))->gerarLinkPortal($docId, Auth::id(), (int) $row['espelho_id']);
+            return 'link gerado';
+        }, 'Links de assinatura gerados em lote.');
+    }
+
+    public function emailLote(): void
+    {
+        $this->rodarLote(static function (PDO $pdo, array $row): string {
+            $docId = (int) ($row['documento_id'] ?? 0);
+            if ($docId <= 0) {
+                throw new RuntimeException('Gere o PDF antes de enviar.');
+            }
+            if (empty($row['email_corp'])) {
+                throw new RuntimeException('Sem e-mail corporativo.');
+            }
+            if (!empty($row['etapas']['email'])) {
+                return 'já enviado';
+            }
+            if (empty($row['etapas']['link'])) {
+                (new AssinaturaEletronicaService($pdo))->gerarLinkPortal($docId, Auth::id(), (int) $row['espelho_id']);
+            }
+            $result = (new FolhaPontoService($pdo))->enviarDocumento($docId, null, (int) $row['espelho_id']);
+            if (empty($result['ok'])) {
+                throw new RuntimeException((string) ($result['erro'] ?? 'Falha no envio'));
+            }
+            return 'e-mail enviado';
+        }, 'E-mails enviados em lote.');
+    }
+
+    public function dossie(): void
+    {
+        $pdo = Db::tryConnection();
+        $ini = (string) ($_GET['data_inicio'] ?? '');
+        $fim = (string) ($_GET['data_fim'] ?? '');
+        if (!$pdo instanceof PDO || $ini === '' || $fim === '') {
+            $_SESSION['medicao_error'] = 'Selecione um período.';
+            header('Location: /rh/medicao');
+            exit;
+        }
+        try {
+            $zip = (new MedicaoService($pdo))->gerarDossieZip($ini, $fim);
+            header('Content-Type: application/zip');
+            header('Content-Disposition: attachment; filename="' . $zip['filename'] . '"');
+            header('Content-Length: ' . (string) filesize($zip['path']));
+            header('Cache-Control: private, no-store');
+            readfile($zip['path']);
+            @unlink($zip['path']);
+            exit;
+        } catch (Throwable $e) {
+            $_SESSION['medicao_error'] = $e->getMessage();
+            header('Location: /rh/medicao?' . http_build_query(['data_inicio' => $ini, 'data_fim' => $fim]));
+            exit;
+        }
+    }
+
+    /**
+     * @param callable(PDO,array,string,string):string $fn
+     */
+    private function rodarLote(callable $fn, string $flashOk): void
+    {
+        $pdo = Db::tryConnection();
+        $ini = (string) ($_POST['data_inicio'] ?? '');
+        $fim = (string) ($_POST['data_fim'] ?? '');
+        $filtro = (string) ($_POST['filtro'] ?? '');
+        $qsParams = ['data_inicio' => $ini, 'data_fim' => $fim];
+        if (in_array($filtro, ['conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas'], true)) {
+            $qsParams['filtro'] = $filtro;
+        }
+        $qs = http_build_query($qsParams);
+        if (!$pdo instanceof PDO || $ini === '' || $fim === '') {
+            $_SESSION['medicao_error'] = 'Período inválido.';
+            header('Location: /rh/medicao');
+            exit;
+        }
+
+        try {
+            $painel = (new MedicaoService($pdo))->painel($ini, $fim);
+            $ok = 0;
+            $erros = [];
+            foreach ($painel['colaboradores'] as $row) {
+                if (!empty($row['concluido'])) {
+                    continue;
+                }
+                try {
+                    $resultado = $fn($pdo, $row, $ini, $fim);
+                    // Strings "já ..." não contam como avanço real do lote.
+                    if (is_string($resultado) && str_starts_with(mb_strtolower($resultado), 'já ')) {
+                        continue;
+                    }
+                    $ok++;
+                } catch (Throwable $e) {
+                    $erros[] = $row['nome'] . ': ' . $e->getMessage();
+                }
+            }
+            if ($erros !== []) {
+                $_SESSION['medicao_error'] = $flashOk . " ({$ok} ok). Pendências: " . implode(' · ', array_slice($erros, 0, 5));
+            } else {
+                $_SESSION['medicao_flash'] = $flashOk . ($ok > 0 ? " ({$ok})" : ' (nada pendente)');
+            }
+        } catch (Throwable $e) {
+            $_SESSION['medicao_error'] = $e->getMessage();
+        }
+        header('Location: /rh/medicao?' . $qs);
+        exit;
+    }
+}

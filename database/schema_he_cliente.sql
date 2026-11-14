@@ -1,0 +1,11 @@
+-- Documentação do fluxo HE Cliente.
+-- A migração real está em Installer::migrateHeCliente (ADD COLUMN seguro).
+--
+-- rh_colaboradores:
+--   he_fluxo ENUM('off','cliente') NOT NULL DEFAULT 'off'
+--   gestor_cliente_id BIGINT UNSIGNED NULL → rh_gestores_cliente(id)
+--
+-- ra_dias:
+--   he_hora_inicio, he_hora_fim TIME NULL
+--   he_status ENUM('nenhuma','declarada','aplicada','divergente') DEFAULT 'nenhuma'
+--   he_aplicada_em, he_aplicada_por_usuario_id, he_ponto_dia_id, he_sai2_anterior

@@ -119,6 +119,24 @@ $cancelHref = $isEdit ? '/rh/colaboradores/' . $colaboradorId : '/rh/efetivo';
                     <?php endforeach; ?>
                 </select>
             </div>
+            <div class="form-field">
+                <label class="form-label">HE via Gestor Cliente</label>
+                <label class="text-sm" style="display:flex;align-items:center;gap:.5rem;">
+                    <input type="checkbox" name="he_fluxo" value="cliente" <?= (($c['he_fluxo'] ?? 'off') === 'cliente') ? 'checked' : '' ?>>
+                    Ativar (autorização fora do sistema / SharePoint)
+                </label>
+            </div>
+            <div class="form-field">
+                <label class="form-label">Gestor Cliente</label>
+                <select class="form-control" name="gestor_cliente_id">
+                    <option value="">—</option>
+                    <?php foreach (($gestoresCliente ?? []) as $gc): ?>
+                        <option value="<?= (int) $gc['id'] ?>" <?= ((string) ($c['gestor_cliente_id'] ?? '') === (string) $gc['id']) ? 'selected' : '' ?>>
+                            <?= View::e($gc['nome'] . (!empty($gc['cliente']) ? ' — ' . $gc['cliente'] : '')) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             <?php if (!$isEdit): ?>
             <div class="form-field">
                 <label class="form-label">Lotação inicial</label>

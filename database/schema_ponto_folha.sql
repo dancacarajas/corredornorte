@@ -1,19 +1,19 @@
 -- Arcadis RH — Gestão de Ponto + Folha
 USE arcadis_rh;
 
-CREATE TABLE IF NOT EXISTS ponto_competencias (
+CREATE TABLE IF NOT EXISTS ponto_periodos (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  ano SMALLINT UNSIGNED NOT NULL,
-  mes TINYINT UNSIGNED NOT NULL,
+  data_inicio DATE NOT NULL,
+  data_fim DATE NOT NULL,
   status ENUM('aberta','em_tratamento','conferida','fechada') NOT NULL DEFAULT 'aberta',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_comp (ano, mes)
+  UNIQUE KEY uk_periodo (data_inicio, data_fim)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS ponto_espelhos (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  competencia_id BIGINT UNSIGNED NOT NULL,
+  periodo_id BIGINT UNSIGNED NOT NULL,
   colaborador_id BIGINT UNSIGNED NOT NULL,
   lotacao_id BIGINT UNSIGNED NULL,
   status ENUM('em_aberto','em_tratamento','conferido','fechado','enviado','assinado') NOT NULL DEFAULT 'em_aberto',
@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS ponto_espelhos (
   fechado_por BIGINT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_espelho (competencia_id, colaborador_id),
-  CONSTRAINT fk_esp_comp FOREIGN KEY (competencia_id) REFERENCES ponto_competencias(id),
+  UNIQUE KEY uk_espelho (periodo_id, colaborador_id),
+  CONSTRAINT fk_esp_periodo FOREIGN KEY (periodo_id) REFERENCES ponto_periodos(id),
   CONSTRAINT fk_esp_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id),
   CONSTRAINT fk_esp_lot FOREIGN KEY (lotacao_id) REFERENCES rh_lotacoes(id),
   CONSTRAINT fk_esp_user FOREIGN KEY (fechado_por) REFERENCES usuarios(id)

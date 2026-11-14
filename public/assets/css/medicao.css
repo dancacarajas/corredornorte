@@ -1,0 +1,312 @@
+.medicao-hero {
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 280px at 10% -20%, rgba(14, 116, 144, 0.12), transparent 60%),
+    radial-gradient(900px 240px at 90% 0%, rgba(15, 107, 58, 0.08), transparent 55%),
+    var(--surface, #fff);
+}
+
+.medicao-hero-grid {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.9fr);
+  align-items: center;
+}
+
+.medicao-lead strong {
+  color: inherit;
+}
+
+.medicao-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-primary, #0e7490);
+}
+
+.medicao-title {
+  margin: 0 0 0.4rem;
+  font-family: "Plus Jakarta Sans", Manrope, sans-serif;
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.medicao-lead {
+  margin: 0 0 1.1rem;
+  color: var(--text-muted, #5b6472);
+  max-width: 42rem;
+}
+
+.medicao-periodo-form .form-label {
+  margin-bottom: 0.35rem;
+}
+
+.medicao-periodo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.medicao-periodo-row .form-control {
+  min-width: min(100%, 22rem);
+  flex: 1;
+}
+
+.medicao-score {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: var(--radius-lg, 14px);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.medicao-score.is-complete {
+  border-color: rgba(15, 107, 58, 0.35);
+  background: #f0faf4;
+}
+
+.medicao-score-ring {
+  --pct: 0;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background:
+    radial-gradient(circle at center, #fff 58%, transparent 59%),
+    conic-gradient(var(--success, #0f6b3a) calc(var(--pct) * 1%), #e8eef4 0);
+}
+
+.medicao-score-ring strong {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.medicao-score-ring span {
+  font-size: 0.68rem;
+  color: var(--text-muted, #5b6472);
+}
+
+.medicao-score-meta {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.medicao-score-meta p {
+  margin: 0;
+}
+
+.medicao-journey {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.medicao-step {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border, #e5eaf0);
+  border-radius: 12px;
+  background: #fff;
+  min-height: 100%;
+}
+
+.medicao-step-link {
+  display: flex;
+  gap: 0.7rem;
+  color: inherit;
+  text-decoration: none;
+  width: 100%;
+}
+
+.medicao-step-link:hover strong {
+  text-decoration: underline;
+}
+
+.medicao-step.is-selected {
+  border-color: rgba(14, 116, 144, 0.55);
+  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.12);
+}
+
+.medicao-step.is-done {
+  border-color: rgba(15, 107, 58, 0.28);
+  background: #f3fbf6;
+}
+
+.medicao-step.is-active {
+  border-color: rgba(14, 116, 144, 0.35);
+  background: #f3fafc;
+}
+
+.medicao-step-num {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: #eef2f6;
+  color: #334155;
+  flex-shrink: 0;
+}
+
+.medicao-step.is-done .medicao-step-num {
+  background: #0f6b3a;
+  color: #fff;
+}
+
+.medicao-step.is-active .medicao-step-num {
+  background: #0e7490;
+  color: #fff;
+}
+
+.medicao-step strong {
+  display: block;
+  font-size: 0.88rem;
+  margin-bottom: 0.15rem;
+}
+
+.medicao-step p {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+  color: var(--text-muted, #5b6472);
+}
+
+.medicao-step small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--text-muted, #5b6472);
+}
+
+.medicao-lote-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.medicao-lote-actions .btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.medicao-lote-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  margin-left: 0.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+}
+
+.medicao-lote-actions .btn-primary .medicao-lote-count {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.medicao-lote-actions .btn-ghost .medicao-lote-count {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.medicao-lote-actions .btn.is-filter-on {
+  box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.18);
+}
+
+.medicao-lote-exec form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.medicao-link-cell {
+  max-width: 28rem;
+}
+
+.medicao-link-url {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  background: #f3f6f9;
+  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+}
+
+.medicao-link-actions {
+  white-space: nowrap;
+}
+
+.medicao-dossie-ready {
+  display: grid;
+  gap: 0.85rem;
+  max-width: 40rem;
+}
+
+.medicao-dossie-ready p {
+  margin: 0;
+  color: var(--text-muted, #5b6472);
+}
+
+.medicao-table tr.medicao-row-done {
+  background: #f1faf5;
+}
+
+.medicao-pct {
+  font-weight: 800;
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.medicao-pct.is-done {
+  color: #0f6b3a;
+}
+
+.medicao-dots {
+  display: inline-flex;
+  gap: 0.28rem;
+  align-items: center;
+}
+
+.medicao-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #d5dde7;
+}
+
+.medicao-dot.is-on {
+  background: #0f6b3a;
+}
+
+.text-right {
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .medicao-hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .medicao-score {
+    justify-content: flex-start;
+  }
+}

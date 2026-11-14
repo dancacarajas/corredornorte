@@ -26,10 +26,33 @@ final class LotacaoResolver
      */
     public function resolve(int $colaboradorId, DateTimeImmutable|string $data): ?array
     {
+        return $this->montarConfig($colaboradorId, $data, false);
+    }
+
+    /**
+     * Resolução para geração de ponto: não bloqueia por data de alocação.
+     * Usa lotação vigente; se não houver, a mais próxima do colaborador; por fim qualquer lotação ativa.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function resolveParaGeracao(int $colaboradorId, DateTimeImmutable|string $data): ?array
+    {
+        return $this->montarConfig($colaboradorId, $data, true);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function montarConfig(int $colaboradorId, DateTimeImmutable|string $data, bool $paraGeracao): ?array
+    {
         $dia = $data instanceof DateTimeImmutable ? $data : new DateTimeImmutable($data);
         $dataStr = $dia->format('Y-m-d');
 
         $lotacao = $this->lotacaoVigente($colaboradorId, $dataStr);
+        if ($lotacao === null && $paraGeracao) {
+            $lotacao = $this->lotacaoMaisProxima($colaboradorId, $dataStr)
+                ?? $this->lotacaoAtivaPadrao();
+        }
         if ($lotacao === null) {
             return null;
         }
@@ -61,6 +84,16 @@ final class LotacaoResolver
             $dataStr
         );
 
+        $baseHe = (int) ($lotacao['lotacao_percentual_he'] ?? $lotacao['percentual_he'] ?? 50);
+        if ($baseHe < 1) {
+            $baseHe = 50;
+        }
+        $overrideHe = $lotacao['colaborador_percentual_he'] ?? null;
+        $lotacao['lotacao_percentual_he'] = $baseHe;
+        $lotacao['percentual_he'] = ($overrideHe !== null && $overrideHe !== '')
+            ? max(1, min(200, (int) $overrideHe))
+            : $baseHe;
+
         return $lotacao;
     }
 
@@ -76,7 +109,9 @@ final class LotacaoResolver
               cl.vigencia_fim,
               cl.escala_ancora_data,
               cl.motivo,
+              cl.percentual_he AS colaborador_percentual_he,
               l.*,
+              l.percentual_he AS lotacao_percentual_he,
               c.codigo AS contrato_codigo,
               c.nome AS contrato_nome,
               cc.codigo AS centro_custo_codigo,
@@ -117,6 +152,116 @@ final class LotacaoResolver
         ]);
 
         $row = $stmt->fetch();
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * Qualquer vínculo de lotação do colaborador, mesmo fora da vigência da data.
+     * Prefere vínculo aberto e o mais próximo da data informada.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function lotacaoMaisProxima(int $colaboradorId, string $data): ?array
+    {
+        $sql = <<<SQL
+            SELECT
+              cl.id AS colaborador_lotacao_id,
+              cl.vigencia_inicio,
+              cl.vigencia_fim,
+              cl.escala_ancora_data,
+              cl.motivo,
+              cl.percentual_he AS colaborador_percentual_he,
+              l.*,
+              l.percentual_he AS lotacao_percentual_he,
+              c.codigo AS contrato_codigo,
+              c.nome AS contrato_nome,
+              cc.codigo AS centro_custo_codigo,
+              cc.nome AS centro_custo_nome,
+              os.codigo AS os_codigo,
+              os.nome AS os_nome,
+              loc.nome AS localidade_nome,
+              loc.municipio,
+              loc.uf,
+              j.codigo AS jornada_codigo,
+              j.nome AS jornada_nome,
+              j.entrada, j.intervalo_inicio, j.intervalo_fim, j.saida,
+              j.carga_diaria_min, j.carga_semanal_min,
+              j.trabalha_sabado, j.trabalha_domingo, j.trabalha_feriado, j.adicional_noturno,
+              e.codigo AS escala_codigo,
+              e.nome AS escala_nome,
+              e.tipo AS escala_tipo
+            FROM rh_colaborador_lotacoes cl
+            INNER JOIN rh_lotacoes l ON l.id = cl.lotacao_id
+            INNER JOIN rh_contratos c ON c.id = l.contrato_id
+            INNER JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
+            INNER JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
+            INNER JOIN rh_localidades loc ON loc.id = l.localidade_id
+            INNER JOIN rh_jornadas j ON j.id = l.jornada_id
+            INNER JOIN rh_escalas e ON e.id = l.escala_id
+            WHERE cl.colaborador_id = :colaborador_id
+            ORDER BY
+              (cl.vigencia_fim IS NULL) DESC,
+              ABS(DATEDIFF(cl.vigencia_inicio, :data)) ASC,
+              cl.id DESC
+            LIMIT 1
+        SQL;
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            'colaborador_id' => $colaboradorId,
+            'data' => $data,
+        ]);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * Fallback absoluto: primeira lotação ativa do sistema.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function lotacaoAtivaPadrao(): ?array
+    {
+        $sql = <<<SQL
+            SELECT
+              NULL AS colaborador_lotacao_id,
+              NULL AS vigencia_inicio,
+              NULL AS vigencia_fim,
+              NULL AS escala_ancora_data,
+              'sistema' AS motivo,
+              NULL AS colaborador_percentual_he,
+              l.*,
+              l.percentual_he AS lotacao_percentual_he,
+              c.codigo AS contrato_codigo,
+              c.nome AS contrato_nome,
+              cc.codigo AS centro_custo_codigo,
+              cc.nome AS centro_custo_nome,
+              os.codigo AS os_codigo,
+              os.nome AS os_nome,
+              loc.nome AS localidade_nome,
+              loc.municipio,
+              loc.uf,
+              j.codigo AS jornada_codigo,
+              j.nome AS jornada_nome,
+              j.entrada, j.intervalo_inicio, j.intervalo_fim, j.saida,
+              j.carga_diaria_min, j.carga_semanal_min,
+              j.trabalha_sabado, j.trabalha_domingo, j.trabalha_feriado, j.adicional_noturno,
+              e.codigo AS escala_codigo,
+              e.nome AS escala_nome,
+              e.tipo AS escala_tipo
+            FROM rh_lotacoes l
+            INNER JOIN rh_contratos c ON c.id = l.contrato_id
+            INNER JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
+            INNER JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
+            INNER JOIN rh_localidades loc ON loc.id = l.localidade_id
+            INNER JOIN rh_jornadas j ON j.id = l.jornada_id
+            INNER JOIN rh_escalas e ON e.id = l.escala_id
+            WHERE l.status = 'ativo'
+            ORDER BY l.id
+            LIMIT 1
+        SQL;
+
+        $row = $this->db->query($sql)->fetch();
         return $row === false ? null : $row;
     }
 

@@ -24,11 +24,13 @@ final class FolhaController
         $docs = [];
         if ($pdo instanceof PDO) {
             $docs = $pdo->query(
-                'SELECT d.*, c.nome, c.matricula, e.status AS espelho_status, pc.ano, pc.mes
+                'SELECT d.*, c.nome, c.matricula, e.status AS espelho_status,
+                        pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim,
+                        YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
                  FROM documentos d
                  INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
                  INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-                 INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
+                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
                  ORDER BY d.id DESC LIMIT 100'
             )->fetchAll();
         }
@@ -66,12 +68,28 @@ final class FolhaController
 
         $periodo = $dados['periodo'];
         $periodoQuery = PeriodoPonto::consulta($periodo);
+        $idsEspelhos = array_map(static fn(array $e): int => (int) $e['id'], $dados['espelhos_periodo']);
+        if ($idsEspelhos === []) {
+            $idsEspelhos = [$espelhoId];
+        }
+        $inEspelhos = implode(',', $idsEspelhos);
+
         if ($dados['recorte']) {
-            $docs = $pdo->prepare('SELECT d.* FROM documentos d JOIN ponto_espelhos e ON e.id = d.espelho_id
-                WHERE e.colaborador_id = ? AND d.periodo_inicio = ? AND d.periodo_fim = ? ORDER BY d.id DESC');
-            $docs->execute([(int) $dados['espelho']['colaborador_id'], $periodo['data_inicio'], $periodo['data_fim']]);
+            $docs = $pdo->prepare(
+                "SELECT DISTINCT d.*
+                 FROM documentos d
+                 LEFT JOIN documentos_espelhos de ON de.documento_id = d.id
+                 WHERE d.periodo_inicio = ? AND d.periodo_fim = ?
+                   AND (d.espelho_id IN ({$inEspelhos}) OR de.espelho_id IN ({$inEspelhos}))
+                 ORDER BY d.id DESC"
+            );
+            $docs->execute([$periodo['data_inicio'], $periodo['data_fim']]);
         } else {
-            $docs = $pdo->prepare('SELECT * FROM documentos WHERE espelho_id = ? AND periodo_inicio IS NULL ORDER BY id DESC');
+            $docs = $pdo->prepare(
+                'SELECT * FROM documentos
+                 WHERE espelho_id = ? AND periodo_inicio IS NULL
+                 ORDER BY id DESC'
+            );
             $docs->execute([$espelhoId]);
         }
         $documentos = $docs->fetchAll();
@@ -84,11 +102,40 @@ final class FolhaController
             $envios = $pdo->query("SELECT * FROM emails_envios WHERE documento_id IN ({$ids}) ORDER BY id DESC")->fetchAll();
         }
 
+        // Detalhe do(s) cartão(ões) do período para a UI.
+        $espelhosUi = $pdo->query(
+            "SELECT e.id, e.status, pp.data_inicio, pp.data_fim,
+                    YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
+             FROM ponto_espelhos e
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+             WHERE e.id IN ({$inEspelhos})
+             ORDER BY pp.data_inicio, pp.data_fim"
+        )->fetchAll();
+
+        $docAtivo = null;
+        foreach ($documentos as $doc) {
+            if (in_array((string) $doc['status'], ['gerado', 'enviado'], true)) {
+                $docAtivo = $doc;
+                break;
+            }
+        }
+
         ob_start();
         ?>
+        <a class="btn btn-secondary btn-sm" href="/rh/ponto/<?= $espelhoId ?>?<?= View::e($periodoQuery) ?>">Voltar ao ponto</a>
         <form method="post" action="/rh/folha/<?= $espelhoId ?>/gerar?<?= View::e($periodoQuery) ?>" style="display:inline;">
             <button class="btn btn-primary btn-sm" type="submit">Gerar PDF</button>
         </form>
+        <?php if ($docAtivo !== null): ?>
+            <form method="post" action="/rh/folha/<?= $espelhoId ?>/enviar?<?= View::e($periodoQuery) ?>" style="display:inline;">
+                <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
+                <button class="btn btn-secondary btn-sm" type="submit">Enviar PDF</button>
+            </form>
+            <form method="post" action="/rh/folha/<?= $espelhoId ?>/link-assinatura?<?= View::e($periodoQuery) ?>" style="display:inline;">
+                <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
+                <button class="btn btn-secondary btn-sm" type="submit">Gerar link assinatura</button>
+            </form>
+        <?php endif; ?>
         <?php
         $topbarActions = ob_get_clean() ?: '';
 
@@ -99,7 +146,9 @@ final class FolhaController
             'activeMenu' => 'folha',
             'topbarActions' => $topbarActions,
             'dados' => $dados,
+            'espelhosUi' => $espelhosUi,
             'documentos' => $documentos,
+            'docAtivo' => $docAtivo,
             'portalUrl' => $portalUrl,
             'envios' => $envios,
             'flash' => $_GET['ok'] ?? null,
@@ -124,9 +173,21 @@ final class FolhaController
             if ($dados === null) {
                 throw new RuntimeException('Espelho não encontrado.');
             }
-            if (!$dados['recorte'] && $dados['espelho']['status'] === 'conferido') {
-                (new MotorPontoService($pdo))->alterarStatus($espelhoId, 'fechado', 'Fechamento automático para PDF', Auth::id());
+
+            // Período 16–15 pode cruzar 2 competências: fecha todas antes de emitir.
+            $motor = new MotorPontoService($pdo);
+            foreach ($dados['espelhos_periodo'] as $espelhoPeriodo) {
+                $statusEsp = (string) ($espelhoPeriodo['status'] ?? '');
+                if (!in_array($statusEsp, ['fechado', 'enviado', 'assinado'], true)) {
+                    $motor->alterarStatus(
+                        (int) $espelhoPeriodo['id'],
+                        'fechado',
+                        'Fechamento automático para emissão da folha',
+                        Auth::id()
+                    );
+                }
             }
+
             $service->gerarPdf($espelhoId, Auth::id(), $inicio, $fim);
             $this->redirecionarFolha($espelhoId, ['ok' => 'pdf']);
         } catch (Throwable $e) {
@@ -190,7 +251,17 @@ final class FolhaController
     {
         $this->headersPortal();
         $pdo = Db::tryConnection();
-        $doc = $pdo instanceof PDO ? (new AssinaturaEletronicaService($pdo))->buscarPorPortalToken($token) : null;
+        $assinatura = $pdo instanceof PDO ? new AssinaturaEletronicaService($pdo) : null;
+        $doc = $assinatura?->buscarPorPortalToken($token);
+        if ($doc !== null && $doc['status'] === 'enviado' && (int) $doc['layout_pdf'] === 3) {
+            try {
+                // A via nova reserva o espaço do selo e preserva o link da via pendente.
+                (new FolhaPontoService($pdo))->atualizarModeloPendente((int) $doc['id']);
+                $doc = $assinatura->buscarPorPortalToken($token);
+            } catch (Throwable $erro) {
+                error_log('Falha ao atualizar o modelo da folha ' . (int) $doc['id'] . ': ' . $erro->getMessage());
+            }
+        }
         $mensagem = $_SESSION['folha_mensagem'][$token] ?? [];
         unset($_SESSION['folha_mensagem'][$token]);
         $_SESSION['folha_csrf'] ??= bin2hex(random_bytes(32));
@@ -307,11 +378,13 @@ final class FolhaController
         $doc = null;
         if ($pdo instanceof PDO && $codigo !== '') {
             $stmt = $pdo->prepare(
-                'SELECT d.*, c.nome, c.matricula, pc.ano, pc.mes
+                'SELECT d.*, c.nome, c.matricula,
+                        YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes,
+                        pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim
                  FROM documentos d
                  INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
                  INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-                 INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
+                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
                  WHERE d.codigo_verificacao = :c LIMIT 1'
             );
             $stmt->execute(['c' => $codigo]);

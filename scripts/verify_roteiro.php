@@ -49,8 +49,13 @@ ok('Exceção individual (prioridade 1)');
 
 // Motor + britânico
 $motor = new MotorPontoService($pdo);
-$ano = 2026; $mes = 8;
-$ids = $pdo->query("SELECT e.id FROM ponto_espelhos e INNER JOIN ponto_competencias pc ON pc.id=e.competencia_id WHERE pc.ano={$ano} AND pc.mes={$mes}")->fetchAll(PDO::FETCH_COLUMN);
+$periodoIni = '2026-08-01';
+$periodoFim = '2026-08-31';
+$ids = $pdo->query(
+    "SELECT e.id FROM ponto_espelhos e
+     INNER JOIN ponto_periodos pp ON pp.id=e.periodo_id
+     WHERE pp.data_inicio='{$periodoIni}' AND pp.data_fim='{$periodoFim}'"
+)->fetchAll(PDO::FETCH_COLUMN);
 if ($ids) {
     $in = implode(',', array_map('intval', $ids));
     $docs = $pdo->query("SELECT id FROM documentos WHERE espelho_id IN ({$in})")->fetchAll(PDO::FETCH_COLUMN);
@@ -62,8 +67,8 @@ if ($ids) {
     }
     $pdo->exec("DELETE FROM ponto_espelhos WHERE id IN ({$in})");
 }
-$pdo->exec("DELETE FROM ponto_competencias WHERE ano={$ano} AND mes={$mes}");
-$espId = $motor->gerarEspelho(1, $ano, $mes);
+$pdo->exec("DELETE FROM ponto_periodos WHERE data_inicio='{$periodoIni}' AND data_fim='{$periodoFim}'");
+$espId = $motor->gerarEspelho(1, $periodoIni, $periodoFim);
 $diaId = (int) $pdo->query("SELECT id FROM ponto_dias WHERE espelho_id={$espId} AND tipo_dia='trabalho' ORDER BY data LIMIT 1")->fetchColumn();
 $prev = (int) $pdo->query("SELECT COUNT(*) FROM ponto_marcacoes WHERE ponto_dia_id={$diaId} AND origem='previsto'")->fetchColumn();
 $ger = (int) $pdo->query("SELECT COUNT(*) FROM ponto_marcacoes WHERE ponto_dia_id={$diaId} AND origem='gerado'")->fetchColumn();

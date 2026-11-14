@@ -51,6 +51,30 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
                 <?php endif; ?>
                 <?php if ($can('cadastros.ver')): ?>
                 <li>
+                    <a class="nav-link<?= $isActive('empresas') ?>" href="/rh/empresas">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
+                        Empresas
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('contratos') ?>" href="/rh/contratos">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+                        Contratos
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('centros') ?>" href="/rh/centros-custo">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
+                        Centros de Custo
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('os') ?>" href="/rh/ordens-servico">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5h11M9 12h11M9 19h11"/><path d="M4 5h.01M4 12h.01M4 19h.01"/></svg>
+                        Ordens de Serviço
+                    </a>
+                </li>
+                <li>
                     <a class="nav-link<?= $isActive('jornadas') ?>" href="/rh/jornadas">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
                         Jornadas
@@ -80,6 +104,36 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
                         Lotações
                     </a>
                 </li>
+                <li>
+                    <a class="nav-link<?= $isActive('cargos') ?>" href="/rh/cargos">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6M19 8v6"/></svg>
+                        Cargo
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('funcoes') ?>" href="/rh/funcoes">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h10M4 17h14"/><path d="M16 10l4 2-4 2"/></svg>
+                        Função
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('gestores-arcadis') ?>" href="/rh/gestores-arcadis">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l8 4v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
+                        Gestor Arcadis
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('gestores-cliente') ?>" href="/rh/gestores-cliente">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        Gestor Cliente
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('supervisores') ?>" href="/rh/supervisores">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/><path d="M19 11v6M16 14h6"/></svg>
+                        Supervisor
+                    </a>
+                </li>
                 <?php endif; ?>
             </ul>
         </div>
@@ -102,6 +156,26 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
                     <a class="nav-link<?= $isActive('folha') ?>" href="/rh/folha">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>
                         Folha de Ponto
+                    </a>
+                </li>
+                <?php endif; ?>
+                <?php if ($can('ponto.ver')): ?>
+                <li>
+                    <a class="nav-link<?= $isActive('medicao') ?>" href="/rh/medicao">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-4"/><circle cx="7" cy="7" r="1.5"/><circle cx="12" cy="3" r="1.5"/><circle cx="17" cy="10" r="1.5"/></svg>
+                        Medição
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('ra') ?>" href="/rh/relatorios-atividades">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>
+                        Relatórios de Atividades
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link<?= $isActive('vr') ?>" href="/rh/vale-refeicao">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v10H4z"/><path d="M8 7V5a4 4 0 0 1 8 0v2"/><path d="M12 11v2"/></svg>
+                        Vale Refeição
                     </a>
                 </li>
                 <?php endif; ?>

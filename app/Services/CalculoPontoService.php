@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Config\Database;
 use PDO;
+use Throwable;
 
 /**
  * Cálculos da tela de gestão (referência operacional).
@@ -48,25 +49,35 @@ final class CalculoPontoService
         }
 
         $prevMin = $this->minutosPrevistos($dia);
+        $pctHe = $this->percentualHeDoDia($dia);
+        $dow = (int) date('w', strtotime((string) $dia['data']));
 
-        if (in_array($tipo, ['folga', 'folga_escala'], true)) {
-            $this->persist($pontoDiaId, $this->zerado('folga', 'Folga'));
-            return;
-        }
-
-        if ($tipo === 'feriado') {
-            // Trabalho em feriado (nacional/estadual/municipal) = HE 100% + ADN
+        // Folga/DSR ou feriado com batida: todo o tempo vira HE.
+        // HE 100% somente em domingo ou feriado; sábado/outros usam o % da lotação.
+        if (in_array($tipo, ['folga', 'folga_escala', 'feriado'], true)) {
             $ent1 = $dia['ent1'] ?? null;
             $sai1 = $dia['sai1'] ?? null;
             $ent2 = $dia['ent2'] ?? null;
             $sai2 = $dia['sai2'] ?? null;
             $trab = $this->minutosTrabalhados($ent1, $sai1, $ent2, $sai2);
             $adn = $this->minutosNoturnos($ent1, $sai1) + $this->minutosNoturnos($ent2, $sai2);
-            $nomeFer = $feriadoInfo['nome'] ?? 'Feriado';
+            $rotulo = $tipo === 'feriado'
+                ? (string) ($feriadoInfo['nome'] ?? 'Feriado')
+                : ($tipo === 'folga_escala' ? 'Folga de escala' : 'Folga');
+
             if ($trab <= 0) {
-                $this->persist($pontoDiaId, $this->zerado('feriado', (string) $nomeFer));
+                $this->persist($pontoDiaId, $this->zerado(
+                    $tipo === 'feriado' ? 'feriado' : 'folga',
+                    $rotulo,
+                    $pctHe
+                ));
                 return;
             }
+
+            $he100 = ($tipo === 'feriado' || $dow === 0) ? $trab : 0;
+            $heAdicional = $he100 > 0 ? 0 : $trab;
+            $rotuloHe = $he100 > 0 ? 'HE100' : ('HE' . $pctHe);
+
             $this->persist($pontoDiaId, [
                 'total_trab_min' => $trab,
                 'horas_previstas_min' => 0,
@@ -74,12 +85,13 @@ final class CalculoPontoService
                 'horas_falta_min' => 0,
                 'atraso_bruto_min' => 0,
                 'horas_extras_min' => $trab,
-                'he_50_min' => 0,
-                'he_100_min' => $trab,
+                'he_50_min' => $heAdicional,
+                'he_100_min' => $he100,
+                'percentual_he' => $pctHe,
                 'adn_min' => $adn,
                 'desconto_min' => 0,
                 'ok_status' => 'ok',
-                'ocorrencia_resumo' => sprintf('%s +%s HE100', $nomeFer, $this->fmt($trab)),
+                'ocorrencia_resumo' => sprintf('%s trabalhado +%s %s', $rotulo, $this->fmt($trab), $rotuloHe),
             ]);
             return;
         }
@@ -107,9 +119,9 @@ final class CalculoPontoService
         }
 
         $he = max(0, $trab - $prevMin);
-        $dow = (int) date('w', strtotime((string) $dia['data']));
-        $he100 = ($dow === 0) ? $he : 0; // domingo = HE 100%
-        $he50 = ($dow === 0) ? 0 : $he;
+        // HE 100% somente domingo. Demais dias (incl. sábado): % da lotação/colaborador.
+        $he100 = ($dow === 0) ? $he : 0;
+        $heAdicional = ($dow === 0) ? 0 : $he;
         $adn = $this->minutosNoturnos($ent1, $sai1) + $this->minutosNoturnos($ent2, $sai2);
         $desconto = $faltaMin;
 
@@ -119,7 +131,7 @@ final class CalculoPontoService
         $resumo = $diaFalta
             ? 'Falta'
             : ($he > self::TOLERANCIA_MIN
-                ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : '50')
+                ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
                 : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : 'Normal')));
 
         $this->persist($pontoDiaId, [
@@ -129,8 +141,9 @@ final class CalculoPontoService
             'horas_falta_min' => $faltaMin,
             'atraso_bruto_min' => $atraso,
             'horas_extras_min' => $he,
-            'he_50_min' => $he50,
+            'he_50_min' => $heAdicional,
             'he_100_min' => $he100,
+            'percentual_he' => $pctHe,
             'adn_min' => $adn,
             'desconto_min' => $desconto,
             'ok_status' => $ok,
@@ -238,9 +251,26 @@ final class CalculoPontoService
             ], 'gerado', false);
         }
 
+        // Folga/feriado não passam pelo britânico; garante ok_status correto.
+        $outros = $this->db->prepare(
+            "SELECT id FROM ponto_dias
+             WHERE espelho_id = :id AND tipo_dia IN ('folga','folga_escala','feriado')"
+        );
+        $outros->execute(['id' => $espelhoId]);
+        foreach ($outros->fetchAll(PDO::FETCH_COLUMN) ?: [] as $outroId) {
+            $this->recalcularDia((int) $outroId);
+        }
+
         $this->atualizarTotaisEspelho($espelhoId);
         $this->db->prepare("UPDATE ponto_espelhos SET status='em_tratamento' WHERE id=:id AND status='em_aberto'")
             ->execute(['id' => $espelhoId]);
+
+        // HE autorizadas pelo gestor devem sobreviver à regeneração do espelho.
+        try {
+            (new HeAutorizacaoService($this->db))->reaplicarAprovadasNoEspelho($espelhoId);
+        } catch (Throwable) {
+            // Tabela ainda não migrada ou falha pontual não bloqueia o britânico.
+        }
     }
 
     public function atualizarTotaisEspelho(int $espelhoId): void
@@ -306,7 +336,7 @@ final class CalculoPontoService
     }
 
     /** @return array<string,int|string> */
-    private function zerado(string $ok, string $resumo): array
+    private function zerado(string $ok, string $resumo, int $percentualHe = 50): array
     {
         return [
             'total_trab_min' => 0,
@@ -317,11 +347,28 @@ final class CalculoPontoService
             'horas_extras_min' => 0,
             'he_50_min' => 0,
             'he_100_min' => 0,
+            'percentual_he' => $percentualHe,
             'adn_min' => 0,
             'desconto_min' => 0,
             'ok_status' => $ok,
             'ocorrencia_resumo' => $resumo,
         ];
+    }
+
+    /** @param array<string,mixed> $dia */
+    private function percentualHeDoDia(array $dia): int
+    {
+        $colaboradorId = (int) ($dia['colaborador_id'] ?? 0);
+        $data = (string) ($dia['data'] ?? '');
+        if ($colaboradorId > 0 && $data !== '') {
+            $cfg = (new LotacaoResolver($this->db))->resolve($colaboradorId, $data);
+            $pct = (int) ($cfg['percentual_he'] ?? 50);
+            if ($pct >= 1 && $pct <= 200) {
+                return $pct;
+            }
+        }
+        $stored = (int) ($dia['percentual_he'] ?? 50);
+        return $stored >= 1 && $stored <= 200 ? $stored : 50;
     }
 
     /** @param array<string,mixed> $dia */

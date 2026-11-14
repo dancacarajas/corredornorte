@@ -13,16 +13,28 @@ $installed = $installer->isInstalled();
 $error = null;
 $result = null;
 
-$defaults = [
-    'host' => 'localhost',
-    'port' => '3306',
-    'database' => 'u482227589_corredornorte',
-    'username' => 'u482227589_corredornorte',
-    'password' => '',
-];
+$hostHeader = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$isLocal = str_starts_with($hostHeader, '127.0.0.1')
+    || str_starts_with($hostHeader, 'localhost');
+
+// Local usa MySQL de desenvolvimento; Hostinger usa o banco do Corredor Norte.
+$defaults = $isLocal
+    ? [
+        'host' => '127.0.0.1',
+        'port' => '3306',
+        'database' => 'arcadis_rh',
+        'username' => 'root',
+        'password' => 'root',
+    ]
+    : [
+        'host' => 'localhost',
+        'port' => '3306',
+        'database' => 'u482227589_corredornorte',
+        'username' => 'u482227589_corredornorte',
+        'password' => '',
+    ];
 
 $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$hostHeader = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $script = $_SERVER['SCRIPT_NAME'] ?? '/install/index.php';
 $basePath = rtrim(str_replace('\\', '/', dirname(dirname($script))), '/');
 if ($basePath === '/' || $basePath === '\\') {
@@ -32,12 +44,16 @@ $appUrl = $scheme . '://' . $hostHeader . $basePath;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$installed) {
     try {
+        $password = (string) ($_POST['password'] ?? '');
+        if ($password === '' && $isLocal) {
+            $password = (string) $defaults['password'];
+        }
         $result = $installer->install([
             'host' => $defaults['host'],
             'port' => $defaults['port'],
             'database' => $defaults['database'],
             'username' => $defaults['username'],
-            'password' => (string) ($_POST['password'] ?? ''),
+            'password' => $password,
             'app_url' => $appUrl,
             'app_name' => 'Corredor Norte RH',
         ]);
@@ -196,7 +212,10 @@ $loginUrl = ($basePath === '' ? '' : $basePath) . '/login';
 <body>
 <main class="wrap">
     <h1>Kit de instalação</h1>
-    <p class="lead">Informe apenas a senha do MySQL criado na Hostinger. O restante já está preparado para o Corredor Norte.</p>
+    <p class="lead"><?= $isLocal
+        ? 'Ambiente local detectado. Use a senha do MySQL de desenvolvimento (padrão: root).'
+        : 'Informe apenas a senha do MySQL criado na Hostinger. O restante já está preparado para o Corredor Norte.'
+    ?></p>
 
     <?php if ($error): ?>
         <div class="alert alert-error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
@@ -227,7 +246,9 @@ $loginUrl = ($basePath === '' ? '' : $basePath) . '/login';
         </div>
         <form method="post" autocomplete="off">
             <label for="password">Senha do banco de dados</label>
-            <input id="password" name="password" type="password" required autofocus placeholder="Senha MySQL da Hostinger">
+            <input id="password" name="password" type="password" <?= $isLocal ? '' : 'required' ?> autofocus
+                   value="<?= htmlspecialchars((string) ($defaults['password'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+                   placeholder="<?= $isLocal ? 'root' : 'Senha MySQL da Hostinger' ?>">
             <button type="submit">Instalar</button>
         </form>
     <?php endif; ?>

@@ -110,6 +110,6 @@ WHERE NOT EXISTS (
   SELECT 1 FROM rh_colaborador_lotacoes WHERE colaborador_id = 3 AND vigencia_fim IS NULL
 );
 
-INSERT INTO ponto_competencias (ano, mes, status)
-VALUES (2026, 11, 'aberta')
+INSERT INTO ponto_periodos (data_inicio, data_fim, status)
+VALUES ('2026-11-01', '2026-11-30', 'aberta')
 ON DUPLICATE KEY UPDATE status = VALUES(status);

@@ -12,15 +12,15 @@ $assinado = $status === 'assinado';
 $hashAssinado = strtolower((string) ($documento['arquivo_assinado_sha256'] ?? ''));
 $hashOriginal = strtolower((string) ($documento['hash_sha256'] ?? ''));
 $comparacaoDisponivel = $assinado && preg_match('/\A[0-9a-f]{64}\z/', $hashAssinado) === 1;
-$seloDigital = $comparacaoDisponivel
+$registroComIntegridade = $comparacaoDisponivel
     && (!empty($documento['assinatura_texto_aceite']) || !empty($documento['assinatura_email_confirmado_em']));
 
 if ($status === 'invalidado') {
     $rotulo = 'Invalidado';
     $cor = 'danger';
     $mensagem = 'Este registro foi invalidado. Solicite ao RH a versão vigente da folha.';
-} elseif ($seloDigital) {
-    $rotulo = 'Assinado com selo Arcadis';
+} elseif ($registroComIntegridade) {
+    $rotulo = 'Assinado eletronicamente';
     $cor = $integridade === true ? 'success' : 'warning';
     $mensagem = $integridade === true
         ? 'Os arquivos arquivados correspondem aos hashes SHA-256 registrados.'
@@ -139,9 +139,6 @@ if ($status === 'invalidado') {
                         Selecione a sua cópia do PDF assinado para comparar o SHA-256 com o registro.
                         O arquivo fica no seu dispositivo.
                     </p>
-                    <?php if ($seloDigital): ?>
-                        <p class="text-sm muted">Para conferir o certificado do selo digital, use o painel de assinaturas de um leitor de PDF.</p>
-                    <?php endif; ?>
                     <div class="form-field">
                         <label class="form-label" for="arquivo-comparacao">Arquivo PDF assinado</label>
                         <input class="form-control verificacao-arquivo" id="arquivo-comparacao"

@@ -12,7 +12,7 @@ use Throwable;
 
 final class FolhaPontoService
 {
-    public const LAYOUT_PDF_ATUAL = 3;
+    public const LAYOUT_PDF_ATUAL = FolhaPdfRenderer::LAYOUT_VERSION;
 
     private PDO $db;
 
@@ -52,10 +52,21 @@ final class FolhaPontoService
             if ($dados['recorte'] && count($dados['dias']) !== PeriodoPonto::dias($dados['periodo'])) {
                 throw new RuntimeException('Há dias sem espelho no período. Gere e confira os espelhos antes de emitir o cartão.');
             }
-            $permitidos = $dados['recorte'] ? ['fechado', 'enviado', 'assinado'] : ['conferido', 'fechado', 'enviado', 'assinado'];
+            // Recarrega status (podem ter sido fechados logo antes da emissão).
+            $ids = array_map(static fn(array $e): int => (int) $e['id'], $dados['espelhos_periodo']);
+            if ($ids !== []) {
+                $in = implode(',', $ids);
+                $statusRows = $this->db->query(
+                    "SELECT id, status FROM ponto_espelhos WHERE id IN ({$in})"
+                )->fetchAll();
+                $dados['espelhos_periodo'] = $statusRows;
+            }
+            $permitidos = ['conferido', 'fechado', 'enviado', 'assinado'];
             foreach ($dados['espelhos_periodo'] as $espelho) {
-                if (!in_array($espelho['status'], $permitidos, true)) {
-                    throw new RuntimeException('Feche os espelhos do período antes de emitir o cartão.');
+                if (!in_array((string) $espelho['status'], $permitidos, true)) {
+                    throw new RuntimeException(
+                        'Ainda há espelho aberto no período. Use "Fechar período" na gestão de ponto ou clique novamente em Gerar PDF para fechar automaticamente.'
+                    );
                 }
             }
             $payload = $this->montarPayload($dados, $codigo);
@@ -252,13 +263,16 @@ final class FolhaPontoService
         $portalLinha = '';
         if (!empty($doc['portal_token'])) {
             $app = require dirname(__DIR__, 2) . '/config/app.php';
-            $base = trim((string) ($app['url'] ?? ''));
+            $base = rtrim(trim((string) ($app['url'] ?? '')), '/');
             if ($base === '') {
                 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
                 $base = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8080');
             }
+            if (str_ends_with(strtolower($base), '/public')) {
+                $base = rtrim(substr($base, 0, -7), '/');
+            }
             $portalLinha = "\nAssinar eletronicamente (somente leitura, sem editar ponto):\n"
-                . rtrim($base, '/') . '/assinar/' . $doc['portal_token'] . "\n";
+                . $base . '/assinar/' . $doc['portal_token'] . "\n";
         }
         $mail = new MailService();
         $result = $mail->send(
@@ -333,14 +347,16 @@ final class FolhaPontoService
     {
         $stmt = $this->db->prepare(
             'SELECT e.*, c.nome, c.matricula, c.cpf, c.cargo, c.funcao, c.email_corp,
-                    pc.ano, pc.mes, l.codigo AS lotacao_codigo,
+                    pp.data_inicio AS periodo_inicio, pp.data_fim AS periodo_fim,
+                    YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes,
+                    l.codigo AS lotacao_codigo,
                     ct.codigo AS contrato_codigo, cc.codigo AS cc_codigo, os.codigo AS os_codigo,
                     loc.municipio, loc.uf,
                     j.entrada AS jornada_entrada, j.intervalo_inicio AS jornada_intervalo_inicio,
                     j.intervalo_fim AS jornada_intervalo_fim, j.saida AS jornada_saida
              FROM ponto_espelhos e
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-             INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              LEFT JOIN rh_lotacoes l ON l.id = e.lotacao_id
              LEFT JOIN rh_contratos ct ON ct.id = l.contrato_id
              LEFT JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
@@ -355,22 +371,31 @@ final class FolhaPontoService
             return null;
         }
 
-        $mensal = PeriodoPonto::selecionar(null, null, (int) $espelho['ano'], (int) $espelho['mes']);
-        $periodo = PeriodoPonto::selecionar($inicio, $fim, (int) $espelho['ano'], (int) $espelho['mes']);
-        if ($periodo['data_fim'] < $mensal['data_inicio'] || $periodo['data_inicio'] > $mensal['data_fim']) {
+        $cartao = [
+            'data_inicio' => (string) $espelho['periodo_inicio'],
+            'data_fim' => (string) $espelho['periodo_fim'],
+        ];
+        $periodo = PeriodoPonto::selecionar(
+            $inicio ?? $cartao['data_inicio'],
+            $fim ?? $cartao['data_fim'],
+            (int) $espelho['ano'],
+            (int) $espelho['mes']
+        );
+        if ($periodo['data_fim'] < $cartao['data_inicio'] || $periodo['data_inicio'] > $cartao['data_fim']) {
             throw new RuntimeException('Abra um espelho que faça parte do período selecionado.');
         }
-        $competencias = $this->db->prepare('SELECT e.id, e.status FROM ponto_espelhos e
-            JOIN ponto_competencias c ON c.id = e.competencia_id
-            WHERE e.colaborador_id = ? AND c.ano * 100 + c.mes BETWEEN ? AND ? ORDER BY e.id'
-            . ($bloquear ? ' FOR UPDATE' : ''));
-        $competencias->execute([(int) $espelho['colaborador_id'], (int) str_replace('-', '', substr($periodo['data_inicio'], 0, 7)),
-            (int) str_replace('-', '', substr($periodo['data_fim'], 0, 7))]);
-        $espelhos = $competencias->fetchAll();
-        $idsEspelhos = array_map(static fn(array $item): int => (int) $item['id'], $espelhos);
-        $params = implode(',', array_fill(0, count($idsEspelhos), '?'));
-        $diasStmt = $this->db->prepare("SELECT * FROM ponto_dias WHERE espelho_id IN ($params) AND data BETWEEN ? AND ? ORDER BY data");
-        $diasStmt->execute([...$idsEspelhos, $periodo['data_inicio'], $periodo['data_fim']]);
+        if ($periodo['data_inicio'] < $cartao['data_inicio']) {
+            $periodo['data_inicio'] = $cartao['data_inicio'];
+        }
+        if ($periodo['data_fim'] > $cartao['data_fim']) {
+            $periodo['data_fim'] = $cartao['data_fim'];
+        }
+
+        $espelhos = [['id' => $espelhoId, 'status' => $espelho['status']]];
+        $diasStmt = $this->db->prepare(
+            'SELECT * FROM ponto_dias WHERE espelho_id = ? AND data BETWEEN ? AND ? ORDER BY data'
+        );
+        $diasStmt->execute([$espelhoId, $periodo['data_inicio'], $periodo['data_fim']]);
         $dias = $diasStmt->fetchAll();
         $marcacoes = [];
         if ($dias !== []) {
@@ -380,8 +405,17 @@ final class FolhaPontoService
             }
         }
 
-        return ['espelho' => $espelho, 'dias' => $dias, 'marcacoes' => $marcacoes,
-            'periodo' => $periodo, 'recorte' => $periodo !== $mensal, 'espelhos_periodo' => $espelhos];
+        $recorte = $periodo['data_inicio'] !== $cartao['data_inicio']
+            || $periodo['data_fim'] !== $cartao['data_fim'];
+
+        return [
+            'espelho' => $espelho,
+            'dias' => $dias,
+            'marcacoes' => $marcacoes,
+            'periodo' => $periodo,
+            'recorte' => $recorte,
+            'espelhos_periodo' => $espelhos,
+        ];
     }
 
     /**
@@ -571,51 +605,7 @@ final class FolhaPontoService
     /** @param array<string,mixed> $payload */
     private function renderPdf(array $payload, string $outPath): void
     {
-        $root = dirname(__DIR__, 2);
-        $script = $root . '/scripts/gerar_folha_pdf.py';
-        $tmp = $root . '/storage/tmp_folha_' . bin2hex(random_bytes(4)) . '.json';
-        if (!is_dir(dirname($tmp))) {
-            mkdir(dirname($tmp), 0775, true);
-        }
-        try {
-            $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-            if (file_put_contents($tmp, $json) === false) {
-                throw new RuntimeException('Não foi possível preparar os dados do cartão de ponto.');
-            }
-
-            $cmdParts = array_merge($this->pythonCmd(), [$script, $tmp, $outPath]);
-            $cmd = implode(' ', array_map('escapeshellarg', $cmdParts)) . ' 2>&1';
-            exec($cmd, $output, $code);
-            if ($code !== 0 || !in_array('layout-pdf=' . self::LAYOUT_PDF_ATUAL, $output, true)
-                || !is_file($outPath) || filesize($outPath) === 0) {
-                if (is_file($outPath)) {
-                    unlink($outPath);
-                }
-                throw new RuntimeException('Não foi possível gerar o cartão de ponto. Verifique o gerador de PDF no servidor.');
-            }
-        } finally {
-            if (is_file($tmp)) {
-                unlink($tmp);
-            }
-        }
-    }
-
-    /** @return list<string> */
-    private function pythonCmd(): array
-    {
-        $candidates = [
-            ['py', '-3'],
-            ['python'],
-            ['python3'],
-        ];
-        foreach ($candidates as $parts) {
-            $out = [];
-            $code = 1;
-            exec(implode(' ', array_map('escapeshellarg', $parts)) . ' --version 2>&1', $out, $code);
-            if ($code === 0) {
-                return $parts;
-            }
-        }
-        return ['python'];
+        // Hostinger desabilita exec/shell_exec: gerar sempre em PHP puro.
+        (new FolhaPdfRenderer())->render($payload, $outPath);
     }
 }

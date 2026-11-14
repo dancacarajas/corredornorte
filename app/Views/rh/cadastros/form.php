@@ -50,6 +50,11 @@ use App\Helpers\View;
             'adicional_noturno' => 'Adicional noturno',
             'intervalo_inicio' => 'Intervalo início',
             'intervalo_fim' => 'Intervalo fim',
+            'percentual_he' => '% Hora extra (adicional)',
+            'cliente' => 'Cliente',
+            'matricula' => 'Matrícula',
+            'telefone' => 'Telefone',
+            'email' => 'E-mail',
         ];
         $fieldLinks = [
             'contrato_id' => ['href' => '/rh/contratos', 'label' => 'Abrir contratos'],
@@ -120,6 +125,12 @@ use App\Helpers\View;
                             <option value="<?= $tp ?>" <?= (($row[$field] ?? '') === $tp) ? 'selected' : '' ?>><?= $tp ?></option>
                         <?php endforeach; ?>
                     </select>
+                <?php elseif ($type === 'percentual_he'): ?>
+                    <input class="form-control" type="number" name="<?= View::e($field) ?>"
+                           min="1" max="200" step="1" required
+                           value="<?= View::e((string) ($row[$field] ?? '50')) ?>"
+                           placeholder="50">
+                    <div class="form-hint">Ex.: 50, 60 ou 70. Digite só o número (sem o %).</div>
                 <?php elseif ($type === 'bool'): ?>
                     <label class="text-sm"><input type="checkbox" name="<?= View::e($field) ?>" value="1" <?= !empty($row[$field]) ? 'checked' : '' ?>> Sim</label>
                 <?php elseif ($type === 'hours'): ?>
@@ -144,7 +155,7 @@ use App\Helpers\View;
                     <input class="form-control" type="<?= View::e($type === 'number' ? 'number' : ($type === 'date' ? 'date' : ($type === 'time' ? 'time' : 'text'))) ?>"
                            name="<?= View::e($field) ?>"
                            value="<?= View::e((string) ($row[$field] ?? '')) ?>"
-                           <?= in_array($field, ['nome','codigo','matricula'], true) ? 'required' : '' ?>>
+                           <?= in_array($field, ['nome', 'codigo'], true) ? 'required' : '' ?>>
                 <?php endif; ?>
             </div>
         <?php endforeach; ?>

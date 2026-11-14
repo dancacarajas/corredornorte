@@ -35,13 +35,13 @@ try {
 
     $motor = new MotorPontoService($pdo);
 
-    // Competência dedicada ao teste para permanecer idempotente
-    $anoTeste = 2026;
-    $mesTeste = 9;
+    // Período dedicado ao teste para permanecer idempotente
+    $periodoIni = '2026-09-01';
+    $periodoFim = '2026-09-30';
     $ids = $pdo->query(
         "SELECT e.id FROM ponto_espelhos e
-         INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
-         WHERE pc.ano={$anoTeste} AND pc.mes={$mesTeste}"
+         INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+         WHERE pp.data_inicio='{$periodoIni}' AND pp.data_fim='{$periodoFim}'"
     )->fetchAll(PDO::FETCH_COLUMN);
     if ($ids !== []) {
         $in = implode(',', array_map('intval', $ids));
@@ -54,15 +54,15 @@ try {
         }
         $pdo->exec("DELETE FROM ponto_espelhos WHERE id IN ({$in})");
     }
-    $pdo->exec("DELETE FROM ponto_competencias WHERE ano={$anoTeste} AND mes={$mesTeste}");
+    $pdo->exec("DELETE FROM ponto_periodos WHERE data_inicio='{$periodoIni}' AND data_fim='{$periodoFim}'");
 
-    $gerados = $motor->gerarCompetenciaParaAtivos($anoTeste, $mesTeste);
+    $gerados = $motor->gerarPeriodoParaAtivos($periodoIni, $periodoFim);
     assertTrue($gerados >= 3, "Geração de espelhos ({$gerados})");
 
     $espelhoId = (int) $pdo->query(
         "SELECT e.id FROM ponto_espelhos e
-         INNER JOIN ponto_competencias c ON c.id = e.competencia_id
-         WHERE c.ano={$anoTeste} AND c.mes={$mesTeste}
+         INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+         WHERE pp.data_inicio='{$periodoIni}' AND pp.data_fim='{$periodoFim}'
          ORDER BY e.id LIMIT 1"
     )->fetchColumn();
     assertTrue($espelhoId > 0, "Espelho encontrado #{$espelhoId}");

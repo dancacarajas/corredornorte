@@ -79,12 +79,71 @@ final class CadastroController
             'table' => 'rh_lotacoes',
             'title' => 'Lotações',
             'menu' => 'lotacoes',
-            'subtitle' => 'Pacote operacional: CC + OS + Localidade + Jornada + Escala',
-            'columns' => ['codigo', 'nome', 'status'],
+            'subtitle' => 'Pacote operacional: CC + OS + Localidade + Jornada + Escala + % HE',
+            'columns' => ['codigo', 'nome', 'percentual_he', 'status'],
             'fields' => [
                 'codigo' => 'text', 'nome' => 'text',
                 'contrato_id' => 'contrato', 'centro_custo_id' => 'centro_custo', 'ordem_servico_id' => 'ordem_servico',
                 'localidade_id' => 'localidade', 'jornada_id' => 'jornada', 'escala_id' => 'escala', 'calendario_id' => 'calendario',
+                'percentual_he' => 'percentual_he',
+                'status' => 'status',
+            ],
+        ],
+        'cargos' => [
+            'table' => 'rh_cargos',
+            'title' => 'Cargos',
+            'menu' => 'cargos',
+            'subtitle' => 'Catálogo de cargos do efetivo',
+            'columns' => ['codigo', 'nome', 'status'],
+            'fields' => ['codigo' => 'text', 'nome' => 'text', 'status' => 'status'],
+        ],
+        'funcoes' => [
+            'table' => 'rh_funcoes',
+            'title' => 'Funções',
+            'menu' => 'funcoes',
+            'subtitle' => 'Catálogo de funções do efetivo',
+            'columns' => ['codigo', 'nome', 'status'],
+            'fields' => ['codigo' => 'text', 'nome' => 'text', 'status' => 'status'],
+        ],
+        'gestores-arcadis' => [
+            'table' => 'rh_gestores_arcadis',
+            'title' => 'Gestores Arcadis',
+            'menu' => 'gestores-arcadis',
+            'subtitle' => 'Cadastro de gestores internos Arcadis',
+            'columns' => ['nome', 'matricula', 'email', 'status'],
+            'fields' => [
+                'nome' => 'text',
+                'matricula' => 'text',
+                'email' => 'text',
+                'telefone' => 'text',
+                'status' => 'status',
+            ],
+        ],
+        'gestores-cliente' => [
+            'table' => 'rh_gestores_cliente',
+            'title' => 'Gestores Cliente',
+            'menu' => 'gestores-cliente',
+            'subtitle' => 'Cadastro de gestores do cliente (ex.: Vale)',
+            'columns' => ['nome', 'cliente', 'email', 'status'],
+            'fields' => [
+                'nome' => 'text',
+                'cliente' => 'text',
+                'email' => 'text',
+                'telefone' => 'text',
+                'status' => 'status',
+            ],
+        ],
+        'supervisores' => [
+            'table' => 'rh_supervisores',
+            'title' => 'Supervisores',
+            'menu' => 'supervisores',
+            'subtitle' => 'Supervisão operacional de equipe',
+            'columns' => ['nome', 'matricula', 'email', 'status'],
+            'fields' => [
+                'nome' => 'text',
+                'matricula' => 'text',
+                'email' => 'text',
+                'telefone' => 'text',
                 'status' => 'status',
             ],
         ],
@@ -98,6 +157,11 @@ final class CadastroController
     public function jornadas(): void { $this->list('jornadas'); }
     public function escalas(): void { $this->list('escalas'); }
     public function lotacoes(): void { $this->list('lotacoes'); }
+    public function cargos(): void { $this->list('cargos'); }
+    public function funcoes(): void { $this->list('funcoes'); }
+    public function gestoresArcadis(): void { $this->list('gestores-arcadis'); }
+    public function gestoresCliente(): void { $this->list('gestores-cliente'); }
+    public function supervisores(): void { $this->list('supervisores'); }
 
     public function createForm(string $entity = ''): void
     {
@@ -196,26 +260,34 @@ final class CadastroController
         }
 
         $data = [];
-        foreach ($meta['fields'] as $field => $type) {
-            if ($type === 'bool') {
-                $data[$field] = isset($_POST[$field]) ? 1 : 0;
-                continue;
-            }
-            $val = trim((string) ($_POST[$field] ?? ''));
-            if ($type === 'hours') {
-                $data[$field] = $val === '' ? null : $this->parseHoursToMinutes($val);
-                continue;
-            }
-            $data[$field] = $val === '' ? null : $val;
-        }
-
-        if ($entity === 'jornadas') {
-            $cargas = $this->calcularCargasJornada($data);
-            $data['carga_diaria_min'] = $cargas['diaria'];
-            $data['carga_semanal_min'] = $cargas['semanal'];
-        }
-
         try {
+            foreach ($meta['fields'] as $field => $type) {
+                if ($type === 'bool') {
+                    $data[$field] = isset($_POST[$field]) ? 1 : 0;
+                    continue;
+                }
+                $val = trim((string) ($_POST[$field] ?? ''));
+                if ($type === 'hours') {
+                    $data[$field] = $val === '' ? null : $this->parseHoursToMinutes($val);
+                    continue;
+                }
+                if ($type === 'percentual_he') {
+                    $pct = (int) $val;
+                    if ($pct < 1 || $pct > 200) {
+                        throw new \RuntimeException('Informe o percentual de HE entre 1 e 200.');
+                    }
+                    $data[$field] = $pct;
+                    continue;
+                }
+                $data[$field] = $val === '' ? null : $val;
+            }
+
+            if ($entity === 'jornadas') {
+                $cargas = $this->calcularCargasJornada($data);
+                $data['carga_diaria_min'] = $cargas['diaria'];
+                $data['carga_semanal_min'] = $cargas['semanal'];
+            }
+
             if ($id === null) {
                 $cols = array_keys($data);
                 $placeholders = array_map(static fn($c) => ':' . $c, $cols);

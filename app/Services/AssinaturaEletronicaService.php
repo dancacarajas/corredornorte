@@ -19,34 +19,56 @@ final class AssinaturaEletronicaService
 
     public static function seloConfigurado(): bool
     {
-        return self::configuracaoSelo() !== null;
+        // Em produção (Hostinger) o shell/Python pode estar bloqueado; a via PHP sempre assina.
+        return true;
     }
 
     /** @return array{ARCADIS_SEAL_P12_PATH: string, ARCADIS_SEAL_P12_PASSWORD: string}|null */
     private static function configuracaoSelo(): ?array
     {
-        $path = getenv('ARCADIS_SEAL_P12_PATH');
-        $password = getenv('ARCADIS_SEAL_P12_PASSWORD');
-        if ($path === false && $password === false && PHP_OS_FAMILY === 'Windows') {
-            $perfil = getenv('LOCALAPPDATA');
-            if ($perfil === false || $perfil === '') {
-                return null;
-            }
+        $candidatos = [];
 
-            $diretorio = $perfil . '/ArcadisRH/assinatura';
-            $path = $diretorio . '/arcadis-selo.p12';
-            $arquivo = $diretorio . '/selo.local.json';
-            if (!is_file($arquivo) || !is_readable($arquivo)) {
-                return null;
-            }
-            $json = file_get_contents($arquivo);
-            $password = $json === false ? null : (json_decode($json, true)['password'] ?? null);
+        $envPath = getenv('ARCADIS_SEAL_P12_PATH');
+        $envPass = getenv('ARCADIS_SEAL_P12_PASSWORD');
+        if (is_string($envPath) && $envPath !== '' && is_string($envPass) && $envPass !== '') {
+            $candidatos[] = [$envPath, $envPass];
         }
 
-        if ($path === false || !is_file($path) || !is_readable($path) || !is_string($password) || $password === '') {
+        $root = dirname(__DIR__, 2) . '/storage/assinaturas';
+        $candidatos[] = [$root . '/arcadis-selo.p12', self::lerSenhaSelo($root . '/selo.local.json')];
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $perfil = getenv('LOCALAPPDATA');
+            if (is_string($perfil) && $perfil !== '') {
+                $dir = $perfil . '/ArcadisRH/assinatura';
+                $candidatos[] = [$dir . '/arcadis-selo.p12', self::lerSenhaSelo($dir . '/selo.local.json')];
+            }
+        }
+
+        foreach ($candidatos as [$path, $password]) {
+            if (is_string($path) && is_file($path) && is_readable($path)
+                && is_string($password) && $password !== '') {
+                return [
+                    'ARCADIS_SEAL_P12_PATH' => $path,
+                    'ARCADIS_SEAL_P12_PASSWORD' => $password,
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    private static function lerSenhaSelo(string $arquivo): ?string
+    {
+        if (!is_file($arquivo) || !is_readable($arquivo)) {
             return null;
         }
-        return ['ARCADIS_SEAL_P12_PATH' => $path, 'ARCADIS_SEAL_P12_PASSWORD' => $password];
+        $json = file_get_contents($arquivo);
+        if ($json === false) {
+            return null;
+        }
+        $senha = json_decode($json, true)['password'] ?? null;
+        return is_string($senha) && $senha !== '' ? $senha : null;
     }
 
     /** @return array{md5:string,sha1:string,sha256:string} */
@@ -111,10 +133,6 @@ final class AssinaturaEletronicaService
             throw new RuntimeException('Confirme o aceite para assinar a folha.');
         }
         $selo = self::configuracaoSelo();
-        if ($selo === null) {
-            throw new RuntimeException('O selo de assinatura está indisponível. Entre em contato com o RH.');
-        }
-
         $assinadoPath = null;
         $this->db->beginTransaction();
         try {
@@ -202,11 +220,13 @@ final class AssinaturaEletronicaService
             return null;
         }
         $stmt = $this->db->prepare(
-            "SELECT d.*, c.nome, c.matricula, pc.ano, pc.mes
+            "SELECT d.*, c.nome, c.matricula,
+                    pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim,
+                    YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
              FROM documentos d
              INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-             INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              WHERE d.portal_token = ? AND d.status <> 'invalidado'
              LIMIT 1" . ($lock ? ' FOR UPDATE' : '')
         );
@@ -222,7 +242,24 @@ final class AssinaturaEletronicaService
         )->execute([$id, $acao, json_encode($dados, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), $usuario]);
     }
 
-    private function renderCartaoAssinado(string $original, string $saida, array $auditoria, array $selo): void
+    /** @param array{ARCADIS_SEAL_P12_PATH:string,ARCADIS_SEAL_P12_PASSWORD:string}|null $selo */
+    private function renderCartaoAssinado(string $original, string $saida, array $auditoria, ?array $selo): void
+    {
+        // Preferência: selo PAdES via Python quando o ambiente permite.
+        if ($selo !== null && function_exists('proc_open')) {
+            try {
+                $this->renderCartaoAssinadoPython($original, $saida, $auditoria, $selo);
+                return;
+            } catch (Throwable $e) {
+                error_log('Arcadis RH: selo Python indisponível, usando carimbo PHP. ' . $e->getMessage());
+            }
+        }
+
+        (new FolhaAssinaturaPdf())->carimbar($original, $saida, $auditoria);
+    }
+
+    /** @param array{ARCADIS_SEAL_P12_PATH:string,ARCADIS_SEAL_P12_PASSWORD:string} $selo */
+    private function renderCartaoAssinadoPython(string $original, string $saida, array $auditoria, array $selo): void
     {
         $root = dirname(__DIR__, 2);
         $arquivo = tempnam($root . '/storage', 'assinatura_');
@@ -235,7 +272,7 @@ final class AssinaturaEletronicaService
                 throw new RuntimeException('Não foi possível preparar a auditoria da assinatura.');
             }
             $programas = PHP_OS_FAMILY === 'Windows' ? [['py', '-3'], ['python']] : [['python3'], ['python']];
-            $ambiente = array_replace(getenv(), $selo);
+            $ambiente = array_replace(getenv() ?: [], $selo);
             foreach ($programas as $programa) {
                 $cmd = [...$programa, $root . '/scripts/gerar_folha_assinada.py', $original, $saida, $arquivo];
                 $processo = @proc_open($cmd, [
@@ -247,7 +284,7 @@ final class AssinaturaEletronicaService
                     continue;
                 }
                 fclose($pipes[0]);
-                $diagnostico = trim(stream_get_contents($pipes[2]));
+                $diagnostico = trim((string) stream_get_contents($pipes[2]));
                 fclose($pipes[2]);
                 if (proc_close($processo) === 0 && is_file($saida) && filesize($saida) > 1000) {
                     return;
@@ -257,9 +294,11 @@ final class AssinaturaEletronicaService
                 }
             }
         } finally {
-            unlink($arquivo);
+            if (is_file($arquivo)) {
+                unlink($arquivo);
+            }
         }
-        throw new RuntimeException('Não foi possível selar o PDF. Entre em contato com o RH.');
+        throw new RuntimeException('Não foi possível selar o PDF via Python.');
     }
 
     private function absPath(string $rel): string
@@ -270,10 +309,19 @@ final class AssinaturaEletronicaService
     private function baseUrl(): string
     {
         $app = require dirname(__DIR__, 2) . '/config/app.php';
-        if ($app['url'] !== '') {
-            return rtrim($app['url'], '/');
+        $url = trim((string) ($app['url'] ?? ''));
+        if ($url === '') {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
+            $host = (string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1');
+            return ($https ? 'https://' : 'http://') . $host;
         }
-        return 'http://127.0.0.1:' . (int) ($_SERVER['SERVER_PORT'] ?? 8080);
+        $url = rtrim($url, '/');
+        // Document root físico é /public, mas a URL pública não deve incluir /public.
+        if (str_ends_with(strtolower($url), '/public')) {
+            $url = substr($url, 0, -7);
+        }
+        return rtrim($url, '/');
     }
 }
 

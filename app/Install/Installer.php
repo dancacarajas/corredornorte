@@ -44,6 +44,9 @@ final class Installer
         $username = trim($input['username'] ?? '');
         $password = (string) ($input['password'] ?? '');
         $appUrl = rtrim(trim($input['app_url'] ?? ''), '/');
+        if (str_ends_with(strtolower($appUrl), '/public')) {
+            $appUrl = rtrim(substr($appUrl, 0, -7), '/');
+        }
         $appName = trim($input['app_name'] ?? 'Corredor Norte RH');
 
         if ($host === '' || $database === '' || $username === '') {
@@ -87,6 +90,27 @@ final class Installer
 
         $this->migrateUsuariosPerfis($pdo);
         $messages[] = 'Migração: usuários e perfis';
+
+        $this->migratePercentualHe($pdo);
+        $messages[] = 'Migração: percentual HE por lotação';
+
+        $this->migrateHeAutorizacao($pdo);
+        $messages[] = 'Migração: autorização de hora extra';
+
+        $this->migratePontoPeriodos($pdo);
+        $messages[] = 'Migração: ponto por período';
+
+        $this->migrateRelatorioAtividades($pdo);
+        $messages[] = 'Migração: relatório de atividades e VR';
+
+        $this->migrateRelatorioAssinatura($pdo);
+        $messages[] = 'Migração: assinatura do relatório de atividades';
+
+        $this->migrateOrganizacao($pdo);
+        $messages[] = 'Migração: cargos, funções e gestores';
+
+        $this->migrateHeCliente($pdo);
+        $messages[] = 'Migração: HE via gestor cliente';
 
         $adminPassword = 'admin123';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
@@ -184,6 +208,7 @@ final class Installer
             'horas_extras_min' => 'INT NOT NULL DEFAULT 0',
             'he_50_min' => 'INT NOT NULL DEFAULT 0',
             'he_100_min' => 'INT NOT NULL DEFAULT 0',
+            'percentual_he' => 'SMALLINT UNSIGNED NOT NULL DEFAULT 50',
             'adn_min' => 'INT NOT NULL DEFAULT 0',
             'desconto_min' => 'INT NOT NULL DEFAULT 0',
             'ok_status' => "ENUM('ok','pendente','folga','feriado','falta') NOT NULL DEFAULT 'pendente'",
@@ -459,6 +484,320 @@ final class Installer
              CROSS JOIN perfis p
              WHERE u.email = 'admin@arcadis.local' AND p.codigo = 'admin'"
         );
+    }
+
+    private function migratePercentualHe(PDO $pdo): void
+    {
+        if (!$this->hasColumn($pdo, 'rh_lotacoes', 'percentual_he')) {
+            $pdo->exec(
+                'ALTER TABLE rh_lotacoes
+                 ADD COLUMN percentual_he SMALLINT UNSIGNED NOT NULL DEFAULT 50
+                 AFTER calendario_id'
+            );
+        }
+        if (!$this->hasColumn($pdo, 'rh_colaborador_lotacoes', 'percentual_he')) {
+            $pdo->exec(
+                'ALTER TABLE rh_colaborador_lotacoes
+                 ADD COLUMN percentual_he SMALLINT UNSIGNED NULL
+                 AFTER escala_ancora_data'
+            );
+        }
+        if (!$this->hasColumn($pdo, 'ponto_dias', 'percentual_he')) {
+            $pdo->exec(
+                'ALTER TABLE ponto_dias
+                 ADD COLUMN percentual_he SMALLINT UNSIGNED NOT NULL DEFAULT 50
+                 AFTER he_100_min'
+            );
+        }
+    }
+
+    private function migrateHeAutorizacao(PDO $pdo): void
+    {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS he_solicitacoes (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              colaborador_id BIGINT UNSIGNED NOT NULL,
+              gestor_id BIGINT UNSIGNED NOT NULL,
+              relatorio_atividade TEXT NOT NULL,
+              data DATE NOT NULL,
+              hora_inicial TIME NOT NULL,
+              hora_final TIME NOT NULL,
+              minutos_he INT UNSIGNED NOT NULL DEFAULT 0,
+              contrato_id BIGINT UNSIGNED NOT NULL,
+              ordem_servico_id BIGINT UNSIGNED NOT NULL,
+              modalidade ENUM('viagem','presencial','remoto') NOT NULL,
+              status ENUM('pendente','aprovada','recusada','cancelada') NOT NULL DEFAULT 'pendente',
+              ponto_dia_id BIGINT UNSIGNED NULL,
+              sai2_anterior TIME NULL,
+              motivo_recusa VARCHAR(255) NULL,
+              aprovado_em DATETIME NULL,
+              aprovado_por_colaborador_id BIGINT UNSIGNED NULL,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_he_gestor_status (gestor_id, status),
+              INDEX idx_he_colab_data (colaborador_id, data),
+              INDEX idx_he_status_data (status, data),
+              CONSTRAINT fk_he_colab FOREIGN KEY (colaborador_id) REFERENCES rh_colaboradores(id),
+              CONSTRAINT fk_he_gestor FOREIGN KEY (gestor_id) REFERENCES rh_colaboradores(id),
+              CONSTRAINT fk_he_contrato FOREIGN KEY (contrato_id) REFERENCES rh_contratos(id),
+              CONSTRAINT fk_he_os FOREIGN KEY (ordem_servico_id) REFERENCES rh_ordens_servico(id),
+              CONSTRAINT fk_he_ponto_dia FOREIGN KEY (ponto_dia_id) REFERENCES ponto_dias(id) ON DELETE SET NULL,
+              CONSTRAINT fk_he_aprovador FOREIGN KEY (aprovado_por_colaborador_id) REFERENCES rh_colaboradores(id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+    }
+
+    public function migrateRelatorioAtividades(PDO $pdo): void
+    {
+        $sqlFile = $this->root . '/database/schema_relatorio_atividades.sql';
+        if (!is_file($sqlFile)) {
+            return;
+        }
+        $sql = file_get_contents($sqlFile);
+        if ($sql === false || trim($sql) === '') {
+            return;
+        }
+        foreach (preg_split('/;\s*\n/', $sql) ?: [] as $part) {
+            $stmt = trim(preg_replace('/^--.*$/m', '', $part) ?? '');
+            if ($stmt === '') {
+                continue;
+            }
+            $pdo->exec($stmt);
+        }
+        $this->migrateVrAlocacao($pdo);
+    }
+
+    /** Garante coluna todos_contratos e tabela de vínculos (bancos já existentes). */
+    public function migrateVrAlocacao(PDO $pdo): void
+    {
+        if (!$this->tableExists($pdo, 'vr_config')) {
+            return;
+        }
+        if (!$this->hasColumn($pdo, 'vr_config', 'todos_contratos')) {
+            $pdo->exec(
+                'ALTER TABLE vr_config
+                 ADD COLUMN todos_contratos TINYINT(1) NOT NULL DEFAULT 1
+                 AFTER vigencia_fim'
+            );
+        }
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS vr_config_contratos (
+              config_id BIGINT UNSIGNED NOT NULL,
+              contrato_id BIGINT UNSIGNED NOT NULL,
+              PRIMARY KEY (config_id, contrato_id),
+              KEY idx_vr_cc_contrato (contrato_id),
+              CONSTRAINT fk_vr_cc_config FOREIGN KEY (config_id) REFERENCES vr_config(id) ON DELETE CASCADE,
+              CONSTRAINT fk_vr_cc_contrato FOREIGN KEY (contrato_id) REFERENCES rh_contratos(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    }
+
+    public function migrateRelatorioAssinatura(PDO $pdo): void
+    {
+        $sqlFile = $this->root . '/database/schema_relatorio_assinatura.sql';
+        if (!is_file($sqlFile)) {
+            throw new RuntimeException('Schema da assinatura do relatório não encontrado.');
+        }
+        $sql = file_get_contents($sqlFile);
+        if ($sql === false || trim($sql) === '') {
+            throw new RuntimeException('Schema da assinatura do relatório vazio.');
+        }
+        $pdo->exec($sql);
+    }
+
+    public function migrateOrganizacao(PDO $pdo): void
+    {
+        $sqlFile = $this->root . '/database/schema_organizacao.sql';
+        if (!is_file($sqlFile)) {
+            return;
+        }
+        $sql = file_get_contents($sqlFile);
+        if ($sql === false || trim($sql) === '') {
+            return;
+        }
+        foreach (preg_split('/;\s*\n/', $sql) ?: [] as $part) {
+            $stmt = trim(preg_replace('/^--.*$/m', '', $part) ?? '');
+            if ($stmt === '') {
+                continue;
+            }
+            $pdo->exec($stmt);
+        }
+    }
+
+    public function migrateHeCliente(PDO $pdo): void
+    {
+        if (!$this->tableExists($pdo, 'rh_colaboradores')) {
+            return;
+        }
+        if (!$this->hasColumn($pdo, 'rh_colaboradores', 'he_fluxo')) {
+            $pdo->exec(
+                "ALTER TABLE rh_colaboradores
+                 ADD COLUMN he_fluxo ENUM('off','cliente') NOT NULL DEFAULT 'off'
+                 AFTER supervisor_id"
+            );
+        }
+        if (!$this->hasColumn($pdo, 'rh_colaboradores', 'gestor_cliente_id')) {
+            $pdo->exec(
+                'ALTER TABLE rh_colaboradores
+                 ADD COLUMN gestor_cliente_id BIGINT UNSIGNED NULL
+                 AFTER he_fluxo'
+            );
+            if ($this->tableExists($pdo, 'rh_gestores_cliente')) {
+                try {
+                    $pdo->exec(
+                        'ALTER TABLE rh_colaboradores
+                         ADD CONSTRAINT fk_colab_gestor_cliente
+                         FOREIGN KEY (gestor_cliente_id) REFERENCES rh_gestores_cliente(id)
+                         ON DELETE SET NULL'
+                    );
+                } catch (Throwable) {
+                    // FK pode já existir ou engine sem suporte em ambiente legado
+                }
+            }
+        }
+
+        if (!$this->tableExists($pdo, 'ra_dias')) {
+            return;
+        }
+        $raCols = [
+            'he_hora_inicio' => 'TIME NULL',
+            'he_hora_fim' => 'TIME NULL',
+            'he_status' => "ENUM('nenhuma','declarada','aplicada','divergente') NOT NULL DEFAULT 'nenhuma'",
+            'he_aplicada_em' => 'DATETIME NULL',
+            'he_aplicada_por_usuario_id' => 'BIGINT UNSIGNED NULL',
+            'he_ponto_dia_id' => 'BIGINT UNSIGNED NULL',
+            'he_sai2_anterior' => 'TIME NULL',
+        ];
+        $after = 'observacoes';
+        foreach ($raCols as $col => $def) {
+            if ($this->hasColumn($pdo, 'ra_dias', $col)) {
+                $after = $col;
+                continue;
+            }
+            $pdo->exec("ALTER TABLE ra_dias ADD COLUMN {$col} {$def} AFTER {$after}");
+            $after = $col;
+        }
+    }
+
+    /**
+     * Troca competência mensal por período exato (data_inicio/data_fim).
+     * Apaga espelhos/documentos legados baseados em competência.
+     */
+    public function migratePontoPeriodos(PDO $pdo): void
+    {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS ponto_periodos (
+              id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              data_inicio DATE NOT NULL,
+              data_fim DATE NOT NULL,
+              status ENUM('aberta','em_tratamento','conferida','fechada') NOT NULL DEFAULT 'aberta',
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+              UNIQUE KEY uk_periodo (data_inicio, data_fim)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        $temCompetencia = $this->hasColumn($pdo, 'ponto_espelhos', 'competencia_id');
+        $temPeriodo = $this->hasColumn($pdo, 'ponto_espelhos', 'periodo_id');
+
+        if ($temCompetencia) {
+            // 1A: limpar cartões mensais legados e dependências sem CASCADE.
+            $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+            try {
+                if ($this->tableExists($pdo, 'documentos_espelhos')) {
+                    $pdo->exec('DELETE FROM documentos_espelhos');
+                }
+                if ($this->tableExists($pdo, 'emails_envios')) {
+                    $pdo->exec(
+                        'DELETE ee FROM emails_envios ee
+                         INNER JOIN documentos d ON d.id = ee.documento_id
+                         INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                         WHERE e.competencia_id IS NOT NULL'
+                    );
+                }
+                if ($this->tableExists($pdo, 'documentos_versoes')) {
+                    $pdo->exec(
+                        'DELETE dv FROM documentos_versoes dv
+                         INNER JOIN documentos d ON d.id = dv.documento_id
+                         INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                         WHERE e.competencia_id IS NOT NULL'
+                    );
+                }
+                if ($this->tableExists($pdo, 'documentos')) {
+                    $pdo->exec(
+                        'DELETE d FROM documentos d
+                         INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                         WHERE e.competencia_id IS NOT NULL'
+                    );
+                }
+                $pdo->exec('DELETE FROM ponto_espelhos');
+                if ($this->tableExists($pdo, 'ponto_competencias')) {
+                    $pdo->exec('DELETE FROM ponto_competencias');
+                }
+            } finally {
+                $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+            }
+
+            $this->dropForeignKeysOnColumn($pdo, 'ponto_espelhos', 'competencia_id');
+            try {
+                $pdo->exec('ALTER TABLE ponto_espelhos DROP INDEX uk_espelho');
+            } catch (Throwable) {
+                // índice pode já ter outro nome
+            }
+            $pdo->exec('ALTER TABLE ponto_espelhos DROP COLUMN competencia_id');
+            $temCompetencia = false;
+            $temPeriodo = $this->hasColumn($pdo, 'ponto_espelhos', 'periodo_id');
+        }
+
+        if (!$temPeriodo) {
+            $pdo->exec('ALTER TABLE ponto_espelhos ADD COLUMN periodo_id BIGINT UNSIGNED NULL AFTER id');
+            // Sem cartões legados: torna obrigatório e amarra a chave.
+            $pdo->exec('ALTER TABLE ponto_espelhos MODIFY periodo_id BIGINT UNSIGNED NOT NULL');
+            try {
+                $pdo->exec('ALTER TABLE ponto_espelhos ADD UNIQUE KEY uk_espelho (periodo_id, colaborador_id)');
+            } catch (Throwable) {
+                // índice já existente
+            }
+            try {
+                $pdo->exec(
+                    'ALTER TABLE ponto_espelhos
+                     ADD CONSTRAINT fk_esp_periodo FOREIGN KEY (periodo_id) REFERENCES ponto_periodos(id)'
+                );
+            } catch (Throwable) {
+                // FK já existente
+            }
+        }
+
+        if ($this->tableExists($pdo, 'ponto_competencias')) {
+            $pdo->exec('DROP TABLE ponto_competencias');
+        }
+    }
+
+    private function tableExists(PDO $pdo, string $table): bool
+    {
+        $stmt = $pdo->prepare(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t'
+        );
+        $stmt->execute(['t' => $table]);
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    private function dropForeignKeysOnColumn(PDO $pdo, string $table, string $column): void
+    {
+        $stmt = $pdo->prepare(
+            'SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = :t
+               AND COLUMN_NAME = :c
+               AND REFERENCED_TABLE_NAME IS NOT NULL'
+        );
+        $stmt->execute(['t' => $table, 'c' => $column]);
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) ?: [] as $fk) {
+            $name = str_replace('`', '``', (string) $fk);
+            $tbl = str_replace('`', '``', $table);
+            $pdo->exec("ALTER TABLE `{$tbl}` DROP FOREIGN KEY `{$name}`");
+        }
     }
 
     private function ensureDirectories(): void

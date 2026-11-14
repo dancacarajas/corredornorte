@@ -14,6 +14,8 @@ use App\Helpers\View;
             Dados do colaborador atualizados.
         <?php elseif ($flash === 'excecao'): ?>
             Exceção individual registrada.
+        <?php elseif ($flash === 'percentual_he'): ?>
+            Percentual de hora extra atualizado.
         <?php else: ?>
             Transferência registrada com vigência.
         <?php endif; ?>
@@ -38,6 +40,7 @@ use App\Helpers\View;
         <div><div class="text-xs muted">E-mail</div><div class="fw-700"><?= View::e((string)($colaborador['email_corp'] ?? '—')) ?></div></div>
         <div><div class="text-xs muted">Telefone</div><div class="fw-700"><?= View::e((string)($colaborador['telefone'] ?? '—')) ?></div></div>
         <div><div class="text-xs muted">Cargo / Função</div><div class="fw-700"><?= View::e(trim(($colaborador['cargo'] ?? '').' / '.($colaborador['funcao'] ?? ''), ' /')) ?></div></div>
+        <div><div class="text-xs muted">HE via Gestor Cliente</div><div class="fw-700"><?= (($colaborador['he_fluxo'] ?? 'off') === 'cliente') ? 'Sim' : 'Não' ?></div></div>
         <div><div class="text-xs muted">Admissão</div><div class="fw-700"><?= View::e((string)($colaborador['data_admissao'] ?? '—')) ?></div></div>
         <div><div class="text-xs muted">Status</div><div class="fw-700"><?= View::e(ucfirst((string)$colaborador['status'])) ?></div></div>
     </div>
@@ -106,6 +109,24 @@ use App\Helpers\View;
                         desde <?= View::e((string) ($lotacaoAtual['vigencia_inicio'] ?? '')) ?>
                     </div>
                 </div>
+                <div>
+                    <div class="text-xs muted">% Hora extra (efetivo)</div>
+                    <div class="fw-700"><?= (int) ($lotacaoAtual['percentual_he'] ?? 50) ?>%</div>
+                </div>
+                <div style="grid-column:1/-1;">
+                    <form method="post" action="/rh/colaboradores/<?= (int) $colaborador['id'] ?>/percentual-he" class="form-grid cols-3" style="align-items:end;">
+                        <div class="form-field">
+                            <label class="form-label">% HE deste colaborador</label>
+                            <input class="form-control" type="number" name="percentual_he" min="1" max="200" step="1"
+                                   value="<?= View::e((string) ($lotacaoAtual['colaborador_percentual_he'] ?? $lotacaoAtual['percentual_he'] ?? '50')) ?>"
+                                   placeholder="<?= (int) ($lotacaoAtual['lotacao_percentual_he'] ?? 50) ?>">
+                            <div class="form-hint">Padrão da lotação: <?= (int) ($lotacaoAtual['lotacao_percentual_he'] ?? 50) ?>%. Deixe em branco e salve para herdar.</div>
+                        </div>
+                        <div class="form-field">
+                            <button class="btn btn-primary" type="submit">Salvar % HE</button>
+                        </div>
+                    </form>
+                </div>
             </div>
         <?php endif; ?>
     </div>
@@ -132,6 +153,7 @@ use App\Helpers\View;
             'Domingo' => !empty($lotacaoAtual['trabalha_domingo']) ? 'Sim' : 'Não',
             'Feriado' => !empty($lotacaoAtual['trabalha_feriado']) ? 'Sim' : 'Não',
             'Adicional noturno' => !empty($lotacaoAtual['adicional_noturno']) ? 'Sim' : 'Não',
+            '% Hora extra' => ((int) ($lotacaoAtual['percentual_he'] ?? 50)) . '%',
             'Exceção ativa' => !empty($lotacaoAtual['excecao']) ? 'Sim' : 'Não',
         ];
         foreach ($heranca as $label => $val):
@@ -185,6 +207,7 @@ use App\Helpers\View;
                 <tr>
                     <th>Período</th>
                     <th>Lotação</th>
+                    <th>% HE</th>
                     <th>Contrato</th>
                     <th>CC / OS</th>
                     <th>Localidade</th>
@@ -200,6 +223,7 @@ use App\Helpers\View;
                             <?= View::e((string) ($h['vigencia_fim'] ?? 'atual')) ?>
                         </td>
                         <td><?= View::e((string) $h['lotacao_codigo']) ?></td>
+                        <td><?= (int) ($h['percentual_he_efetivo'] ?? $h['lotacao_percentual_he'] ?? 50) ?>%</td>
                         <td><?= View::e((string) $h['contrato_codigo']) ?></td>
                         <td><?= View::e($h['cc_codigo'] . ' / ' . $h['os_codigo']) ?></td>
                         <td><?= View::e($h['municipio'] . '/' . $h['uf']) ?></td>
@@ -259,6 +283,11 @@ use App\Helpers\View;
                 <div class="form-field">
                     <label class="form-label">Data da transferência</label>
                     <input class="form-control" type="date" name="data_transferencia" value="<?= date('Y-m-d') ?>" required>
+                </div>
+                <div class="form-field">
+                    <label class="form-label">% HE (opcional)</label>
+                    <input class="form-control" type="number" name="percentual_he" min="1" max="200" step="1" placeholder="Herdar da lotação">
+                    <div class="form-hint">Ex.: 50, 60 ou 70. Vazio = usa o % padrão da lotação.</div>
                 </div>
                 <div class="form-field" style="grid-column:1/-1;">
                     <label class="form-label">Observação</label>

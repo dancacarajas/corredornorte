@@ -33,7 +33,8 @@ final class TransferenciaLotacaoService
         string $motivo = 'transferencia',
         ?string $observacao = null,
         ?int $usuarioId = null,
-        ?DateTimeImmutable $escalaAncora = null
+        ?DateTimeImmutable $escalaAncora = null,
+        ?int $percentualHe = null
     ): array {
         $inicio = $dataTransferencia instanceof DateTimeImmutable
             ? $dataTransferencia
@@ -77,17 +78,22 @@ final class TransferenciaLotacaoService
                 $fechadaId = (int) $aberta['id'];
             }
 
+            if ($percentualHe !== null && ($percentualHe < 1 || $percentualHe > 200)) {
+                throw new InvalidArgumentException('Informe o percentual de HE entre 1 e 200.');
+            }
+
             $stmt = $this->db->prepare(
                 'INSERT INTO rh_colaborador_lotacoes
-                (colaborador_id, lotacao_id, vigencia_inicio, vigencia_fim, escala_ancora_data, motivo, observacao, usuario_id)
+                (colaborador_id, lotacao_id, vigencia_inicio, vigencia_fim, escala_ancora_data, percentual_he, motivo, observacao, usuario_id)
                 VALUES
-                (:colaborador_id, :lotacao_id, :inicio, NULL, :ancora, :motivo, :observacao, :usuario_id)'
+                (:colaborador_id, :lotacao_id, :inicio, NULL, :ancora, :percentual_he, :motivo, :observacao, :usuario_id)'
             );
             $stmt->execute([
                 'colaborador_id' => $colaboradorId,
                 'lotacao_id' => $novaLotacaoId,
                 'inicio' => $inicio->format('Y-m-d'),
                 'ancora' => $escalaAncora?->format('Y-m-d'),
+                'percentual_he' => $percentualHe,
                 'motivo' => $motivo,
                 'observacao' => $observacao,
                 'usuario_id' => $usuarioId,
@@ -122,6 +128,29 @@ final class TransferenciaLotacaoService
         $stmt->execute(['id' => $colaboradorId]);
         $row = $stmt->fetch();
         return $row === false ? null : $row;
+    }
+
+    /**
+     * Atualiza o % de HE do vínculo vigente (NULL = herda da lotação).
+     */
+    public function atualizarPercentualHe(int $colaboradorId, ?int $percentualHe): void
+    {
+        if ($percentualHe !== null && ($percentualHe < 1 || $percentualHe > 200)) {
+            throw new InvalidArgumentException('Informe o percentual de HE entre 1 e 200.');
+        }
+
+        $aberta = $this->buscarAberta($colaboradorId);
+        if ($aberta === null) {
+            throw new InvalidArgumentException('Colaborador sem lotação vigente.');
+        }
+
+        $stmt = $this->db->prepare(
+            'UPDATE rh_colaborador_lotacoes SET percentual_he = :pct WHERE id = :id'
+        );
+        $stmt->execute([
+            'pct' => $percentualHe,
+            'id' => $aberta['id'],
+        ]);
     }
 
     private function assertLotacaoAtiva(int $lotacaoId): void

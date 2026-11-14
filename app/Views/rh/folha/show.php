@@ -7,14 +7,39 @@ use App\Services\PeriodoPonto;
 /** @var array{espelho:array<string,mixed>,dias:list<array<string,mixed>>,periodo:array,recorte:bool,espelhos_periodo:array} $dados */
 /** @var list<array<string,mixed>> $documentos */
 /** @var list<array<string,mixed>> $envios */
+/** @var list<array<string,mixed>> $espelhosUi */
+/** @var array<string,mixed>|null $docAtivo */
 /** @var string $periodoQuery */
 $e = $dados['espelho'];
-$totais = ['horas_extras_min' => 0, 'horas_falta_min' => 0, 'atraso_bruto_min' => 0, 'adn_min' => 0];
+$espelhosUi = $espelhosUi ?? [];
+$docAtivo = $docAtivo ?? null;
+$espelhoIdAtual = (int) ($e['id'] ?? 0);
+$totais = [
+    'horas_extras_min' => 0,
+    'he_50_min' => 0,
+    'he_100_min' => 0,
+    'horas_falta_min' => 0,
+    'atraso_bruto_min' => 0,
+    'adn_min' => 0,
+];
+$pctHeCounts = [];
 foreach ($dados['dias'] as $dia) {
     foreach ($totais as $campo => $total) {
         $totais[$campo] = $total + (int) ($dia[$campo] ?? 0);
     }
+    $pctDia = (int) ($dia['percentual_he'] ?? 50);
+    if ($pctDia < 1) {
+        $pctDia = 50;
+    }
+    $pctHeCounts[$pctDia] = ($pctHeCounts[$pctDia] ?? 0) + 1;
 }
+arsort($pctHeCounts);
+$pctHeLabel = (int) (array_key_first($pctHeCounts) ?: 50);
+$fmtMin = static function (int $min): string {
+    $sign = $min < 0 ? '-' : '';
+    $min = abs($min);
+    return sprintf('%s%02d:%02d', $sign, intdiv($min, 60), $min % 60);
+};
 ?>
 
 <?php if (!empty($flash) && $flash !== 'link_assinatura'): ?><div class="alert alert-success">Operação concluída.</div><?php endif; ?>
@@ -42,12 +67,80 @@ foreach ($dados['dias'] as $dia) {
         <span class="pill pill-info"><?= $dados['recorte'] ? count($dados['espelhos_periodo']) . ' competência(s)' : View::e((string) $e['status']) ?></span>
     </div>
     <div class="card-body">
-        <div class="text-sm muted">
-            Totais do período — HE: <?= $totais['horas_extras_min'] ?> min · Faltas: <?= $totais['horas_falta_min'] ?> · Atrasos: <?= $totais['atraso_bruto_min'] ?> · ADN: <?= $totais['adn_min'] ?>
+        <div class="form-grid cols-3" style="margin-bottom:.75rem;">
+            <div>
+                <div class="text-xs muted">HE <?= (int) $pctHeLabel ?>%</div>
+                <div class="fw-700"><?= View::e($fmtMin((int) $totais['he_50_min'])) ?></div>
+            </div>
+            <div>
+                <div class="text-xs muted">HE 100%</div>
+                <div class="fw-700"><?= View::e($fmtMin((int) $totais['he_100_min'])) ?></div>
+            </div>
+            <div>
+                <div class="text-xs muted">HE total</div>
+                <div class="fw-700"><?= View::e($fmtMin((int) $totais['horas_extras_min'])) ?></div>
+            </div>
+            <div>
+                <div class="text-xs muted">Faltas</div>
+                <div class="fw-700"><?= View::e($fmtMin((int) $totais['horas_falta_min'])) ?></div>
+            </div>
+            <div>
+                <div class="text-xs muted">Atrasos</div>
+                <div class="fw-700"><?= View::e($fmtMin((int) $totais['atraso_bruto_min'])) ?></div>
+            </div>
+            <div>
+                <div class="text-xs muted">ADN</div>
+                <div class="fw-700"><?= View::e($fmtMin((int) $totais['adn_min'])) ?></div>
+            </div>
         </div>
         <div class="text-sm" style="margin-top:.75rem;">
             Dias no espelho: <strong><?= count($dados['dias']) ?></strong>
+            · % HE do colaborador no período: <strong><?= (int) $pctHeLabel ?>%</strong>
         </div>
+        <?php if ($espelhosUi !== []): ?>
+            <div class="text-sm" style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+                <span class="muted">Cartão do período:</span>
+                <?php foreach ($espelhosUi as $espUi):
+                    $st = (string) ($espUi['status'] ?? '');
+                    $pill = in_array($st, ['fechado', 'enviado', 'assinado'], true) ? 'pill-success' : 'pill-warning';
+                    $rotuloUi = !empty($espUi['data_inicio']) && !empty($espUi['data_fim'])
+                        ? date('d/m/Y', strtotime((string) $espUi['data_inicio'])) . ' a ' . date('d/m/Y', strtotime((string) $espUi['data_fim']))
+                        : sprintf('%02d/%04d', (int) $espUi['mes'], (int) $espUi['ano']);
+                ?>
+                    <span class="pill <?= $pill ?>">
+                        <?= View::e($rotuloUi) ?>
+                        · <?= View::e($st) ?>
+                    </span>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Ações da folha</h2>
+            <p class="card-subtitle">Gere o PDF e depois envie ou compartilhe o link de assinatura</p>
+        </div>
+    </div>
+    <div class="card-body" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
+        <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/gerar?<?= View::e($periodoQuery) ?>">
+            <button class="btn btn-primary" type="submit">Gerar PDF</button>
+        </form>
+        <?php if ($docAtivo !== null): ?>
+            <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/enviar?<?= View::e($periodoQuery) ?>">
+                <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
+                <button class="btn btn-secondary" type="submit">Enviar PDF por e-mail</button>
+            </form>
+            <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/link-assinatura?<?= View::e($periodoQuery) ?>">
+                <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
+                <button class="btn btn-secondary" type="submit">Gerar link de assinatura</button>
+            </form>
+            <a class="btn btn-ghost" href="/rh/folha/documento/<?= (int) $docAtivo['id'] ?>" target="_blank" rel="noopener noreferrer">Abrir PDF</a>
+        <?php else: ?>
+            <span class="text-sm muted">Depois de gerar o PDF, os botões de envio e link de assinatura aparecem aqui.</span>
+        <?php endif; ?>
     </div>
 </section>
 
@@ -59,7 +152,7 @@ foreach ($dados['dias'] as $dia) {
         </div>
     </div>
     <?php if ($documentos === []): ?>
-        <div class="empty-state"><p>Nenhum PDF gerado ainda.</p></div>
+        <div class="empty-state"><p>Nenhum PDF gerado ainda. Clique em <strong>Gerar PDF</strong> acima.</p></div>
     <?php else: ?>
         <div class="table-wrap">
             <table class="table">
@@ -75,10 +168,10 @@ foreach ($dados['dias'] as $dia) {
                 <?php foreach ($documentos as $doc):
                     $modeloAtual = (int) ($doc['layout_pdf'] ?? 0) === FolhaPontoService::LAYOUT_PDF_ATUAL;
                     $pendente = in_array($doc['status'], ['gerado', 'enviado'], true);
-                    $seloDigital = !empty($doc['arquivo_assinado_sha256'])
+                    $registroComIntegridade = !empty($doc['arquivo_assinado_sha256'])
                         && (!empty($doc['assinatura_texto_aceite']) || !empty($doc['assinatura_email_confirmado_em']));
                     $status = $pendente && !$modeloAtual ? 'Modelo anterior' : match ($doc['status']) {
-                        'assinado' => $seloDigital ? 'Assinado e selado' : 'Registro anterior',
+                        'assinado' => $registroComIntegridade ? 'Assinado eletronicamente' : 'Registro anterior',
                         'enviado' => 'Aguardando assinatura',
                         'invalidado' => 'Invalidado',
                         default => 'PDF gerado',
@@ -92,7 +185,7 @@ foreach ($dados['dias'] as $dia) {
                             <a class="btn btn-secondary btn-sm" href="/rh/folha/documento/<?= (int) $doc['id'] ?>"><?= $modeloAtual ? 'PDF original' : 'PDF anterior' ?></a>
                             <?php if (!empty($doc['arquivo_assinado_path'])): ?>
                                 <a class="btn btn-secondary btn-sm" href="/rh/folha/documento/<?= (int) $doc['id'] ?>?versao=assinada">
-                                    <?= $seloDigital ? 'PDF assinado' : 'PDF histórico' ?>
+                                    <?= $registroComIntegridade ? 'PDF assinado' : 'PDF histórico' ?>
                                 </a>
                             <?php endif; ?>
                             <a class="btn btn-ghost btn-sm" href="/verificar/<?= View::e((string)$doc['codigo_verificacao']) ?>">Validar</a>

@@ -10,6 +10,8 @@ use App\Helpers\View;
 /** @var string $consultaPeriodo */
 /** @var string|null $erroPeriodo */
 /** @var list<array<string,mixed>> $colaboradores */
+/** @var list<array{id:int,data_inicio:string,data_fim:string,status:string,espelhos:int,label:string}> $periodosGerados */
+$periodosGerados = $periodosGerados ?? [];
 ?>
 
 <?php if (empty($dbOk)): ?>
@@ -18,6 +20,37 @@ use App\Helpers\View;
 <?php if (!empty($erroPeriodo)): ?>
     <div class="alert alert-danger" role="alert"><?= View::e($erroPeriodo) ?></div>
 <?php endif; ?>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Períodos com ponto gerado</h2>
+            <p class="card-subtitle">Selecione um período já gerado para ver o andamento das assinaturas.</p>
+        </div>
+    </div>
+    <div class="card-body section-stack">
+        <?php if ($periodosGerados === []): ?>
+            <p class="muted" style="margin:0;">Nenhum período com espelho gerado ainda. Gere o ponto em <a href="/rh/ponto">Gestão de Ponto</a>.</p>
+        <?php else: ?>
+            <div style="display:flex;flex-wrap:wrap;gap:.5rem;">
+                <?php foreach ($periodosGerados as $pg):
+                    $ativo = $pg['data_inicio'] === $dataInicio && $pg['data_fim'] === $dataFim;
+                    ?>
+                    <a class="btn <?= $ativo ? 'btn-primary' : 'btn-secondary' ?> btn-sm"
+                       href="/?<?= View::e(http_build_query([
+                           'data_inicio' => $pg['data_inicio'],
+                           'data_fim' => $pg['data_fim'],
+                       ])) ?>">
+                        <?= View::e($pg['label']) ?>
+                        <span class="muted" style="<?= $ativo ? 'color:rgba(255,255,255,.85)' : '' ?>">
+                            · <?= (int) $pg['espelhos'] ?> espelho(s)
+                        </span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+</section>
 
 <section class="card">
     <div class="card-header">
@@ -54,22 +87,9 @@ use App\Helpers\View;
     <div class="card-header">
         <div>
             <h2 class="card-title">Colaboradores</h2>
-            <p class="card-subtitle">Status de assinatura no período</p>
+            <p class="card-subtitle">Status de assinatura no período selecionado</p>
         </div>
     </div>
-    <form method="get" action="/" class="card-body form-grid cols-3" style="padding-bottom:0;">
-        <div class="form-field">
-            <label class="form-label">Período inicial</label>
-            <input class="form-control" type="date" name="data_inicio" value="<?= View::e($dataInicio) ?>" required>
-        </div>
-        <div class="form-field">
-            <label class="form-label">Período final</label>
-            <input class="form-control" type="date" name="data_fim" value="<?= View::e($dataFim) ?>" required>
-        </div>
-        <div class="form-field" style="display:flex;align-items:flex-end;">
-            <button class="btn btn-primary" type="submit">Filtrar</button>
-        </div>
-    </form>
 
     <div class="table-wrap">
         <table class="table">

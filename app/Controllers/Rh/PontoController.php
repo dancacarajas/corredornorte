@@ -23,106 +23,366 @@ final class PontoController
         $periodo = $this->resolverPeriodo($_GET);
         $dataInicio = $periodo['inicio'];
         $dataFim = $periodo['fim'];
-        $mesUnico = substr($dataInicio, 0, 7) === substr($dataFim, 0, 7);
+        $busca = trim((string) ($_GET['q'] ?? ''));
+        $filtroStatus = trim((string) ($_GET['status'] ?? ''));
+        $podeGerar = false;
+        try {
+            $this->assertPeriodoGeracao($dataInicio, $dataFim);
+            $podeGerar = $periodo['aviso'] === null;
+        } catch (RuntimeException) {
+            $podeGerar = false;
+        }
         $avisoPeriodo = $periodo['aviso'];
         $espelhos = [];
+        $periodoGerado = null;
+        $resumo = [
+            'total' => 0,
+            'abertos' => 0,
+            'tratamento' => 0,
+            'conferidos' => 0,
+            'fechados' => 0,
+            'he_min' => 0,
+            'falta_min' => 0,
+            'atraso_min' => 0,
+            'he_autorizadas' => 0,
+            'he_pendentes' => 0,
+        ];
         $dbOk = $pdo instanceof PDO;
 
         if ($dbOk) {
-            $sql = <<<SQL
-                SELECT e.*, c.nome, c.matricula, c.cargo, pc.ano, pc.mes,
-                       COALESCE(d.he, 0) AS periodo_he_min,
-                       COALESCE(d.falta, 0) AS periodo_falta_min,
-                       COALESCE(d.atraso, 0) AS periodo_atraso_min
-                FROM ponto_espelhos e
-                INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-                INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
-                LEFT JOIN (
-                    SELECT espelho_id, SUM(horas_extras_min) AS he, SUM(horas_falta_min) AS falta,
-                           SUM(atraso_bruto_min) AS atraso
-                    FROM ponto_dias WHERE data BETWEEN :inicio AND :fim GROUP BY espelho_id
-                ) d ON d.espelho_id = e.id
-                WHERE pc.ano * 100 + pc.mes BETWEEN :competencia_inicio AND :competencia_fim
-                ORDER BY c.nome, pc.ano, pc.mes
-            SQL;
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([
-                'inicio' => $dataInicio,
-                'fim' => $dataFim,
-                'competencia_inicio' => $this->competencia($dataInicio),
-                'competencia_fim' => $this->competencia($dataFim),
-            ]);
-            $espelhos = $stmt->fetchAll();
+            $motor = new MotorPontoService($pdo);
+            $periodoGerado = $motor->buscarPeriodo($dataInicio, $dataFim);
+
+            if ($periodoGerado !== null) {
+                $sql = <<<SQL
+                    SELECT
+                        e.id,
+                        e.colaborador_id,
+                        e.status,
+                        c.nome,
+                        c.matricula,
+                        c.cargo,
+                        c.funcao,
+                        COALESCE(d.he, 0) AS periodo_he_min,
+                        COALESCE(d.falta, 0) AS periodo_falta_min,
+                        COALESCE(d.atraso, 0) AS periodo_atraso_min,
+                        COALESCE(d.dias_pendentes, 0) AS dias_pendentes
+                    FROM ponto_espelhos e
+                    INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
+                    INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                    LEFT JOIN (
+                        SELECT espelho_id,
+                               SUM(horas_extras_min) AS he,
+                               SUM(horas_falta_min) AS falta,
+                               SUM(atraso_bruto_min) AS atraso,
+                               SUM(CASE
+                                     WHEN tipo_dia = 'trabalho'
+                                      AND ok_status IN ('pendente','falta')
+                                     THEN 1 ELSE 0
+                                   END) AS dias_pendentes
+                        FROM ponto_dias
+                        WHERE data BETWEEN :inicio AND :fim
+                        GROUP BY espelho_id
+                    ) d ON d.espelho_id = e.id
+                    WHERE pp.data_inicio = :p_inicio AND pp.data_fim = :p_fim
+                    ORDER BY c.nome
+                SQL;
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute([
+                    'inicio' => $dataInicio,
+                    'fim' => $dataFim,
+                    'p_inicio' => $dataInicio,
+                    'p_fim' => $dataFim,
+                ]);
+
+                $hePorColab = [];
+                try {
+                    $heStmt = $pdo->prepare(
+                        "SELECT colaborador_id,
+                                SUM(CASE WHEN status = 'aprovada' THEN 1 ELSE 0 END) AS aprovadas,
+                                SUM(CASE WHEN status = 'pendente' THEN 1 ELSE 0 END) AS pendentes
+                         FROM he_solicitacoes
+                         WHERE data BETWEEN :ini AND :fim
+                         GROUP BY colaborador_id"
+                    );
+                    $heStmt->execute(['ini' => $dataInicio, 'fim' => $dataFim]);
+                    foreach ($heStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $heRow) {
+                        $hePorColab[(int) $heRow['colaborador_id']] = $heRow;
+                    }
+                } catch (Throwable) {
+                    $hePorColab = [];
+                }
+
+                foreach ($stmt->fetchAll() as $row) {
+                    $status = (string) ($row['status'] ?? 'em_aberto');
+                    $cid = (int) $row['colaborador_id'];
+                    $row['he_aprovadas'] = (int) ($hePorColab[$cid]['aprovadas'] ?? 0);
+                    $row['he_pendentes'] = (int) ($hePorColab[$cid]['pendentes'] ?? 0);
+
+                    if ($busca !== '') {
+                        $hay = mb_strtolower(
+                            (string) $row['nome'] . ' ' . (string) $row['matricula'] . ' '
+                            . (string) ($row['cargo'] ?? '') . ' ' . (string) ($row['funcao'] ?? ''),
+                            'UTF-8'
+                        );
+                        if (!str_contains($hay, mb_strtolower($busca, 'UTF-8'))) {
+                            continue;
+                        }
+                    }
+                    if ($filtroStatus !== '' && $status !== $filtroStatus) {
+                        if (!($filtroStatus === 'fechado' && in_array($status, ['fechado', 'enviado', 'assinado'], true))) {
+                            continue;
+                        }
+                    }
+
+                    $espelhos[] = $row;
+                    $resumo['total']++;
+                    $resumo['he_min'] += (int) $row['periodo_he_min'];
+                    $resumo['falta_min'] += (int) $row['periodo_falta_min'];
+                    $resumo['atraso_min'] += (int) $row['periodo_atraso_min'];
+                    $resumo['he_autorizadas'] += (int) $row['he_aprovadas'];
+                    $resumo['he_pendentes'] += (int) $row['he_pendentes'];
+                    if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
+                        $resumo['fechados']++;
+                    } elseif ($status === 'conferido') {
+                        $resumo['conferidos']++;
+                    } elseif ($status === 'em_tratamento') {
+                        $resumo['tratamento']++;
+                    } else {
+                        $resumo['abertos']++;
+                    }
+                }
+            }
         }
 
-        $topbarActions = $mesUnico ? '<form method="post" action="/rh/ponto/gerar" style="display:inline;">'
-            . '<input type="hidden" name="data_inicio" value="' . htmlspecialchars($dataInicio, ENT_QUOTES, 'UTF-8') . '">'
-            . '<input type="hidden" name="data_fim" value="' . htmlspecialchars($dataFim, ENT_QUOTES, 'UTF-8') . '">'
-            . '<button class="btn btn-primary btn-sm" type="submit" data-ponto-gerar>Gerar espelhos ' . date('m/Y', strtotime($dataInicio)) . '</button>'
-            . '</form>' : '';
+        $rotuloGerar = 'Gerar espelhos do período';
+        $periodoInexistente = $dbOk && $periodo['aviso'] === null && $periodoGerado === null;
+        $qs = htmlspecialchars(http_build_query([
+            'data_inicio' => $dataInicio,
+            'data_fim' => $dataFim,
+        ]), ENT_QUOTES, 'UTF-8');
+
+        $topbarActions = ''
+            . '<button class="btn btn-secondary btn-sm" type="button" data-modal-open="tiposJustModalIndex">Tipos de justificativa</button>';
+        if ($podeGerar) {
+            $topbarActions .= '<form method="post" action="/rh/ponto/gerar" style="display:inline;">'
+                . '<input type="hidden" name="data_inicio" value="' . htmlspecialchars($dataInicio, ENT_QUOTES, 'UTF-8') . '">'
+                . '<input type="hidden" name="data_fim" value="' . htmlspecialchars($dataFim, ENT_QUOTES, 'UTF-8') . '">'
+                . '<button class="btn btn-primary btn-sm" type="submit" data-ponto-gerar>' . htmlspecialchars($rotuloGerar, ENT_QUOTES, 'UTF-8') . '</button>'
+                . '</form>';
+        }
 
         View::render('rh/ponto/index', [
             'pageTitle' => 'Gestão de Ponto',
             'pageSubtitle' => date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', strtotime($dataFim)),
             'activeMenu' => 'ponto',
             'topbarActions' => $topbarActions,
-            'extraCss' => ['css/ponto.css'],
+            'extraCss' => ['css/ponto.css?v=ponto-periodo-20261113'],
             'dbOk' => $dbOk,
             'espelhos' => $espelhos,
-            'mesUnico' => $mesUnico,
+            'resumo' => $resumo,
+            'mesUnico' => true,
+            'podeGerar' => $podeGerar,
+            'rotuloGerar' => $rotuloGerar,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'avisoPeriodo' => $avisoPeriodo,
+            'periodoInexistente' => $periodoInexistente,
+            'periodoJaGerado' => $periodoGerado !== null,
+            'busca' => $busca,
+            'filtroStatus' => $filtroStatus,
+            'atalhosPeriodo' => $this->atalhosPeriodo(),
         ]);
+    }
+
+    public function loteStatus(): void
+    {
+        $pdo = Db::tryConnection();
+        $periodo = $this->resolverPeriodo($_POST);
+        $dataInicio = $periodo['inicio'];
+        $dataFim = $periodo['fim'];
+        $redirect = '/rh/ponto?' . http_build_query([
+            'data_inicio' => $dataInicio,
+            'data_fim' => $dataFim,
+            'q' => (string) ($_POST['q'] ?? ''),
+            'status' => (string) ($_POST['filtro_status'] ?? ''),
+        ]);
+
+        if (!$pdo instanceof PDO) {
+            header('Location: ' . $redirect . '&erro=' . rawurlencode('Banco indisponível.'));
+            exit;
+        }
+
+        try {
+            $novoStatus = (string) ($_POST['status'] ?? '');
+            if (!in_array($novoStatus, ['em_tratamento', 'conferido', 'fechado'], true)) {
+                throw new RuntimeException('Status de lote inválido.');
+            }
+            $ids = array_values(array_unique(array_map('intval', (array) ($_POST['espelho_ids'] ?? []))));
+            $ids = array_values(array_filter($ids, static fn(int $id): bool => $id > 0));
+            if ($ids === []) {
+                throw new RuntimeException('Selecione ao menos um colaborador.');
+            }
+            if ($periodo['aviso'] !== null) {
+                throw new RuntimeException($periodo['aviso']);
+            }
+
+            $motor = new MotorPontoService($pdo);
+            $justificativa = trim((string) ($_POST['justificativa'] ?? '')) ?: null;
+            $afetados = 0;
+
+            foreach ($ids as $espelhoId) {
+                $st = $pdo->prepare(
+                    'SELECT e.id FROM ponto_espelhos e
+                     INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                     WHERE e.id = :id
+                       AND pp.data_inicio = :ini
+                       AND pp.data_fim = :fim'
+                );
+                $st->execute(['id' => $espelhoId, 'ini' => $dataInicio, 'fim' => $dataFim]);
+                $idEspelho = (int) $st->fetchColumn();
+                if ($idEspelho <= 0) {
+                    continue;
+                }
+                $motor->alterarStatus($idEspelho, $novoStatus, $justificativa, Auth::id());
+                $afetados++;
+            }
+
+            header('Location: ' . $redirect . '&ok_lote=' . $afetados . '&status_lote=' . rawurlencode($novoStatus));
+        } catch (Throwable $e) {
+            header('Location: ' . $redirect . '&erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
+    /** @return list<array{label:string,data_inicio:string,data_fim:string}> */
+    private function atalhosPeriodo(): array
+    {
+        $hoje = new \DateTimeImmutable('today');
+        $mesAtualIni = $hoje->modify('first day of this month')->format('Y-m-d');
+        $mesAtualFim = $hoje->modify('last day of this month')->format('Y-m-d');
+        $mesAntIni = $hoje->modify('first day of last month')->format('Y-m-d');
+        $mesAntFim = $hoje->modify('last day of last month')->format('Y-m-d');
+
+        // Ciclo 16→15 vigente
+        $dia = (int) $hoje->format('j');
+        if ($dia >= 16) {
+            $cicloIni = $hoje->format('Y-m-16');
+            $cicloFim = $hoje->modify('first day of next month')->format('Y-m-15');
+        } else {
+            $cicloIni = $hoje->modify('first day of last month')->format('Y-m-16');
+            $cicloFim = $hoje->format('Y-m-15');
+        }
+
+        return [
+            ['label' => 'Ciclo 16→15', 'data_inicio' => $cicloIni, 'data_fim' => $cicloFim],
+            ['label' => 'Mês atual', 'data_inicio' => $mesAtualIni, 'data_fim' => $mesAtualFim],
+            ['label' => 'Mês anterior', 'data_inicio' => $mesAntIni, 'data_fim' => $mesAntFim],
+        ];
     }
 
     public function gerar(): void
     {
-        $transmitir = str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/x-ndjson');
-        if ($transmitir) {
+        $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+        $modoJson = str_contains($accept, 'application/json')
+            || isset($_POST['batch_offset'])
+            || isset($_POST['phase']);
+        $modoNdjson = !$modoJson && str_contains($accept, 'application/x-ndjson');
+
+        if ($modoNdjson) {
             $this->iniciarProgressoGeracao();
         }
+
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
-            if ($transmitir) {
+            if ($modoJson) {
+                $this->responderJson(['type' => 'error', 'message' => 'Banco de dados indisponível.']);
+            } elseif ($modoNdjson) {
                 $this->emitirProgresso(['type' => 'error', 'message' => 'Banco de dados indisponível.']);
             } else {
                 header('Location: /rh/ponto');
             }
             return;
         }
+
         try {
-            @set_time_limit(180);
+            @set_time_limit(120);
             $periodo = $this->resolverPeriodo($_POST);
             $dataInicio = $periodo['inicio'];
             $dataFim = $periodo['fim'];
             if ($periodo['aviso'] !== null) {
                 throw new RuntimeException($periodo['aviso']);
             }
-            if (substr($dataInicio, 0, 7) !== substr($dataFim, 0, 7)) {
-                throw new RuntimeException('Selecione uma competência para gerar espelhos.');
-            }
-            $ano = (int) substr($dataInicio, 0, 4);
-            $mes = (int) substr($dataInicio, 5, 2);
-            $this->processarGeracao($pdo, $ano, $mes, $transmitir);
+            $this->assertPeriodoGeracao($dataInicio, $dataFim);
+            $force = isset($_POST['force']) && (string) $_POST['force'] === '1';
             $url = '/rh/ponto?' . http_build_query([
                 'data_inicio' => $dataInicio,
                 'data_fim' => $dataFim,
             ]);
-            if ($transmitir) {
+
+            $motor = new MotorPontoService($pdo);
+            $existente = $motor->buscarPeriodo($dataInicio, $dataFim);
+            $fase = (string) ($_POST['phase'] ?? 'generation');
+            $offset = max(0, (int) ($_POST['batch_offset'] ?? 0));
+
+            if ($modoJson && $fase === 'check') {
+                if ($existente === null) {
+                    $this->responderJson([
+                        'type' => 'ready',
+                        'exists' => false,
+                        'message' => 'Período livre para geração.',
+                    ]);
+                    return;
+                }
+                $this->responderJson([
+                    'type' => 'exists_confirm',
+                    'exists' => true,
+                    'espelhos' => $existente['espelhos'],
+                    'message' => 'Já existe cartão gerado para este período.',
+                ]);
+                return;
+            }
+
+            // Primeiro lote da geração: exige force se o período já existir.
+            if ($existente !== null && !$force && $offset === 0 && $fase === 'generation') {
+                if ($modoJson) {
+                    $this->responderJson([
+                        'type' => 'exists_confirm',
+                        'exists' => true,
+                        'espelhos' => $existente['espelhos'],
+                        'message' => 'Já existe cartão gerado para este período.',
+                    ]);
+                    return;
+                }
+                throw new RuntimeException('Já existe cartão gerado para este período. Confirme a sobrescrita para regenerar.');
+            }
+
+            if ($modoJson) {
+                $this->processarGeracaoEmLotes($pdo, $dataInicio, $dataFim, $url);
+                return;
+            }
+
+            $this->processarGeracao($pdo, $dataInicio, $dataFim, $modoNdjson);
+            if ($modoNdjson) {
                 $this->emitirProgresso(['type' => 'success', 'url' => $url]);
             } else {
                 header('Location: ' . $url . '&ok=1');
             }
         } catch (Throwable $e) {
-            if ($transmitir) {
-                if ($e instanceof RuntimeException && !($e instanceof PDOException)) {
-                    $mensagem = $e->getMessage();
-                } else {
-                    error_log('Falha ao gerar espelhos de ponto: ' . $e->getMessage());
-                    $mensagem = 'Não foi possível concluir a geração dos espelhos.';
-                }
-                $this->emitirProgresso(['type' => 'error', 'message' => $mensagem]);
+            if ($modoJson) {
+                error_log('Falha ao gerar espelhos de ponto: ' . $e->getMessage());
+                $mensagem = ($e instanceof RuntimeException && !($e instanceof PDOException))
+                    ? $e->getMessage()
+                    : ('Não foi possível concluir a geração dos espelhos. ' . $e->getMessage());
+                $this->responderJson(['type' => 'error', 'message' => mb_substr($mensagem, 0, 280)]);
+                return;
+            }
+            if ($modoNdjson) {
+                error_log('Falha ao gerar espelhos de ponto: ' . $e->getMessage());
+                $mensagem = ($e instanceof RuntimeException && !($e instanceof PDOException))
+                    ? $e->getMessage()
+                    : ('Não foi possível concluir a geração dos espelhos. ' . $e->getMessage());
+                $this->emitirProgresso(['type' => 'error', 'message' => mb_substr($mensagem, 0, 280)]);
                 return;
             }
             $params = ['erro' => $e->getMessage()];
@@ -133,28 +393,182 @@ final class PontoController
         }
     }
 
-    private function processarGeracao(PDO $pdo, int $ano, int $mes, bool $transmitir): void
+    private function processarGeracaoEmLotes(PDO $pdo, string $dataInicio, string $dataFim, string $url): void
     {
-        $competencia = sprintf('%04d-%02d', $ano, $mes);
-        $trava = $pdo->prepare("SELECT GET_LOCK(CONCAT('arcadis:ponto:', MD5(DATABASE()), ':', ?), 0)");
-        $trava->execute([$competencia]);
-        if ((int) $trava->fetchColumn() !== 1) {
-            throw new RuntimeException('Já há uma geração de espelhos em andamento para esta competência.');
+        $fase = (string) ($_POST['phase'] ?? 'generation');
+        if (!in_array($fase, ['generation', 'calculation'], true)) {
+            $fase = 'generation';
         }
-        try {
+        $offset = max(0, (int) ($_POST['batch_offset'] ?? 0));
+        $batchSize = min(5, max(1, (int) ($_POST['batch_size'] ?? 1)));
+        $chave = $dataInicio . ':' . $dataFim;
+        $rotulo = PeriodoPonto::rotulo(['data_inicio' => $dataInicio, 'data_fim' => $dataFim]);
+
+        $this->comTravaGeracao($pdo, $chave, function () use (
+            $pdo,
+            $dataInicio,
+            $dataFim,
+            $url,
+            $fase,
+            $offset,
+            $batchSize,
+            $rotulo
+        ): void {
+            $motor = new MotorPontoService($pdo);
+            $calc = new CalculoPontoService($pdo);
+
+            if ($fase === 'generation') {
+                $ids = $motor->idsColaboradoresAtivos();
+                $total = count($ids);
+                if ($total === 0) {
+                    $this->responderJson([
+                        'type' => 'success',
+                        'percent' => 100,
+                        'done' => true,
+                        'url' => $url,
+                        'message' => 'Nenhum colaborador ativo para gerar.',
+                    ]);
+                    return;
+                }
+
+                $fatia = array_slice($ids, $offset, $batchSize);
+                $gerados = 0;
+                $semLotacao = 0;
+                $puladosFechados = 0;
+                foreach ($fatia as $colaboradorId) {
+                    $resultado = $motor->gerarEspelhoTolerante((int) $colaboradorId, $dataInicio, $dataFim);
+                    if ($resultado === 'ok') {
+                        $gerados++;
+                    } elseif ($resultado === 'skip_lotacao') {
+                        $semLotacao++;
+                    } elseif ($resultado === 'skip_fechado') {
+                        $puladosFechados++;
+                    }
+                }
+
+                $proximo = $offset + count($fatia);
+                $percentual = (int) floor(80 * ($proximo / max(1, $total)));
+
+                if ($proximo < $total) {
+                    $detalhe = [];
+                    if ($semLotacao > 0) {
+                        $detalhe[] = "{$semLotacao} sem lotação";
+                    }
+                    if ($puladosFechados > 0) {
+                        $detalhe[] = "{$puladosFechados} fechados";
+                    }
+                    $this->responderJson([
+                        'type' => 'progress',
+                        'phase' => 'generation',
+                        'completed' => $proximo,
+                        'total' => $total,
+                        'percent' => min(79, $percentual),
+                        'batch_offset' => $proximo,
+                        'done' => false,
+                        'generated' => $gerados,
+                        'skipped_lotacao' => $semLotacao,
+                        'skipped_fechado' => $puladosFechados,
+                        'message' => $detalhe !== []
+                            ? "Gerando {$rotulo}… (" . implode(', ', $detalhe) . ')'
+                            : "Gerando espelhos de {$rotulo}…",
+                    ]);
+                    return;
+                }
+
+                $this->responderJson([
+                    'type' => 'progress',
+                    'phase' => 'calculation',
+                    'completed' => 0,
+                    'total' => 0,
+                    'percent' => 80,
+                    'batch_offset' => 0,
+                    'done' => false,
+                    'message' => 'Calculando totais de ponto…',
+                ]);
+                return;
+            }
+
+            $sql = 'SELECT e.id FROM ponto_espelhos e
+                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                 WHERE pp.data_inicio = :ini AND pp.data_fim = :fim
+                   AND e.status NOT IN (\'fechado\', \'enviado\', \'assinado\')
+                 ORDER BY e.id';
+            $ids = $pdo->prepare($sql);
+            $ids->execute(['ini' => $dataInicio, 'fim' => $dataFim]);
+            $espelhos = array_map(static fn(array $row): int => (int) $row['id'], $ids->fetchAll());
+            $total = count($espelhos);
+            if ($total === 0 || $offset >= $total) {
+                $this->responderJson([
+                    'type' => 'success',
+                    'percent' => 100,
+                    'done' => true,
+                    'url' => $url,
+                    'message' => 'Espelhos gerados com sucesso.',
+                ]);
+                return;
+            }
+
+            $fatia = array_slice($espelhos, $offset, $batchSize);
+            foreach ($fatia as $espelhoId) {
+                $this->recalcularEspelhoGerado($pdo, $calc, $espelhoId);
+            }
+            $proximo = $offset + count($fatia);
+            if ($proximo < $total) {
+                $percentual = 80 + (int) floor(19 * ($proximo / $total));
+                $this->responderJson([
+                    'type' => 'progress',
+                    'phase' => 'calculation',
+                    'completed' => $proximo,
+                    'total' => $total,
+                    'percent' => min(99, $percentual),
+                    'batch_offset' => $proximo,
+                    'done' => false,
+                    'message' => 'Calculando totais de ponto…',
+                ]);
+                return;
+            }
+
+            $this->responderJson([
+                'type' => 'success',
+                'percent' => 100,
+                'done' => true,
+                'url' => $url,
+                'message' => 'Espelhos gerados com sucesso.',
+            ]);
+        });
+    }
+
+    private function assertPeriodoGeracao(string $inicio, string $fim): void
+    {
+        if ($inicio > $fim) {
+            throw new RuntimeException('Informe datas inicial e final válidas, em ordem.');
+        }
+        $dias = (int) (new \DateTimeImmutable($inicio))->diff(new \DateTimeImmutable($fim))->days + 1;
+        if ($dias > PeriodoPonto::MAX_DIAS_PDF) {
+            throw new RuntimeException(
+                'Selecione um período de no máximo ' . PeriodoPonto::MAX_DIAS_PDF . ' dias para gerar espelhos.'
+            );
+        }
+    }
+
+    private function processarGeracao(PDO $pdo, string $dataInicio, string $dataFim, bool $transmitir): void
+    {
+        $chave = $dataInicio . ':' . $dataFim;
+        $this->comTravaGeracao($pdo, $chave, function () use ($pdo, $dataInicio, $dataFim, $transmitir): void {
             $motor = new MotorPontoService($pdo);
             $calc = new CalculoPontoService($pdo);
             $progressoGeracao = $transmitir
                 ? fn(int $concluidos, int $total) => $this->emitirEtapaGeracao('generation', $concluidos, $total)
                 : null;
-            $motor->gerarCompetenciaParaAtivos($ano, $mes, $progressoGeracao);
+            $motor->gerarPeriodoParaAtivos($dataInicio, $dataFim, $progressoGeracao);
 
             $ids = $pdo->prepare(
                 'SELECT e.id FROM ponto_espelhos e
-                 INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
-                 WHERE pc.ano=:a AND pc.mes=:m AND e.status NOT IN (\'fechado\', \'enviado\', \'assinado\')'
+                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                 WHERE pp.data_inicio=:i AND pp.data_fim=:f
+                   AND e.status NOT IN (\'fechado\', \'enviado\', \'assinado\')'
             );
-            $ids->execute(['a' => $ano, 'm' => $mes]);
+            $ids->execute(['i' => $dataInicio, 'f' => $dataFim]);
             $espelhos = $ids->fetchAll();
             $total = count($espelhos);
             if ($transmitir) {
@@ -166,10 +580,32 @@ final class PontoController
                     $this->emitirEtapaGeracao('calculation', $indice + 1, $total);
                 }
             }
-        } finally {
-            $soltar = $pdo->prepare("SELECT RELEASE_LOCK(CONCAT('arcadis:ponto:', MD5(DATABASE()), ':', ?))");
-            $soltar->execute([$competencia]);
+        });
+    }
+
+    /** @param callable():void $fn */
+    private function comTravaGeracao(PDO $pdo, string $chavePeriodo, callable $fn): void
+    {
+        // MySQL limita GET_LOCK a 64 chars: hash único do banco + período.
+        $trava = $pdo->prepare('SELECT GET_LOCK(CONCAT(\'ap:\', MD5(CONCAT(DATABASE(), \':\', ?))), 0)');
+        $trava->execute([$chavePeriodo]);
+        if ((int) $trava->fetchColumn() !== 1) {
+            throw new RuntimeException('Já há uma geração de espelhos em andamento para este período.');
         }
+        try {
+            $fn();
+        } finally {
+            $soltar = $pdo->prepare('SELECT RELEASE_LOCK(CONCAT(\'ap:\', MD5(CONCAT(DATABASE(), \':\', ?))))');
+            $soltar->execute([$chavePeriodo]);
+        }
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function responderJson(array $payload): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, no-transform');
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
     }
 
     private function recalcularEspelhoGerado(PDO $pdo, CalculoPontoService $calc, int $espelhoId): void
@@ -250,11 +686,6 @@ final class PontoController
         ];
     }
 
-    private function competencia(string $data): int
-    {
-        return (int) substr($data, 0, 4) * 100 + (int) substr($data, 5, 2);
-    }
-
     public function show(string $id = '0'): void
     {
         $pdo = Db::tryConnection();
@@ -265,13 +696,15 @@ final class PontoController
         }
 
         $stmt = $pdo->prepare(
-            'SELECT e.*, c.nome, c.matricula, c.cargo, c.funcao, c.email_corp, pc.ano, pc.mes,
+            'SELECT e.*, c.nome, c.matricula, c.cargo, c.funcao, c.email_corp,
+                    pp.data_inicio AS periodo_inicio, pp.data_fim AS periodo_fim,
+                    YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes,
                     l.codigo AS lotacao_codigo, ct.codigo AS contrato_codigo, ct.nome AS contrato_nome,
                     cc.codigo AS cc_codigo, os.codigo AS os_codigo, loc.municipio, loc.uf,
                     j.codigo AS jornada_codigo, esc.codigo AS escala_codigo
              FROM ponto_espelhos e
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-             INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              LEFT JOIN rh_lotacoes l ON l.id = e.lotacao_id
              LEFT JOIN rh_contratos ct ON ct.id = l.contrato_id
              LEFT JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
@@ -289,44 +722,79 @@ final class PontoController
             return;
         }
 
+        $periodoEspelho = [
+            'data_inicio' => (string) $espelho['periodo_inicio'],
+            'data_fim' => (string) $espelho['periodo_fim'],
+        ];
         $ano = (int) $espelho['ano'];
         $mes = (int) $espelho['mes'];
         $erroPeriodo = null;
         try {
-            $periodo = PeriodoPonto::selecionar($_GET['data_inicio'] ?? null, $_GET['data_fim'] ?? null, $ano, $mes);
+            $periodo = PeriodoPonto::selecionar(
+                $_GET['data_inicio'] ?? $periodoEspelho['data_inicio'],
+                $_GET['data_fim'] ?? $periodoEspelho['data_fim'],
+                $ano,
+                $mes
+            );
+            // Espelho é de um período fixo: recorte deve ficar dentro dele.
+            if ($periodo['data_inicio'] < $periodoEspelho['data_inicio']) {
+                $periodo['data_inicio'] = $periodoEspelho['data_inicio'];
+            }
+            if ($periodo['data_fim'] > $periodoEspelho['data_fim']) {
+                $periodo['data_fim'] = $periodoEspelho['data_fim'];
+            }
         } catch (RuntimeException $erro) {
             $erroPeriodo = $erro->getMessage();
-            $periodo = PeriodoPonto::selecionar(null, null, $ano, $mes);
+            $periodo = $periodoEspelho;
         }
         $dataInicio = $periodo['data_inicio'];
         $dataFim = $periodo['data_fim'];
         $colaboradorId = (int) $espelho['colaborador_id'];
-        $competenciasStmt = $pdo->prepare(
-            'SELECT e.id, e.status, e.versao, pc.ano, pc.mes
-             FROM ponto_espelhos e INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id
-             WHERE e.colaborador_id = :colaborador
-               AND pc.ano * 100 + pc.mes BETWEEN :competencia_inicio AND :competencia_fim
-             ORDER BY pc.ano, pc.mes'
-        );
-        $competenciasStmt->execute([
-            'colaborador' => $colaboradorId,
-            'competencia_inicio' => $this->competencia($dataInicio),
-            'competencia_fim' => $this->competencia($dataFim),
-        ]);
-        $competencias = $competenciasStmt->fetchAll();
+        $competencias = [[
+            'id' => $espelhoId,
+            'status' => $espelho['status'],
+            'versao' => $espelho['versao'],
+            'data_inicio' => $periodoEspelho['data_inicio'],
+            'data_fim' => $periodoEspelho['data_fim'],
+        ]];
 
         $diasStmt = $pdo->prepare(
             'SELECT d.*, e.status AS espelho_status
              FROM ponto_dias d INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
-             WHERE e.colaborador_id = :colaborador AND d.data BETWEEN :ini AND :fim
+             WHERE e.id = :espelho AND d.data BETWEEN :ini AND :fim
              ORDER BY d.data'
         );
         $diasStmt->execute([
-            'colaborador' => $colaboradorId,
+            'espelho' => $espelhoId,
             'ini' => $dataInicio,
             'fim' => $dataFim,
         ]);
         $dias = $diasStmt->fetchAll();
+
+        $heAutorizadas = [];
+        $heDeclaracoes = [];
+        try {
+            $heDeclaracoes = (new \App\Services\HeClienteService($pdo))->listarDeclaracoesDoEspelho($espelhoId);
+            foreach ($heDeclaracoes as $decl) {
+                if (in_array((string) $decl['he_status'], ['declarada', 'aplicada'], true)) {
+                    $heAutorizadas[(string) $decl['data']] = [
+                        'id' => (int) $decl['ra_dia_id'],
+                        'data' => (string) $decl['data'],
+                        'hora_inicial' => (string) $decl['he_hora_inicio'],
+                        'hora_final' => (string) $decl['he_hora_fim'],
+                        'minutos_he' => (int) $decl['minutos'],
+                        'modalidade' => 'cliente',
+                        'relatorio_atividade' => 'Declarada no Relatório de Atividades',
+                        'status' => (string) $decl['he_status'],
+                        'sai2_anterior' => $decl['he_sai2_anterior'],
+                        'gestor_nome' => $decl['gestor_cliente_nome'] ?? 'Gestor Cliente',
+                        'origem' => 'ra_cliente',
+                    ];
+                }
+            }
+        } catch (Throwable) {
+            $heDeclaracoes = [];
+        }
 
         $tipos = $pdo->query("SELECT * FROM ponto_justificativa_tipos WHERE status='ativo' ORDER BY nome")->fetchAll();
         $justs = $pdo->prepare(
@@ -340,14 +808,20 @@ final class PontoController
 
         $qsPeriodo = PeriodoPonto::consulta($periodo);
         $qsSeguro = View::e($qsPeriodo);
-        $permiteJustificativa = $this->competencia($dataInicio) === $this->competencia($dataFim)
-            && count($competencias) === 1
-            && !in_array($competencias[0]['status'], ['fechado', 'enviado', 'assinado'], true);
+        $statusPeriodo = $this->statusPeriodo(array_column($competencias, 'status'));
+        $periodoBloqueado = in_array($statusPeriodo, ['fechado', 'enviado', 'assinado'], true);
+        $espelhoAcaoId = (int) (($competencias[0]['id'] ?? $espelhoId));
+        foreach ($competencias as $comp) {
+            if (!in_array((string) $comp['status'], ['fechado', 'enviado', 'assinado'], true)) {
+                $espelhoAcaoId = (int) $comp['id'];
+                break;
+            }
+        }
+        $permiteJustificativa = !$periodoBloqueado && $competencias !== [];
         $acaoJustificativa = '';
         if ($permiteJustificativa) {
-            $competenciaId = (int) $competencias[0]['id'];
             $acaoJustificativa = '<button class="btn btn-danger-soft btn-sm" type="button" data-modal-open="justModal" data-espelho-id="'
-                . $competenciaId . '">Adicionar justificativa</button>';
+                . $espelhoAcaoId . '">Adicionar justificativa</button>';
         }
         $topbarActions = ''
             . '<a class="btn btn-secondary btn-sm" href="/rh/ponto?' . $qsSeguro . '">Voltar ao filtro</a>'
@@ -360,10 +834,15 @@ final class PontoController
             'pageSubtitle' => trim(($espelho['cargo'] ?: $espelho['funcao'] ?: '') . ' · Mat. ' . $espelho['matricula']),
             'activeMenu' => 'ponto',
             'topbarActions' => $topbarActions,
-            'extraCss' => ['css/ponto.css'],
+            'extraCss' => ['css/ponto.css?v=he-modal-20261112d'],
             'espelho' => $espelho,
             'competencias' => $competencias,
+            'statusPeriodo' => $statusPeriodo,
+            'periodoBloqueado' => $periodoBloqueado,
+            'espelhoAcaoId' => $espelhoAcaoId,
             'dias' => $dias,
+            'heAutorizadas' => $heAutorizadas,
+            'heDeclaracoes' => $heDeclaracoes,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'tiposJustificativa' => $tipos,
@@ -372,6 +851,31 @@ final class PontoController
             'flash' => $_GET['ok'] ?? null,
             'error' => $erroPeriodo ?? $_GET['erro'] ?? null,
         ]);
+    }
+
+    /**
+     * Status único do período a partir dos espelhos internos (mês).
+     * @param list<string> $statusLista
+     */
+    private function statusPeriodo(array $statusLista): string
+    {
+        $statusLista = array_values(array_filter(array_map('strval', $statusLista), static fn(string $s): bool => $s !== ''));
+        if ($statusLista === []) {
+            return 'em_aberto';
+        }
+        $unicos = array_values(array_unique($statusLista));
+        if (count($unicos) === 1) {
+            return $unicos[0];
+        }
+        $bloqueados = ['fechado', 'enviado', 'assinado'];
+        $abertos = array_filter($unicos, static fn(string $s): bool => !in_array($s, $bloqueados, true));
+        if ($abertos === []) {
+            return 'fechado';
+        }
+        if (in_array('em_tratamento', $unicos, true) || in_array('em_aberto', $unicos, true)) {
+            return 'em_tratamento';
+        }
+        return 'conferido';
     }
 
     private function redirectEspelho(int $espelhoId, ?string $ok = null, ?string $erro = null): void
@@ -405,6 +909,40 @@ final class PontoController
         exit;
     }
 
+    public function aplicarHeRa(string $id = '0', string $raDiaId = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $diaRa = (int) $raDiaId;
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $diaRa <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            (new \App\Services\HeClienteService($pdo))->aplicarDoRaDia($diaRa, (int) (\App\Helpers\Auth::id() ?? 0));
+            $this->redirectEspelho($espelhoId, 'he-aplicada');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    public function divergenteHeRa(string $id = '0', string $raDiaId = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $diaRa = (int) $raDiaId;
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $diaRa <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            (new \App\Services\HeClienteService($pdo))->marcarDivergente($diaRa, (int) (\App\Helpers\Auth::id() ?? 0));
+            $this->redirectEspelho($espelhoId, 'he-divergente');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
     public function salvarDia(string $id = '0'): void
     {
         $pdo = Db::tryConnection();
@@ -424,7 +962,7 @@ final class PontoController
                 throw new RuntimeException('O dia informado não pertence a este espelho.');
             }
             if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
-                throw new RuntimeException('Reabra a competência para editar as batidas.');
+                throw new RuntimeException('Reabra o período para editar as batidas.');
             }
             (new CalculoPontoService($pdo))->salvarBatidas($diaId, [
                 'ent1' => $_POST['ent1'] ?? null,
@@ -453,12 +991,17 @@ final class PontoController
         $dest = null;
         try {
             $pdo->beginTransaction();
-            $stmt = $pdo->prepare('SELECT e.status, pc.ano, pc.mes FROM ponto_espelhos e
-                INNER JOIN ponto_competencias pc ON pc.id = e.competencia_id WHERE e.id = ? FOR UPDATE');
+            $stmt = $pdo->prepare(
+                'SELECT e.status, pp.data_inicio, pp.data_fim,
+                        YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
+                 FROM ponto_espelhos e
+                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                 WHERE e.id = ? FOR UPDATE'
+            );
             $stmt->execute([$espelhoId]);
             $espelho = $stmt->fetch();
             if (!$espelho || in_array($espelho['status'], ['fechado', 'enviado', 'assinado'], true)) {
-                throw new RuntimeException('Reabra a competência para adicionar justificativas.');
+                throw new RuntimeException('Reabra o período para adicionar justificativas.');
             }
             $inicio = $_POST['data_inicio'] ?? null;
             $fim = $_POST['data_fim'] ?? null;
@@ -466,11 +1009,19 @@ final class PontoController
                 throw new RuntimeException('Informe o período da justificativa.');
             }
             $periodo = PeriodoPonto::selecionar($inicio, $fim, (int) $espelho['ano'], (int) $espelho['mes']);
-            $inicio = $periodo['data_inicio'];
-            $fim = $periodo['data_fim'];
-            $competencia = (int) $espelho['ano'] * 100 + (int) $espelho['mes'];
-            if ($this->competencia($inicio) !== $competencia || $this->competencia($fim) !== $competencia) {
-                throw new RuntimeException('Registre a justificativa dentro da competência selecionada.');
+            $inicio = max($periodo['data_inicio'], (string) $espelho['data_inicio']);
+            $fim = min($periodo['data_fim'], (string) $espelho['data_fim']);
+            if ($inicio > $fim) {
+                throw new RuntimeException('A justificativa precisa ficar dentro do período do cartão.');
+            }
+            $periodoFiltroIni = (string) ($_POST['retorno_data_inicio'] ?? '');
+            $periodoFiltroFim = (string) ($_POST['retorno_data_fim'] ?? '');
+            if (
+                preg_match('/^\d{4}-\d{2}-\d{2}$/D', $periodoFiltroIni)
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $periodoFiltroFim)
+                && ($inicio < $periodoFiltroIni || $fim > $periodoFiltroFim)
+            ) {
+                throw new RuntimeException('Registre a justificativa dentro do período selecionado.');
             }
             $diaId = (int) ($_POST['ponto_dia_id'] ?? 0);
             if ($diaId > 0) {
@@ -557,12 +1108,22 @@ final class PontoController
             if ($back > 0) {
                 $this->redirectEspelho($back, 'tipo');
             }
-            header('Location: /rh/ponto');
+            $qs = http_build_query(array_filter([
+                'data_inicio' => (string) ($_POST['data_inicio'] ?? ''),
+                'data_fim' => (string) ($_POST['data_fim'] ?? ''),
+                'ok' => 'tipo',
+            ]));
+            header('Location: /rh/ponto' . ($qs !== '' ? '?' . $qs : ''));
         } catch (Throwable $e) {
             if ($back > 0) {
                 $this->redirectEspelho($back, null, $e->getMessage());
             }
-            header('Location: /rh/ponto?erro=' . rawurlencode($e->getMessage()));
+            $qs = http_build_query(array_filter([
+                'data_inicio' => (string) ($_POST['data_inicio'] ?? ''),
+                'data_fim' => (string) ($_POST['data_fim'] ?? ''),
+                'erro' => $e->getMessage(),
+            ]));
+            header('Location: /rh/ponto?' . $qs);
         }
         exit;
     }
@@ -581,12 +1142,34 @@ final class PontoController
             exit;
         }
         try {
-            (new MotorPontoService($pdo))->alterarStatus(
-                $espelhoId,
-                (string) ($_POST['status'] ?? 'em_tratamento'),
-                trim((string) ($_POST['justificativa'] ?? '')) ?: null,
-                Auth::id()
-            );
+            $novoStatus = (string) ($_POST['status'] ?? 'em_tratamento');
+            $justificativa = trim((string) ($_POST['justificativa'] ?? '')) ?: null;
+            $motor = new MotorPontoService($pdo);
+
+            $ini = (string) ($_POST['data_inicio'] ?? '');
+            $fim = (string) ($_POST['data_fim'] ?? '');
+            $aplicarPeriodo = isset($_POST['aplicar_periodo']) && $_POST['aplicar_periodo'] === '1';
+            $ids = [$espelhoId];
+
+            if ($aplicarPeriodo
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $ini)
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $fim)
+            ) {
+                $st = $pdo->prepare(
+                    'SELECT e.id FROM ponto_espelhos e
+                     INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                     WHERE e.id = :id
+                       AND pp.data_inicio = :ini
+                       AND pp.data_fim = :fim'
+                );
+                $st->execute(['id' => $espelhoId, 'ini' => $ini, 'fim' => $fim]);
+                $idOk = (int) $st->fetchColumn();
+                $ids = $idOk > 0 ? [$idOk] : [$espelhoId];
+            }
+
+            foreach ($ids as $idEspelho) {
+                $motor->alterarStatus($idEspelho, $novoStatus, $justificativa, Auth::id());
+            }
             $this->redirectEspelho($espelhoId, 'status');
         } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());

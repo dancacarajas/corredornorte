@@ -13,7 +13,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlsplit
 
-from PIL import Image
 from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 from pyhanko.sign import signers
 from pyhanko.sign.fields import MDPPerm, SigSeedSubFilter
@@ -42,6 +41,7 @@ SIGNATURE_CARD_WIDTH = 236
 SIGNATURE_CARD_HEIGHT = 46
 SIGNATURE_FIELD = "SeloArcadis"
 SIGNATURE_FONT = Path(__file__).resolve().parent / "assets" / "fonts" / "Allura-Regular.ttf"
+SEAL_LOGO = LOGO.with_name("selo-arcadis.png")
 
 
 def load_signer() -> signers.SimpleSigner:
@@ -97,11 +97,8 @@ def fit_seal_text(text: str, font: str, size: float, minimum: float, width: floa
 
 
 def draw_seal_icon(pdf: canvas.Canvas, x: float, y: float, size: float) -> None:
-    with Image.open(LOGO) as source:
-        logo = source.convert("RGBA")
-        left, top, right, bottom = logo.getchannel("A").getbbox()
-        symbol = logo.crop((left, top, left + round((right - left) * .18), bottom))
-    pdf.drawImage(ImageReader(symbol), x, y, width=size, height=size, preserveAspectRatio=True, mask="auto")
+    pdf.drawImage(ImageReader(str(SEAL_LOGO)), x, y, width=size, height=size,
+                  preserveAspectRatio=True, anchor="c", mask="auto")
 
 
 def make_signature_mark(audit: dict, url: str) -> PdfReader:
@@ -122,7 +119,7 @@ def make_signature_mark(audit: dict, url: str) -> PdfReader:
     pdf.setFont("Helvetica-Bold", 6.3)
     pdf.drawCentredString(x + width - badge_w / 2, y + height - 8.1, "SIGNATÁRIO")
 
-    if LOGO.is_file():
+    if SEAL_LOGO.is_file():
         draw_seal_icon(pdf, x + 9, y + 11, 24)
     text_x = x + 42
     text_width = width - (text_x - x) - 7
@@ -158,46 +155,48 @@ def make_signature_mark(audit: dict, url: str) -> PdfReader:
 def draw_validation_footer(pdf: canvas.Canvas, audit: dict, url: str) -> None:
     x, y = MARGIN, 20
     width = letter[0] - 2 * MARGIN
-    height = 44
+    height = 64
     pdf.setFillColor(SURFACE)
     pdf.setStrokeColor(BORDER)
     pdf.setLineWidth(.65)
     pdf.roundRect(x, y, width, height, 6, fill=1, stroke=1)
-    if LOGO.is_file():
-        draw_seal_icon(pdf, x + 7, y + 8, 28)
+    icon_size = 28
+    if SEAL_LOGO.is_file():
+        draw_seal_icon(pdf, x + 7, y + (height - icon_size) / 2, icon_size)
 
     divider = x + 42
     pdf.line(divider, y + 5, divider, y + height - 5)
     text_x = divider + 7
-    qr_size = 35
+    qr_size = 56
     qr_x = x + width - qr_size - 5
+    qr_y = y + (height - qr_size) / 2
+    validator = "Validador"
+    validator_font, validator_size = "Helvetica-Bold", 7.3
+    validator_right = qr_x - 8
+    text_right = validator_right - stringWidth(validator, validator_font, validator_size) - 12
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica", 8.2)
-    pdf.drawString(text_x, y + 31, "Assinado com Assinatura Eletrônica")
+    pdf.drawString(text_x, y + 44, "Assinado com Assinatura Eletrônica")
     for label, content, baseline in (
-        ("Hash SHA256 do original: ", value(audit, "sha256"), y + 20),
-        ("Link de validação: ", url, y + 9),
+        ("Hash SHA256 do original: ", value(audit, "sha256"), y + 32),
+        ("Link de validação: ", url, y + 20),
     ):
         pdf.setFont("Helvetica", 8)
         pdf.drawString(text_x, baseline, label)
         content_x = text_x + stringWidth(label, "Helvetica", 8)
-        visible, size = fit_seal_text(content, "Helvetica-Bold", 8, 6.5, qr_x - content_x - 14)
+        visible, size = fit_seal_text(content, "Helvetica-Bold", 8, 6.5, text_right - content_x)
         pdf.setFont("Helvetica-Bold", size)
         pdf.drawString(content_x, baseline, visible)
         if content == url:
             pdf.linkURL(url, (text_x, baseline - 2, content_x + stringWidth(visible, "Helvetica-Bold", size), baseline + 8),
                         relative=0)
 
-    pdf.saveState()
-    pdf.translate(qr_x - 5, y + height - 6)
-    pdf.rotate(-90)
-    pdf.setFont("Helvetica", 6.8)
-    pdf.drawString(0, 0, "Validador")
-    pdf.restoreState()
-    qr = QrCodeWidget(url, barWidth=qr_size, barHeight=qr_size)
+    pdf.setFont(validator_font, validator_size)
+    pdf.setFillColor(MUTED)
+    pdf.drawRightString(validator_right, y + 30, validator)
+    qr = QrCodeWidget(url, barWidth=qr_size, barHeight=qr_size, barBorder=4, barLevel="M")
     drawing = Drawing(qr_size, qr_size)
     drawing.add(qr)
-    qr_y = y + (height - qr_size) / 2
     renderPDF.draw(drawing, pdf, qr_x, qr_y)
     pdf.linkURL(url, (qr_x, qr_y, qr_x + qr_size, qr_y + qr_size), relative=0)
 
@@ -223,6 +222,7 @@ def build(original: Path, out: Path, audit: dict) -> Path:
         reader.metadata is not None
         and reader.metadata.subject in (
             SUBJECT,
+            "Arcadis RH | folha de ponto retrato v4",
             "Arcadis RH | folha de ponto retrato v2",
             "Arcadis RH | folha de ponto retrato v1",
         )

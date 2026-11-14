@@ -10,7 +10,7 @@ use App\Services\PeriodoPonto;
 /** @var string $textoAceite */
 
 $assinado = ($documento['status'] ?? null) === 'assinado';
-$seloDigital = $assinado && !empty($documento['arquivo_assinado_sha256'])
+$registroComIntegridade = $assinado && !empty($documento['arquivo_assinado_sha256'])
     && (!empty($documento['assinatura_texto_aceite']) || !empty($documento['assinatura_email_confirmado_em']));
 $portalPath = '/assinar/' . rawurlencode($token);
 $hashPdf = (string) ($assinado ? ($documento['arquivo_assinado_sha256'] ?? '') : ($documento['hash_sha256'] ?? ''));
@@ -104,8 +104,8 @@ $pdfPath = $portalPath . '/pdf' . ($hashPdf === '' ? '' : '?versao=' . rawurlenc
     <?php elseif (!empty($modeloAnterior)): ?>
         <div class="alert alert-danger" role="alert">Peça ao RH para atualizar esta folha antes de assinar.</div>
     <?php else: ?>
-        <?php if ($seloDigital && ($flash ?? null) === 'assinado'): ?>
-            <div class="alert alert-success" role="status">Assinatura eletrônica registrada. O PDF com o selo Arcadis está disponível.</div>
+        <?php if ($registroComIntegridade && ($flash ?? null) === 'assinado'): ?>
+            <div class="alert alert-success" role="status">Assinatura eletrônica registrada. O PDF assinado está disponível.</div>
         <?php endif; ?>
         <div class="assinatura-grid">
             <section class="card" aria-labelledby="titulo-documento">
@@ -160,7 +160,7 @@ $pdfPath = $portalPath . '/pdf' . ($hashPdf === '' ? '' : '?versao=' . rawurlenc
                 <section class="card" aria-labelledby="titulo-comprovante">
                     <div class="card-header">
                         <h2 class="card-title" id="titulo-comprovante">Comprovante</h2>
-                        <span class="pill pill-brand"><?= $seloDigital ? 'Assinado com selo Arcadis' : 'Registro anterior' ?></span>
+                        <span class="pill pill-brand"><?= $registroComIntegridade ? 'Assinado eletronicamente' : 'Registro anterior' ?></span>
                     </div>
                     <div class="card-body section-stack">
                         <dl class="assinatura-auditoria text-sm">

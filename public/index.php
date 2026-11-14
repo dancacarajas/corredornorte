@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\Controllers\AuthController;
+use App\Controllers\He\PortalController as HePortalController;
+use App\Controllers\He\RelatorioAssinaturaController;
 use App\Controllers\HomeController;
 use App\Controllers\Rh\CadastroController;
 use App\Controllers\Rh\CalendarioController;
@@ -14,7 +16,10 @@ use App\Controllers\Rh\FolhaController;
 use App\Controllers\Rh\ImportacaoController;
 use App\Controllers\Rh\PerfilController;
 use App\Controllers\Rh\PontoController;
+use App\Controllers\Rh\RelatorioAtividadesController;
 use App\Controllers\Rh\UsuarioController;
+use App\Controllers\Rh\MedicaoController;
+use App\Controllers\Rh\ValeRefeicaoController;
 use App\Helpers\Auth;
 use App\Helpers\Router;
 
@@ -43,7 +48,7 @@ if (!$installed && !str_starts_with($normalizedPath, '/install')) {
     exit;
 }
 
-if (str_starts_with($path, '/assinar/')) {
+if (str_starts_with($path, '/assinar/') || str_starts_with($path, '/assinar-relatorio/')) {
     session_set_cookie_params([
         'httponly' => true,
         'samesite' => 'Lax',
@@ -76,11 +81,39 @@ $router->get('/assinar/{token}', [$folha, 'portalAssinatura']);
 $router->get('/assinar/{token}/pdf', [$folha, 'portalPdf']);
 $router->post('/assinar/{token}/assinar', [$folha, 'portalAssinar']);
 
-$public = ['/login'];
+$raAssinatura = RelatorioAssinaturaController::class;
+$router->get('/assinar-relatorio/{token}', [$raAssinatura, 'portalAssinatura']);
+$router->get('/assinar-relatorio/{token}/pdf', [$raAssinatura, 'portalPdf']);
+$router->post('/assinar-relatorio/{token}/assinar', [$raAssinatura, 'portalAssinar']);
+$router->get('/verificar-relatorio/{codigo}', [$raAssinatura, 'verificar']);
+
+$hePortal = HePortalController::class;
+$router->get('/he/login', [$hePortal, 'showLogin']);
+$router->post('/he/login', [$hePortal, 'login']);
+$router->get('/he/logout', [$hePortal, 'logout']);
+$router->get('/he', [$hePortal, 'overview']);
+$router->get('/he/solicitar', [$hePortal, 'fluxoHeDesativado']);
+$router->post('/he/solicitar', [$hePortal, 'fluxoHeDesativado']);
+$router->get('/he/aprovacoes', [$hePortal, 'fluxoHeDesativado']);
+$router->post('/he/{id}/aprovar', [$hePortal, 'fluxoHeDesativado']);
+$router->post('/he/{id}/recusar', [$hePortal, 'fluxoHeDesativado']);
+$router->post('/he/{id}/cancelar', [$hePortal, 'fluxoHeDesativado']);
+$router->get('/he/relatorios', [$hePortal, 'relatorios']);
+$router->get('/he/relatorios/{id}', [$hePortal, 'relatorioShow']);
+$router->post('/he/relatorios/{id}', [$hePortal, 'relatorioSalvar']);
+$router->get('/he/relatorios/{id}/pdf', [$hePortal, 'relatorioPdf']);
+$router->get('/he/relatorios/{id}/excel', [$hePortal, 'relatorioExcel']);
+$router->post('/he/relatorios/{id}/link-assinatura', [$raAssinatura, 'gerarLink']);
+$router->get('/he/ordens', [$hePortal, 'ordensJson']);
+
+$public = ['/login', '/he/login'];
 $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/assets')
     || str_starts_with($path, '/verificar/')
     || str_starts_with($path, '/assinar/')
+    || str_starts_with($path, '/assinar-relatorio/')
+    || str_starts_with($path, '/verificar-relatorio/')
+    || str_starts_with($path, '/he')
     || str_starts_with($path, '/install');
 if (!$isPublic) {
     Auth::requireLogin();
@@ -101,6 +134,11 @@ foreach ([
     'jornadas' => 'jornadas',
     'escalas' => 'escalas',
     'lotacoes' => 'lotacoes',
+    'cargos' => 'cargos',
+    'funcoes' => 'funcoes',
+    'gestores-arcadis' => 'gestoresArcadis',
+    'gestores-cliente' => 'gestoresCliente',
+    'supervisores' => 'supervisores',
 ] as $slug => $listAction) {
     $router->get('/rh/' . $slug, [$cadastro, $listAction]);
     $router->get('/rh/' . $slug . '/novo', static function () use ($cadastro, $slug): void {
@@ -138,6 +176,7 @@ $router->get('/rh/colaboradores/{id}/editar', [$colaborador, 'editForm']);
 $router->post('/rh/colaboradores/{id}', [$colaborador, 'update']);
 $router->get('/rh/colaboradores/{id}', [$colaborador, 'show']);
 $router->post('/rh/colaboradores/{id}/transferir', [$colaborador, 'transfer']);
+$router->post('/rh/colaboradores/{id}/percentual-he', [$colaborador, 'atualizarPercentualHe']);
 $router->post('/rh/colaboradores/{id}/excecoes', [$colaborador, 'storeExcecao']);
 
 $router->get('/rh/importacoes', [$importacao, 'index']);
@@ -170,6 +209,7 @@ $router->post('/rh/perfis/{id}', [$perfisCtrl, 'update']);
 
 $router->get('/rh/ponto', [$ponto, 'index']);
 $router->post('/rh/ponto/gerar', [$ponto, 'gerar']);
+$router->post('/rh/ponto/lote-status', [$ponto, 'loteStatus']);
 $router->post('/rh/ponto/justificativa-tipos', [$ponto, 'tipoJustificativa']);
 $router->get('/rh/ponto/{id}', [$ponto, 'show']);
 $router->post('/rh/ponto/{id}/dia', [$ponto, 'salvarDia']);
@@ -177,6 +217,30 @@ $router->post('/rh/ponto/{id}/justificativa', [$ponto, 'justificativa']);
 $router->post('/rh/ponto/{id}/ocorrencia', [$ponto, 'ocorrencia']);
 $router->post('/rh/ponto/{id}/status', [$ponto, 'status']);
 $router->post('/rh/ponto/{id}/apontar', [$ponto, 'apontar']);
+$router->post('/rh/ponto/{id}/he-ra/{raDiaId}/aplicar', [$ponto, 'aplicarHeRa']);
+$router->post('/rh/ponto/{id}/he-ra/{raDiaId}/divergente', [$ponto, 'divergenteHeRa']);
+
+$raRh = RelatorioAtividadesController::class;
+$router->get('/rh/relatorios-atividades', [$raRh, 'index']);
+$router->get('/rh/relatorios-atividades/{id}/pdf', [$raRh, 'pdf']);
+$router->get('/rh/relatorios-atividades/{id}/excel', [$raRh, 'excel']);
+$router->get('/rh/relatorios-atividades/{id}', [$raRh, 'show']);
+$router->post('/rh/relatorios-atividades/{id}/aprovar', [$raRh, 'aprovar']);
+$router->post('/rh/relatorios-atividades/{id}/reabrir', [$raRh, 'reabrir']);
+
+$vrRh = ValeRefeicaoController::class;
+$router->get('/rh/vale-refeicao', [$vrRh, 'index']);
+$router->post('/rh/vale-refeicao/config', [$vrRh, 'salvarConfig']);
+$router->post('/rh/vale-refeicao/config/{id}/excluir', [$vrRh, 'excluirConfig']);
+
+$medicao = MedicaoController::class;
+$router->get('/rh/medicao', [$medicao, 'index']);
+$router->get('/rh/medicao/dossie', [$medicao, 'dossie']);
+$router->post('/rh/medicao/lote/conferir', [$medicao, 'conferirLote']);
+$router->post('/rh/medicao/lote/fechar', [$medicao, 'fecharLote']);
+$router->post('/rh/medicao/lote/pdf', [$medicao, 'gerarPdfLote']);
+$router->post('/rh/medicao/lote/link', [$medicao, 'linkLote']);
+$router->post('/rh/medicao/lote/email', [$medicao, 'emailLote']);
 
 $router->get('/rh/folha', [$folha, 'index']);
 $router->get('/rh/folha/documento/{id}', [$folha, 'download']);

@@ -28,37 +28,82 @@ final class MotorPontoService
         $this->resolver = new LotacaoResolver($this->db);
     }
 
-    public function garantirCompetencia(int $ano, int $mes): int
+    public function garantirPeriodo(string $dataInicio, string $dataFim): int
     {
-        $stmt = $this->db->prepare('SELECT id FROM ponto_competencias WHERE ano = :ano AND mes = :mes');
-        $stmt->execute(['ano' => $ano, 'mes' => $mes]);
+        $this->validarPeriodo($dataInicio, $dataFim);
+
+        $stmt = $this->db->prepare(
+            'SELECT id FROM ponto_periodos WHERE data_inicio = :i AND data_fim = :f LIMIT 1'
+        );
+        $stmt->execute(['i' => $dataInicio, 'f' => $dataFim]);
         $id = $stmt->fetchColumn();
         if ($id !== false) {
             return (int) $id;
         }
 
-        $ins = $this->db->prepare('INSERT INTO ponto_competencias (ano, mes, status) VALUES (:ano, :mes, :status)');
-        $ins->execute(['ano' => $ano, 'mes' => $mes, 'status' => 'aberta']);
+        $ins = $this->db->prepare(
+            'INSERT INTO ponto_periodos (data_inicio, data_fim, status) VALUES (:i, :f, :status)'
+        );
+        $ins->execute(['i' => $dataInicio, 'f' => $dataFim, 'status' => 'aberta']);
         return (int) $this->db->lastInsertId();
     }
 
-    /**
-     * Gera/atualiza espelho do colaborador na competência.
-     */
-    public function gerarEspelho(int $colaboradorId, int $ano, int $mes, ?int $usuarioId = null): int
+    public function periodoExiste(string $dataInicio, string $dataFim): bool
     {
-        $competenciaId = $this->garantirCompetencia($ano, $mes);
-        $inicio = new DateTimeImmutable(sprintf('%04d-%02d-01', $ano, $mes));
-        $fim = $inicio->modify('last day of this month');
+        $stmt = $this->db->prepare(
+            'SELECT id FROM ponto_periodos WHERE data_inicio = :i AND data_fim = :f LIMIT 1'
+        );
+        $stmt->execute(['i' => $dataInicio, 'f' => $dataFim]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /** @return array{id:int,data_inicio:string,data_fim:string,status:string,espelhos:int}|null */
+    public function buscarPeriodo(string $dataInicio, string $dataFim): ?array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT p.id, p.data_inicio, p.data_fim, p.status,
+                    (SELECT COUNT(*) FROM ponto_espelhos e WHERE e.periodo_id = p.id) AS espelhos
+             FROM ponto_periodos p
+             WHERE p.data_inicio = :i AND p.data_fim = :f
+             LIMIT 1'
+        );
+        $stmt->execute(['i' => $dataInicio, 'f' => $dataFim]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int) $row['id'],
+            'data_inicio' => (string) $row['data_inicio'],
+            'data_fim' => (string) $row['data_fim'],
+            'status' => (string) $row['status'],
+            'espelhos' => (int) $row['espelhos'],
+        ];
+    }
+
+    /**
+     * Gera/atualiza espelho do colaborador no período exato.
+     */
+    public function gerarEspelho(
+        int $colaboradorId,
+        string $dataInicio,
+        string $dataFim,
+        ?int $usuarioId = null
+    ): int {
+        $this->validarPeriodo($dataInicio, $dataFim);
+        $periodoId = $this->garantirPeriodo($dataInicio, $dataFim);
+        $inicio = new DateTimeImmutable($dataInicio);
+        $fim = new DateTimeImmutable($dataFim);
 
         $this->db->beginTransaction();
         try {
-            $cfgInicio = $this->resolver->resolve($colaboradorId, $inicio);
+            // Geração não pode travar por data de alocação: usa vigente, senão a mais próxima/padrão.
+            $cfgInicio = $this->resolver->resolveParaGeracao($colaboradorId, $inicio);
             if ($cfgInicio === null) {
-                throw new RuntimeException('Colaborador sem lotação vigente na competência.');
+                throw new RuntimeException('Não há lotação cadastrada no sistema para gerar o espelho.');
             }
 
-            $espelhoId = $this->upsertEspelho($competenciaId, $colaboradorId, (int) $cfgInicio['id']);
+            $espelhoId = $this->upsertEspelho($periodoId, $colaboradorId, (int) $cfgInicio['id']);
 
             // regenera dias se ainda em aberto/tratamento
             $status = $this->espelhoStatus($espelhoId, true);
@@ -76,6 +121,21 @@ final class MotorPontoService
 
             $this->recalcularTotais($espelhoId);
             $this->db->commit();
+
+            // Reaplica HE aprovadas sobre as marcações geradas (também ocorre após o britânico).
+            try {
+                (new HeAutorizacaoService($this->db))->reaplicarAprovadasNoEspelho($espelhoId);
+            } catch (Throwable) {
+                // Ignora se a migração de HE ainda não existir.
+            }
+
+            // Garante Relatório de Atividades do mesmo período do cartão.
+            try {
+                (new RelatorioAtividadesService($this->db))->garantirParaEspelho($espelhoId);
+            } catch (Throwable) {
+                // Ignora se a migração de RA ainda não existir.
+            }
+
             return $espelhoId;
         } catch (Throwable $e) {
             $this->db->rollBack();
@@ -83,25 +143,55 @@ final class MotorPontoService
         }
     }
 
-    /** @param (callable(int, int): void)|null $progresso */
-    public function gerarCompetenciaParaAtivos(int $ano, int $mes, ?callable $progresso = null): int
+    /** @return list<int> */
+    public function idsColaboradoresAtivos(): array
     {
-        $stmt = $this->db->query("SELECT id FROM rh_colaboradores WHERE status = 'ativo'");
-        $colaboradores = $stmt->fetchAll();
+        $stmt = $this->db->query("SELECT id FROM rh_colaboradores WHERE status = 'ativo' ORDER BY id");
+        return array_map(static fn(array $row): int => (int) $row['id'], $stmt->fetchAll());
+    }
+
+    /**
+     * Gera espelho ignorando espelho já fechado.
+     * Data de alocação não impede geração.
+     * @return 'ok'|'skip_fechado'|'skip_lotacao'
+     */
+    public function gerarEspelhoTolerante(
+        int $colaboradorId,
+        string $dataInicio,
+        string $dataFim,
+        ?int $usuarioId = null
+    ): string {
+        try {
+            $this->gerarEspelho($colaboradorId, $dataInicio, $dataFim, $usuarioId);
+            return 'ok';
+        } catch (RuntimeException $e) {
+            $msg = $e->getMessage();
+            if (str_contains($msg, 'fechado')) {
+                return 'skip_fechado';
+            }
+            if (str_contains($msg, 'Não há lotação cadastrada')) {
+                return 'skip_lotacao';
+            }
+            throw $e;
+        }
+    }
+
+    /** @param (callable(int, int): void)|null $progresso */
+    public function gerarPeriodoParaAtivos(
+        string $dataInicio,
+        string $dataFim,
+        ?callable $progresso = null
+    ): int {
+        $colaboradores = $this->idsColaboradoresAtivos();
         $total = count($colaboradores);
         if ($progresso !== null) {
             $progresso(0, $total);
         }
         $count = 0;
-        foreach ($colaboradores as $indice => $row) {
-            try {
-                $this->gerarEspelho((int) $row['id'], $ano, $mes);
+        foreach ($colaboradores as $indice => $colaboradorId) {
+            $resultado = $this->gerarEspelhoTolerante($colaboradorId, $dataInicio, $dataFim);
+            if ($resultado === 'ok') {
                 $count++;
-            } catch (RuntimeException $e) {
-                // Espelho já fechado/enviado/assinado: mantém e segue os demais.
-                if (!str_contains($e->getMessage(), 'fechado')) {
-                    throw $e;
-                }
             }
             if ($progresso !== null) {
                 $progresso($indice + 1, $total);
@@ -110,10 +200,26 @@ final class MotorPontoService
         return $count;
     }
 
+    private function validarPeriodo(string $dataInicio, string $dataFim): void
+    {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio)
+            || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)
+            || $dataInicio > $dataFim
+        ) {
+            throw new RuntimeException('Informe datas inicial e final válidas, em ordem.');
+        }
+        $dias = (int) (new DateTimeImmutable($dataInicio))->diff(new DateTimeImmutable($dataFim))->days + 1;
+        if ($dias > PeriodoPonto::MAX_DIAS_PDF) {
+            throw new RuntimeException(
+                'Selecione um período de no máximo ' . PeriodoPonto::MAX_DIAS_PDF . ' dias para gerar espelhos.'
+            );
+        }
+    }
+
     private function gerarDia(int $espelhoId, int $colaboradorId, DateTimeImmutable $dia): void
     {
         $data = $dia->format('Y-m-d');
-        $cfg = $this->resolver->resolve($colaboradorId, $dia);
+        $cfg = $this->resolver->resolveParaGeracao($colaboradorId, $dia);
         if ($cfg === null) {
             return;
         }
@@ -127,11 +233,17 @@ final class MotorPontoService
             ? ('Feriado' . (isset($feriados[0]['nome']) ? ' — ' . $feriados[0]['nome'] : ''))
             : ($tipoDia === 'trabalho' ? 'Normal' : 'Folga');
 
+        $okStatus = match ($tipoPersistido) {
+            'feriado' => 'feriado',
+            'folga', 'folga_escala' => 'folga',
+            default => 'pendente',
+        };
+
         $ins = $this->db->prepare(
             'INSERT INTO ponto_dias
-            (espelho_id, data, tipo_dia, previsto_entrada, previsto_intervalo_inicio, previsto_intervalo_fim, previsto_saida, ocorrencia_resumo)
+            (espelho_id, data, tipo_dia, previsto_entrada, previsto_intervalo_inicio, previsto_intervalo_fim, previsto_saida, ocorrencia_resumo, ok_status)
             VALUES
-            (:espelho_id, :data, :tipo_dia, :pe, :pii, :pif, :ps, :resumo)'
+            (:espelho_id, :data, :tipo_dia, :pe, :pii, :pif, :ps, :resumo, :ok_status)'
         );
         $ins->execute([
             'espelho_id' => $espelhoId,
@@ -142,6 +254,7 @@ final class MotorPontoService
             'pif' => $cfg['intervalo_fim'] ?? null,
             'ps' => $cfg['saida'] ?? null,
             'resumo' => $resumo,
+            'ok_status' => $okStatus,
         ]);
         $diaId = (int) $this->db->lastInsertId();
 
@@ -363,12 +476,12 @@ final class MotorPontoService
         return $tipo === 'folga' ? 'folga_escala' : 'trabalho';
     }
 
-    private function upsertEspelho(int $competenciaId, int $colaboradorId, int $lotacaoId): int
+    private function upsertEspelho(int $periodoId, int $colaboradorId, int $lotacaoId): int
     {
         $stmt = $this->db->prepare(
-            'SELECT id FROM ponto_espelhos WHERE competencia_id = :c AND colaborador_id = :col LIMIT 1'
+            'SELECT id FROM ponto_espelhos WHERE periodo_id = :p AND colaborador_id = :col LIMIT 1'
         );
-        $stmt->execute(['c' => $competenciaId, 'col' => $colaboradorId]);
+        $stmt->execute(['p' => $periodoId, 'col' => $colaboradorId]);
         $id = $stmt->fetchColumn();
         if ($id !== false) {
             $upd = $this->db->prepare('UPDATE ponto_espelhos SET lotacao_id = :l WHERE id = :id');
@@ -377,11 +490,11 @@ final class MotorPontoService
         }
 
         $ins = $this->db->prepare(
-            'INSERT INTO ponto_espelhos (competencia_id, colaborador_id, lotacao_id, status)
-             VALUES (:c, :col, :l, :status)'
+            'INSERT INTO ponto_espelhos (periodo_id, colaborador_id, lotacao_id, status)
+             VALUES (:p, :col, :l, :status)'
         );
         $ins->execute([
-            'c' => $competenciaId,
+            'p' => $periodoId,
             'col' => $colaboradorId,
             'l' => $lotacaoId,
             'status' => 'em_aberto',
@@ -533,19 +646,22 @@ final class MotorPontoService
             )->execute([$espelhoId, $espelhoId]);
         }
 
+        // Evita mix de collation (utf8mb4_general_ci vs unicode_ci) ao comparar
+        // parâmetro PDO com literal string no MySQL da Hostinger.
+        $fechar = $novoStatus === 'fechado' ? 1 : 0;
         $upd = $this->db->prepare(
             'UPDATE ponto_espelhos
              SET status = :status,
                  versao = :versao,
-                 fechado_em = CASE WHEN :status2 = \'fechado\' THEN NOW() ELSE fechado_em END,
-                 fechado_por = CASE WHEN :status3 = \'fechado\' THEN :usuario ELSE fechado_por END
+                 fechado_em = CASE WHEN :fechar = 1 THEN NOW() ELSE fechado_em END,
+                 fechado_por = CASE WHEN :fechar2 = 1 THEN :usuario ELSE fechado_por END
              WHERE id = :id'
         );
         $upd->execute([
             'status' => $novoStatus,
             'versao' => $novaVersao,
-            'status2' => $novoStatus,
-            'status3' => $novoStatus,
+            'fechar' => $fechar,
+            'fechar2' => $fechar,
             'usuario' => $usuarioId,
             'id' => $espelhoId,
         ]);
