@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Controllers\Rh;
 
+use App\Helpers\AppUrl;
 use App\Helpers\Auth;
 use App\Helpers\Db;
 use App\Helpers\View;
+use App\Helpers\WhatsApp;
 use App\Services\AssinaturaEletronicaService;
 use App\Services\FolhaPontoService;
 use App\Services\MotorPontoService;
@@ -295,6 +297,85 @@ final class FolhaController
             $parametros += ['data_inicio' => $_GET['data_inicio'], 'data_fim' => $_GET['data_fim']];
         }
         header('Location: /rh/folha/' . $espelhoId . '?' . http_build_query($parametros), true, 303);
+    }
+
+    /**
+     * Landing pública para prévia do WhatsApp (OG + logo).
+     * Crawlers leem o HTML; o navegador redireciona ao portal.
+     */
+    public function shareWhatsapp(string $token = ''): void
+    {
+        @ini_set('display_errors', '0');
+        header('Content-Type: text/html; charset=UTF-8');
+        header('Cache-Control: public, max-age=300');
+        header('X-Content-Type-Options: nosniff');
+        header('Referrer-Policy: no-referrer');
+
+        $token = trim($token);
+        $base = rtrim(AppUrl::base(), '/');
+        $portalUrl = $base . '/assinar/' . rawurlencode($token);
+        $ogUrl = $base . '/s/' . rawurlencode($token);
+        $ogImage = WhatsApp::logoUrl();
+
+        $nome = '';
+        $periodoTexto = '';
+        $pdo = Db::tryConnection();
+        if ($pdo instanceof PDO && $token !== '') {
+            $assinatura = new AssinaturaEletronicaService($pdo);
+            $doc = $assinatura->buscarPorPortalToken($token);
+            if (is_array($doc)) {
+                $nome = trim((string) ($doc['nome'] ?? ''));
+                $ini = (string) ($doc['periodo_cartao_inicio'] ?? $doc['periodo_inicio'] ?? $doc['data_inicio'] ?? '');
+                $fim = (string) ($doc['periodo_cartao_fim'] ?? $doc['periodo_fim'] ?? $doc['data_fim'] ?? '');
+                if ($ini !== '' && $fim !== '') {
+                    $periodoTexto = date('d/m/Y', strtotime($ini)) . ' a ' . date('d/m/Y', strtotime($fim));
+                }
+            }
+        }
+
+        $ogTitle = 'Assinar Folha de Ponto — Arcadis RH';
+        $ogDesc = $periodoTexto !== ''
+            ? ('Folha de Ponto (' . $periodoTexto . ') pronta para conferência e assinatura eletrônica.')
+            : 'Folha de Ponto Arcadis — conferência e assinatura eletrônica.';
+
+        View::render('rh/folha/share_whatsapp', [
+            'token' => $token,
+            'portalUrl' => $portalUrl,
+            'ogUrl' => $ogUrl,
+            'ogImage' => $ogImage,
+            'ogTitle' => $ogTitle,
+            'ogDesc' => $ogDesc,
+            'periodoTexto' => $periodoTexto,
+            'nomeColaborador' => $nome,
+        ], null);
+    }
+
+    /** Imagem OG da marca (headers amigáveis ao crawler do WhatsApp). */
+    public function ogLogo(): void
+    {
+        @ini_set('display_errors', '0');
+        $path = dirname(__DIR__, 3) . '/public/assets/img/logo-arcadis-og.jpg';
+        if (!is_file($path)) {
+            http_response_code(404);
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo 'Logo não encontrada';
+            exit;
+        }
+
+        $mtime = (string) filemtime($path);
+        $etag = '"' . md5($path . $mtime) . '"';
+        header('Content-Type: image/jpeg');
+        header('Content-Length: ' . (string) filesize($path));
+        header('Cache-Control: public, max-age=604800, immutable');
+        header('ETag: ' . $etag);
+        header('Last-Modified: ' . gmdate('D, d M Y H:i:s', (int) $mtime) . ' GMT');
+        header('X-Content-Type-Options: nosniff');
+        if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim((string) $_SERVER['HTTP_IF_NONE_MATCH']) === $etag) {
+            http_response_code(304);
+            exit;
+        }
+        readfile($path);
+        exit;
     }
 
     public function portalAssinatura(string $token = ''): void

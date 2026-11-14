@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Helpers;
 
 /**
- * Links e mensagens WhatsApp (wa.me / api.whatsapp.com).
- * Emojis via escapes \u{} para o arquivo-fonte ficar ASCII-safe.
+ * Links e mensagens WhatsApp (api.whatsapp.com).
+ * Emojis via escapes HTML para o arquivo-fonte ficar ASCII-safe.
  */
 final class WhatsApp
 {
@@ -42,11 +42,24 @@ final class WhatsApp
     }
 
     /**
-     * URL absoluta da imagem de marca (prévia do WhatsApp).
+     * URL absoluta da imagem OG (rota PHP com headers amigáveis ao crawler).
      */
     public static function logoUrl(?string $rootPath = null): string
     {
-        return rtrim(AppUrl::base($rootPath), '/') . '/assets/img/logo-arcadis-og.jpg?v=20261114b';
+        return rtrim(AppUrl::base($rootPath), '/') . '/og/arcadis-folha.jpg';
+    }
+
+    /**
+     * Converte /assinar/{token} em /s/{token} (landing com prévia da logo).
+     */
+    public static function shareUrlFromPortal(string $portalUrl, ?string $rootPath = null): string
+    {
+        $portalUrl = trim($portalUrl);
+        if ($portalUrl !== '' && preg_match('#/assinar/([^/?#]+)#', $portalUrl, $m) === 1) {
+            return rtrim(AppUrl::base($rootPath), '/') . '/s/' . rawurlencode(rawurldecode($m[1]));
+        }
+
+        return $portalUrl;
     }
 
     /**
@@ -107,8 +120,7 @@ final class WhatsApp
     {
         $nome = trim($nome) !== '' ? trim($nome) : 'colaborador(a)';
         $periodo = trim($periodo) !== '' ? trim($periodo) : 'período atual';
-        $portalUrl = trim($portalUrl);
-        $logo = self::logoUrl();
+        $ctaUrl = self::shareUrlFromPortal($portalUrl);
 
         $building = self::e('1F3E2');
         $wave = self::e('1F44B');
@@ -127,11 +139,8 @@ final class WhatsApp
             ? "{$point} Toque no link abaixo para concluir:"
             : "{$point} Toque no link abaixo para acessar:";
 
-        // 1ª URL = logo (card visual obrigatório no WhatsApp)
-        // 2ª URL = portal de assinatura
+        // Um único link = landing /s/{token} com Open Graph da logo Arcadis.
         return implode("\n", [
-            $logo,
-            '',
             "{$building} *Arcadis RH — Corredor Norte*",
             '',
             "Olá, *{$nome}*! {$wave}",
@@ -142,7 +151,7 @@ final class WhatsApp
             $corpo,
             '',
             $cta,
-            $portalUrl,
+            $ctaUrl,
             '',
             '_Arcadis RH — Corredor Norte_',
         ]);

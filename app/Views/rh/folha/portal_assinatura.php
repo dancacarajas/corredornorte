@@ -53,7 +53,7 @@ $pdfUrl = '/assinar/' . rawurlencode($token) . '/pdf';
 $verificarUrl = $documento !== null ? '/verificar/' . rawurlencode((string) ($documento['codigo_verificacao'] ?? '')) : '';
 $ogBase = AppUrl::base();
 $ogUrl = $ogBase . '/assinar/' . rawurlencode($token);
-$ogImage = $ogBase . '/assets/img/logo-arcadis-og.jpg?v=20261114b';
+$ogImage = $ogBase . '/og/arcadis-folha.jpg';
 $ogTitle = 'Assinar Folha de Ponto — Arcadis RH';
 $ogDesc = $periodoTexto !== ''
     ? ('Folha de Ponto (' . $periodoTexto . ') pronta para conferência e assinatura eletrônica.')

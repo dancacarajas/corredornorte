@@ -98,6 +98,8 @@ $router->get('/assinar/{token}', [$folha, 'portalAssinatura']);
 $router->get('/assinar/{token}/pdf', [$folha, 'portalPdf']);
 $router->post('/assinar/{token}/assinar', [$folha, 'portalAssinar']);
 $router->post('/assinar/{token}/divergencia', [$folha, 'portalDivergencia']);
+$router->get('/s/{token}', [$folha, 'shareWhatsapp']);
+$router->get('/og/arcadis-folha.jpg', [$folha, 'ogLogo']);
 
 $raAssinatura = RelatorioAssinaturaController::class;
 $router->get('/assinar-relatorio/{token}', [$raAssinatura, 'portalAssinatura']);
@@ -136,6 +138,8 @@ $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/assinar/')
     || str_starts_with($path, '/assinar-relatorio/')
     || str_starts_with($path, '/verificar-relatorio/')
+    || str_starts_with($path, '/s/')
+    || $normalizedPath === '/og/arcadis-folha.jpg'
     || str_starts_with($path, '/he')
     || str_starts_with($path, '/install');
 if (!$isPublic) {
