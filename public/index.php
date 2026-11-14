@@ -320,6 +320,7 @@ $router->post('/rh/medicao/lote/fechar', [$medicao, 'fecharLote']);
 $router->post('/rh/medicao/lote/pdf', [$medicao, 'gerarPdfLote']);
 $router->post('/rh/medicao/lote/link', [$medicao, 'linkLote']);
 $router->post('/rh/medicao/lote/email', [$medicao, 'emailLote']);
+$router->post('/rh/medicao/lote/email-reenvio', [$medicao, 'emailReenvioLote']);
 
 $router->get('/rh/folha', [$folha, 'index']);
 $router->get('/rh/folha/documento/{id}', [$folha, 'download']);

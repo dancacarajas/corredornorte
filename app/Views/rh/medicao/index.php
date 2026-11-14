@@ -49,7 +49,25 @@ $pendenteNaEtapa = static function (array $c, string $filtro): bool {
 
 $colaboradoresFiltrados = $colaboradores;
 $modoConsultaLinks = false;
+$modoConsultaEmail = false;
 $modoDossie = $filtro === 'dossie';
+$alvosReenvioEmail = array_values(array_filter(
+    $colaboradores,
+    static function (array $c): bool {
+        $et = $c['etapas'] ?? [];
+        return empty($c['concluido'])
+            && !empty($et['link'])
+            && !empty($et['email'])
+            && empty($et['assinaturas'])
+            && !empty($c['email_corp'])
+            && !empty($c['documento_id']);
+    }
+));
+$idsReenvioEmail = array_values(array_map(
+    static fn(array $c): int => (int) $c['espelho_id'],
+    $alvosReenvioEmail
+));
+$qtdReenvioEmail = count($idsReenvioEmail);
 if ($filtro !== '' && !$modoDossie) {
     $colaboradoresFiltrados = array_values(array_filter(
         $colaboradores,
@@ -65,6 +83,11 @@ if ($filtro !== '' && !$modoDossie) {
             $colaboradoresFiltrados = $comLink;
             $modoConsultaLinks = true;
         }
+    }
+    // Etapa "Enviar e-mails" zerada: consulta quem já recebeu (reenvio).
+    if ($filtro === 'email' && $colaboradoresFiltrados === [] && $alvosReenvioEmail !== []) {
+        $colaboradoresFiltrados = $alvosReenvioEmail;
+        $modoConsultaEmail = true;
     }
 } elseif ($modoDossie && !$prontoDossie) {
     // Dossiê ainda bloqueado: mostra quem falta chegar a 100%.
@@ -456,8 +479,9 @@ foreach ($loteBotoes as $b) {
             </button>
         <?php endif; ?>
     </div>
-    <?php if ($btnExecutar !== null && $qtdExecutar > 0): ?>
-        <div class="card-body medicao-lote-exec" style="padding-top:0;">
+    <?php if (($btnExecutar !== null && $qtdExecutar > 0) || ($filtro === 'email' && $qtdReenvioEmail > 0)): ?>
+        <div class="card-body medicao-lote-exec" style="padding-top:0;display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;">
+            <?php if ($btnExecutar !== null && $qtdExecutar > 0): ?>
             <form method="post" action="<?= View::e((string) $btnExecutar['route']) ?>"
                   id="medicaoBatchForm"
                   data-confirm-title="Executar lote?"
@@ -470,9 +494,26 @@ foreach ($loteBotoes as $b) {
                     Executar lote: <?= View::e((string) $btnExecutar['label']) ?>
                     <span class="medicao-lote-count" id="medicaoBatchCount"><?= $qtdExecutar ?></span>
                 </button>
-                <span class="muted text-sm" id="medicaoBatchHint">Aplica aos elegíveis desta etapa (ou apenas aos marcados na tabela).</span>
             </form>
-            <div class="batch-progress-card" id="medicaoBatchProgress" hidden style="margin-top:.75rem;">
+            <?php endif; ?>
+            <?php if ($filtro === 'email' && $qtdReenvioEmail > 0): ?>
+            <form method="post" action="/rh/medicao/lote/email-reenvio"
+                  id="medicaoReenvioForm"
+                  data-confirm-title="Reenviar e-mails?"
+                  data-confirm-base="Reenviar a folha (com link) para quem já recebeu e ainda não assinou?"
+                  data-elegiveis-total="<?= $qtdReenvioEmail ?>"
+                  data-reenvio-ids="<?= View::e(implode(',', $idsReenvioEmail)) ?>">
+                <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+                <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+                <input type="hidden" name="filtro" value="email">
+                <button class="btn btn-secondary" type="submit" id="medicaoReenvioSubmit">
+                    Reenviar e-mails
+                    <span class="medicao-lote-count" id="medicaoReenvioCount"><?= $qtdReenvioEmail ?></span>
+                </button>
+            </form>
+            <?php endif; ?>
+            <span class="muted text-sm" id="medicaoBatchHint">Aplica aos elegíveis desta etapa (ou apenas aos marcados na tabela).</span>
+            <div class="batch-progress-card" id="medicaoBatchProgress" hidden style="margin-top:.75rem;flex:1 1 100%;">
                 <div class="batch-progress-head">
                     <strong id="medicaoBatchTitle">Processando lote...</strong>
                     <span id="medicaoBatchStats" class="muted">0 / 0</span>
@@ -496,6 +537,10 @@ foreach ($loteBotoes as $b) {
     <?php elseif ($filtro === 'link' && $qtdFiltro === 0): ?>
         <div class="card-body" style="padding-top:0;">
             <p class="muted text-sm" style="margin:0;">Nenhum link pendente — abaixo estão os links já gerados (abrir / copiar).</p>
+        </div>
+    <?php elseif ($filtro === 'email' && $qtdFiltro === 0 && $modoConsultaEmail): ?>
+        <div class="card-body" style="padding-top:0;">
+            <p class="muted text-sm" style="margin:0;">Nenhum 1º envio pendente — abaixo quem já recebeu e ainda não assinou (reenvio).</p>
         </div>
     <?php elseif ($filtro !== '' && $filtro !== 'assinaturas' && $qtdFiltro === 0): ?>
         <div class="card-body" style="padding-top:0;">
@@ -522,6 +567,9 @@ foreach ($loteBotoes as $b) {
                     · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
                 <?php elseif ($modoConsultaLinks): ?>
                     Links gerados (etapa zerada) — <?= count($colaboradoresFiltrados) ?> colaborador<?= count($colaboradoresFiltrados) === 1 ? '' : 'es' ?>
+                    · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
+                <?php elseif ($modoConsultaEmail): ?>
+                    E-mails já enviados — <?= count($colaboradoresFiltrados) ?> aguardando assinatura (reenvio)
                     · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
                 <?php elseif ($filtro !== ''): ?>
                     Filtro: <strong><?= View::e($filtroAtivoLabel) ?></strong>
@@ -638,9 +686,25 @@ foreach ($loteBotoes as $b) {
                             'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']),
                             'pdf' => !empty($etapas['fechado']) && empty($etapas['pdf']),
                             'link' => !empty($etapas['pdf']) && empty($etapas['link']),
-                            'email' => !empty($etapas['link']) && empty($etapas['email']),
+                            'email' => $modoConsultaEmail
+                                ? (!empty($etapas['link']) && !empty($etapas['email']) && empty($etapas['assinaturas']) && !empty($c['email_corp']))
+                                : (!empty($etapas['link']) && empty($etapas['email'])),
                             default => !$done,
                         };
+                        $podeReenviarEmail = $filtro === 'email'
+                            && !$done
+                            && !empty($etapas['link'])
+                            && !empty($etapas['email'])
+                            && empty($etapas['assinaturas'])
+                            && !empty($c['email_corp'])
+                            && !empty($c['documento_id']);
+                        $podeEnviarEmail = $filtro === 'email'
+                            && !$done
+                            && !$modoConsultaEmail
+                            && !empty($etapas['link'])
+                            && empty($etapas['email'])
+                            && !empty($c['email_corp'])
+                            && !empty($c['documento_id']);
                         $buscaKey = mb_strtolower(trim((string) ($c['nome'] ?? '') . ' ' . (string) ($c['matricula'] ?? '')), 'UTF-8');
                         ?>
                         <tr class="medicao-colab-row <?= $done ? 'medicao-row-done' : '' ?>" data-search="<?= View::e($buscaKey) ?>">
@@ -688,6 +752,23 @@ foreach ($loteBotoes as $b) {
                             <td class="text-right medicao-row-actions">
                                 <?php if ($mostraZap): ?>
                                     <?php $renderMedicaoZap($c, $filtro, $periodoLabel); ?>
+                                <?php endif; ?>
+                                <?php if ($podeReenviarEmail): ?>
+                                    <button type="button"
+                                            class="btn btn-secondary btn-sm js-medicao-email-one"
+                                            data-espelho-id="<?= (int) $c['espelho_id'] ?>"
+                                            data-mode="reenvio"
+                                            title="Reenviar e-mail com link de assinatura">
+                                        Reenviar e-mail
+                                    </button>
+                                <?php elseif ($podeEnviarEmail): ?>
+                                    <button type="button"
+                                            class="btn btn-secondary btn-sm js-medicao-email-one"
+                                            data-espelho-id="<?= (int) $c['espelho_id'] ?>"
+                                            data-mode="envio"
+                                            title="Enviar e-mail com link de assinatura">
+                                        Enviar e-mail
+                                    </button>
                                 <?php endif; ?>
                                 <a class="btn btn-ghost btn-sm" href="/rh/ponto/<?= (int) $c['espelho_id'] ?>?<?= View::e($qs) ?>">Ponto</a>
                                 <?php if (!empty($c['documento_id'])): ?>
@@ -757,11 +838,14 @@ foreach ($loteBotoes as $b) {
     });
 
     const form = document.getElementById('medicaoBatchForm');
+    const reenvioForm = document.getElementById('medicaoReenvioForm');
     const selectAll = document.getElementById('medicaoSelectAll');
     const checks = () => Array.from(document.querySelectorAll('.medicao-check:not(:disabled)'))
       .filter((c) => !c.closest('tr')?.hidden);
     const countBadge = document.getElementById('medicaoBatchCount');
+    const reenvioCount = document.getElementById('medicaoReenvioCount');
     const submitBtn = document.getElementById('medicaoBatchSubmit');
+    const reenvioBtn = document.getElementById('medicaoReenvioSubmit');
     const progCard = document.getElementById('medicaoBatchProgress');
     const progTitle = document.getElementById('medicaoBatchTitle');
     const progStats = document.getElementById('medicaoBatchStats');
@@ -775,11 +859,23 @@ foreach ($loteBotoes as $b) {
       return checks().filter((c) => c.getAttribute('data-elegivel') === '1').map((c) => Number(c.value)).filter((n) => n > 0);
     };
 
-    const syncBatchCount = () => {
-      if (!form || !countBadge) return;
+    const getReenvioIds = () => {
       const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
-      const totalElig = Number(form.getAttribute('data-elegiveis-total') || '0');
-      countBadge.textContent = String(marked.length > 0 ? marked.length : totalElig);
+      if (marked.length > 0) return marked;
+      const raw = (reenvioForm && reenvioForm.getAttribute('data-reenvio-ids')) || '';
+      return raw.split(',').map((v) => Number(v.trim())).filter((n) => n > 0);
+    };
+
+    const syncBatchCount = () => {
+      const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
+      if (countBadge && form) {
+        const totalElig = Number(form.getAttribute('data-elegiveis-total') || '0');
+        countBadge.textContent = String(marked.length > 0 ? marked.length : totalElig);
+      }
+      if (reenvioCount && reenvioForm) {
+        const totalRe = Number(reenvioForm.getAttribute('data-elegiveis-total') || '0');
+        reenvioCount.textContent = String(marked.length > 0 ? marked.length : totalRe);
+      }
     };
 
     if (selectAll) {
@@ -790,56 +886,52 @@ foreach ($loteBotoes as $b) {
     }
     checks().forEach((c) => c.addEventListener('change', syncBatchCount));
 
-    if (!form) return;
-    // Sem BatchRunner o POST único estoura 504 no Hostinger (49 e-mails).
-    if (!window.BatchRunner) {
-      form.addEventListener('submit', (ev) => {
-        ev.preventDefault();
-        if (window.Toast) window.Toast.show('Recarregue a página: o enviador em lote não carregou.', 'danger');
-      });
-      return;
-    }
-
-    form.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const ids = getTargetIds();
-      if (ids.length === 0) {
+    const runBatch = async (opts) => {
+      const { url, ids, submitEl, formEl, confirmTitle, confirmBase, progressLabel } = opts;
+      if (!ids.length) {
         if (window.Toast) window.Toast.show('Nenhum colaborador elegível ou selecionado.', 'warning');
         return;
       }
-
-      const baseMsg = form.getAttribute('data-confirm-base') || 'Executar esta etapa em lote?';
-      const title = form.getAttribute('data-confirm-title') || 'Executar lote?';
+      if (!window.BatchRunner) {
+        if (window.Toast) window.Toast.show('Recarregue a página: o enviador em lote não carregou.', 'danger');
+        return;
+      }
       const confirmed = window.uiConfirm
-        ? await window.uiConfirm({ title, message: `${baseMsg} (${ids.length} colaborador${ids.length === 1 ? '' : 'es'})`, confirmText: 'Executar', tone: 'brand' })
+        ? await window.uiConfirm({
+          title: confirmTitle || 'Executar lote?',
+          message: `${confirmBase || 'Confirmar?'} (${ids.length} colaborador${ids.length === 1 ? '' : 'es'})`,
+          confirmText: 'Executar',
+          tone: 'brand',
+        })
         : true;
       if (!confirmed) return;
 
-      if (submitBtn) submitBtn.disabled = true;
+      if (submitEl) submitEl.disabled = true;
+      if (submitBtn && submitEl !== submitBtn) submitBtn.disabled = true;
+      if (reenvioBtn && submitEl !== reenvioBtn) reenvioBtn.disabled = true;
       if (progCard) progCard.hidden = false;
       if (progErrors) { progErrors.hidden = true; progErrors.innerHTML = ''; }
       if (progReload) progReload.hidden = true;
       if (progBar) progBar.style.width = '5%';
       if (progStats) progStats.textContent = `0 / ${ids.length}`;
 
-      const ini = form.querySelector('input[name="data_inicio"]')?.value || '';
-      const fim = form.querySelector('input[name="data_fim"]')?.value || '';
-      const filtro = form.querySelector('input[name="filtro"]')?.value || '';
-      const isEmail = String(form.action || '').includes('/lote/email');
-      // E-mail com PDF é lento (SMTP/OAuth): 1 por request evita 504.
-      const chunkSize = isEmail ? 1 : 5;
+      const sourceForm = formEl || form || reenvioForm;
+      const ini = sourceForm?.querySelector('input[name="data_inicio"]')?.value || '';
+      const fim = sourceForm?.querySelector('input[name="data_fim"]')?.value || '';
+      const filtroVal = sourceForm?.querySelector('input[name="filtro"]')?.value || '';
+      const isEmail = String(url || '').includes('/lote/email');
 
       try {
         const summary = await window.BatchRunner.run({
-          url: form.action,
+          url,
           ids,
-          chunkSize,
-          params: { data_inicio: ini, data_fim: fim, filtro },
+          chunkSize: isEmail ? 1 : 5,
+          params: { data_inicio: ini, data_fim: fim, filtro: filtroVal },
           onProgress(p) {
             const pct = Math.min(100, Math.round((p.done / Math.max(1, p.total)) * 100));
             if (progBar) progBar.style.width = `${pct}%`;
             if (progStats) progStats.textContent = `${p.done} / ${p.total} (${p.ok} aplicado${p.ok === 1 ? '' : 's'})`;
-            if (progTitle) progTitle.textContent = isEmail ? 'Enviando e-mails...' : 'Processando lote...';
+            if (progTitle) progTitle.textContent = progressLabel || (isEmail ? 'Enviando e-mails...' : 'Processando lote...');
           },
         });
 
@@ -861,14 +953,69 @@ foreach ($loteBotoes as $b) {
         }
         if (progReload) progReload.hidden = false;
         if (submitBtn) submitBtn.disabled = false;
+        if (reenvioBtn) reenvioBtn.disabled = false;
         if (window.Toast) window.Toast.show(`${summary.ok} processado(s), ${summary.errors.length} pendência(s).`, 'warning');
       } catch (err) {
         const msg = (err && err.message) ? err.message : 'Erro ao executar lote.';
         if (progTitle) progTitle.textContent = msg;
         if (progReload) progReload.hidden = false;
         if (submitBtn) submitBtn.disabled = false;
+        if (reenvioBtn) reenvioBtn.disabled = false;
         if (window.Toast) window.Toast.show(msg, 'danger');
       }
+    };
+
+    if (form) {
+      form.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        runBatch({
+          url: form.action,
+          ids: getTargetIds(),
+          submitEl: submitBtn,
+          formEl: form,
+          confirmTitle: form.getAttribute('data-confirm-title') || 'Executar lote?',
+          confirmBase: form.getAttribute('data-confirm-base') || 'Executar esta etapa em lote?',
+          progressLabel: String(form.action || '').includes('/lote/email') ? 'Enviando e-mails...' : 'Processando lote...',
+        });
+      });
+    }
+
+    if (reenvioForm) {
+      reenvioForm.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        runBatch({
+          url: reenvioForm.action,
+          ids: getReenvioIds(),
+          submitEl: reenvioBtn,
+          formEl: reenvioForm,
+          confirmTitle: reenvioForm.getAttribute('data-confirm-title') || 'Reenviar e-mails?',
+          confirmBase: reenvioForm.getAttribute('data-confirm-base') || 'Reenviar e-mails?',
+          progressLabel: 'Reenviando e-mails...',
+        });
+      });
+    }
+
+    document.querySelectorAll('.js-medicao-email-one').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.getAttribute('data-espelho-id') || '0');
+        if (!id) return;
+        const mode = btn.getAttribute('data-mode') === 'reenvio' ? 'reenvio' : 'envio';
+        const url = mode === 'reenvio'
+          ? '/rh/medicao/lote/email-reenvio'
+          : '/rh/medicao/lote/email';
+        const source = mode === 'reenvio' ? (reenvioForm || form) : (form || reenvioForm);
+        runBatch({
+          url,
+          ids: [id],
+          submitEl: btn,
+          formEl: source,
+          confirmTitle: mode === 'reenvio' ? 'Reenviar e-mail?' : 'Enviar e-mail?',
+          confirmBase: mode === 'reenvio'
+            ? 'Reenviar a folha com link de assinatura para este colaborador?'
+            : 'Enviar a folha com link de assinatura para este colaborador?',
+          progressLabel: mode === 'reenvio' ? 'Reenviando e-mail...' : 'Enviando e-mail...',
+        });
+      });
     });
   };
 

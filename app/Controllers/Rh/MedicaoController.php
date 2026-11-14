@@ -177,6 +177,36 @@ final class MedicaoController
         }, 'E-mails enviados em lote.', true);
     }
 
+    /** Reenvio forçado (template folha.reenvio_*) para quem já recebeu e ainda não assinou. */
+    public function emailReenvioLote(): void
+    {
+        @set_time_limit(120);
+        @ini_set('max_execution_time', '120');
+        $this->rodarLote(static function (PDO $pdo, array $row): string {
+            $docId = (int) ($row['documento_id'] ?? 0);
+            if ($docId <= 0) {
+                throw new RuntimeException('Gere o PDF antes de reenviar.');
+            }
+            if (empty($row['email_corp'])) {
+                throw new RuntimeException('Sem e-mail corporativo.');
+            }
+            if (empty($row['etapas']['link'])) {
+                throw new RuntimeException('Gere o link de assinatura antes de reenviar o e-mail.');
+            }
+            if (empty($row['etapas']['email'])) {
+                throw new RuntimeException('Primeiro envio ainda não foi feito — use Enviar e-mails.');
+            }
+            if (!empty($row['etapas']['assinaturas']) || !empty($row['concluido'])) {
+                return 'já assinado';
+            }
+            $result = (new FolhaPontoService($pdo))->enviarDocumento($docId, null, (int) $row['espelho_id']);
+            if (empty($result['ok'])) {
+                throw new RuntimeException((string) ($result['erro'] ?? 'Falha no reenvio'));
+            }
+            return 'e-mail reenviado';
+        }, 'E-mails reenviados em lote.', true);
+    }
+
     public function dossie(): void
     {
         $pdo = Db::tryConnection();
