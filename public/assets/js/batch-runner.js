@@ -28,6 +28,7 @@
     let totalOk = 0;
     let totalSkipped = 0;
     const errors = [];
+    const items = [];
 
     for (let i = 0; i < ids.length; i += chunkSize) {
       if (signal && signal.aborted) {
@@ -61,6 +62,9 @@
       if (Array.isArray(data.errors) && data.errors.length > 0) {
         data.errors.forEach((err) => errors.push(String(err)));
       }
+      if (Array.isArray(data.items)) {
+        data.items.forEach((it) => items.push(it));
+      }
       if (typeof opts.onProgress === 'function') {
         opts.onProgress({
           done,
@@ -68,6 +72,7 @@
           ok: totalOk,
           skipped: totalSkipped,
           errors: errors.slice(),
+          items: items.slice(),
         });
       }
     }
@@ -78,6 +83,7 @@
       ok: totalOk,
       skipped: totalSkipped,
       errors,
+      items,
     };
     if (typeof opts.onDone === 'function') {
       opts.onDone(summary);

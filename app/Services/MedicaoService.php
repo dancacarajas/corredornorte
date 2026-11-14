@@ -208,7 +208,9 @@ final class MedicaoService
         $raw = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $hePendentes = $this->mapHePendentesPorEspelho(array_column($raw, 'espelho_id'));
-        $emailsOk = $this->mapEmailsOkPorDocumento(array_filter(array_column($raw, 'documento_id')));
+        $docIds = array_filter(array_column($raw, 'documento_id'));
+        $emailsOk = $this->mapEmailsOkPorDocumento($docIds);
+        $emailsUltimo = $this->mapEmailsUltimoPorDocumento($docIds);
 
         $out = [];
         foreach ($raw as $row) {
@@ -217,10 +219,13 @@ final class MedicaoService
             $folhaStatus = (string) ($row['folha_status'] ?? '');
             $raDocStatus = (string) ($row['ra_doc_status'] ?? '');
             $docId = isset($row['documento_id']) ? (int) $row['documento_id'] : 0;
+            $emailOk = !empty($emailsOk[$docId]) || $folhaStatus === 'assinado';
+            $emailUltimo = $emailsUltimo[$docId] ?? null;
 
             // Fluxo real do ponto: em_aberto → em_tratamento → conferido → fechado → enviado → assinado
             // Etapa 2 só conta após "Conferir período" (ou status posterior).
             // em_tratamento NÃO é tratado/conferido.
+            // E-mail só avança com status=enviado em emails_envios — falha permanece na etapa 6.
             $etapas = [
                 'gerado' => true,
                 'tratado' => in_array($statusEsp, ['conferido', 'fechado', 'enviado', 'assinado'], true)
@@ -228,7 +233,7 @@ final class MedicaoService
                 'fechado' => in_array($statusEsp, ['fechado', 'enviado', 'assinado'], true),
                 'pdf' => in_array($folhaStatus, ['gerado', 'enviado', 'assinado'], true),
                 'link' => !empty($row['portal_token']) || $folhaStatus === 'assinado',
-                'email' => !empty($emailsOk[$docId]) || $folhaStatus === 'assinado',
+                'email' => $emailOk,
                 'assinaturas' => $folhaStatus === 'assinado' && $raDocStatus === 'assinado',
             ];
 
@@ -259,6 +264,9 @@ final class MedicaoService
                 'portal_token' => $token !== '' ? $token : null,
                 'portal_url' => $portalUrl,
                 'he_pendente' => !empty($hePendentes[$espelhoId]),
+                'email_ok' => $emailOk,
+                'email_ultimo_status' => is_array($emailUltimo) ? (string) ($emailUltimo['status'] ?? '') : null,
+                'email_ultimo_erro' => is_array($emailUltimo) ? ($emailUltimo['erro'] ?? null) : null,
                 'etapas' => $etapas,
                 'percentual' => $percentual,
                 'concluido' => $percentual >= 100,
@@ -320,6 +328,39 @@ final class MedicaoService
         $map = [];
         foreach ($this->db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
             $map[(int) $row['documento_id']] = true;
+        }
+        return $map;
+    }
+
+    /**
+     * Última tentativa de e-mail por documento (sucesso ou falha).
+     *
+     * @param list<int|string> $documentoIds
+     * @return array<int, array{status:string,erro:?string}>
+     */
+    private function mapEmailsUltimoPorDocumento(array $documentoIds): array
+    {
+        $ids = array_values(array_filter(array_map('intval', $documentoIds)));
+        if ($ids === []) {
+            return [];
+        }
+        $in = implode(',', $ids);
+        $sql = "SELECT e.documento_id, e.status, e.erro_mensagem
+                FROM emails_envios e
+                INNER JOIN (
+                    SELECT documento_id, MAX(id) AS max_id
+                    FROM emails_envios
+                    WHERE documento_id IN ({$in})
+                    GROUP BY documento_id
+                ) u ON u.max_id = e.id";
+        $map = [];
+        foreach ($this->db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $map[(int) $row['documento_id']] = [
+                'status' => (string) ($row['status'] ?? ''),
+                'erro' => isset($row['erro_mensagem']) && $row['erro_mensagem'] !== null
+                    ? (string) $row['erro_mensagem']
+                    : null,
+            ];
         }
         return $map;
     }

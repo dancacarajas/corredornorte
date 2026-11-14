@@ -519,6 +519,22 @@ foreach ($loteBotoes as $b) {
                     <span id="medicaoBatchStats" class="muted">0 / 0</span>
                 </div>
                 <div class="progress"><span id="medicaoBatchBar" style="width:0%"></span></div>
+                <button type="button" class="medicao-report-toggle" id="medicaoReportToggle" hidden aria-expanded="false">
+                    <span class="medicao-report-chevron" aria-hidden="true"></span>
+                    <span id="medicaoReportToggleLabel">Relatório de envios</span>
+                </button>
+                <div class="medicao-report" id="medicaoReportPanel" hidden>
+                    <div class="medicao-report-filters" role="tablist" aria-label="Filtro do relatório">
+                        <button type="button" class="medicao-report-filter is-active" data-filter="todos">Todos <span id="medicaoReportCountAll">0</span></button>
+                        <button type="button" class="medicao-report-filter" data-filter="ok">Sucesso <span id="medicaoReportCountOk">0</span></button>
+                        <button type="button" class="medicao-report-filter" data-filter="falha">Falha <span id="medicaoReportCountFail">0</span></button>
+                    </div>
+                    <ul class="medicao-report-list" id="medicaoReportList"></ul>
+                    <p class="muted text-sm medicao-report-empty" id="medicaoReportEmpty" hidden>Nenhum item neste filtro.</p>
+                    <p class="muted text-sm" id="medicaoReportHint" hidden>
+                        Falhas de envio <strong>não avançam</strong> para a etapa 7 — o colaborador permanece na etapa 6.
+                    </p>
+                </div>
                 <ul class="batch-errors-list" id="medicaoBatchErrors" hidden></ul>
                 <div id="medicaoBatchReloadWrap" hidden>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="window.location.reload()">Atualizar painel</button>
@@ -727,6 +743,11 @@ foreach ($loteBotoes as $b) {
                                 <?php if (!empty($c['he_pendente'])): ?>
                                     <div class="muted text-sm">HE pendente</div>
                                 <?php endif; ?>
+                                <?php if ($filtro === 'email' && empty($etapas['email']) && ($c['email_ultimo_status'] ?? '') === 'falha'): ?>
+                                    <div class="medicao-email-fail" title="<?= View::e((string) ($c['email_ultimo_erro'] ?? 'Falha no envio')) ?>">
+                                        Falha no envio — permanece na etapa 6
+                                    </div>
+                                <?php endif; ?>
                             </td>
                             <td style="min-width:9rem;">
                                 <div class="medicao-pct <?= $done ? 'is-done' : '' ?>"><?= $pctC ?>%</div>
@@ -852,6 +873,92 @@ foreach ($loteBotoes as $b) {
     const progBar = document.getElementById('medicaoBatchBar');
     const progErrors = document.getElementById('medicaoBatchErrors');
     const progReload = document.getElementById('medicaoBatchReloadWrap');
+    const reportToggle = document.getElementById('medicaoReportToggle');
+    const reportToggleLabel = document.getElementById('medicaoReportToggleLabel');
+    const reportPanel = document.getElementById('medicaoReportPanel');
+    const reportList = document.getElementById('medicaoReportList');
+    const reportEmpty = document.getElementById('medicaoReportEmpty');
+    const reportHint = document.getElementById('medicaoReportHint');
+    const reportCountAll = document.getElementById('medicaoReportCountAll');
+    const reportCountOk = document.getElementById('medicaoReportCountOk');
+    const reportCountFail = document.getElementById('medicaoReportCountFail');
+    let reportItems = [];
+    let reportFilter = 'todos';
+
+    const statusLabelReport = (st) => {
+      if (st === 'ok') return 'Sucesso';
+      if (st === 'falha') return 'Falha';
+      return 'Pulado';
+    };
+
+    const renderReport = () => {
+      if (!reportList) return;
+      const okN = reportItems.filter((it) => it.status === 'ok').length;
+      const failN = reportItems.filter((it) => it.status === 'falha').length;
+      if (reportCountAll) reportCountAll.textContent = String(reportItems.length);
+      if (reportCountOk) reportCountOk.textContent = String(okN);
+      if (reportCountFail) reportCountFail.textContent = String(failN);
+      if (reportToggleLabel) {
+        reportToggleLabel.textContent = `Relatório de envios (${okN} sucesso · ${failN} falha)`;
+      }
+      if (reportToggle) reportToggle.hidden = reportItems.length === 0;
+      if (reportHint) reportHint.hidden = failN === 0;
+
+      const filtered = reportItems.filter((it) => {
+        if (reportFilter === 'ok') return it.status === 'ok';
+        if (reportFilter === 'falha') return it.status === 'falha';
+        return true;
+      });
+      reportList.innerHTML = '';
+      filtered.forEach((it) => {
+        const li = document.createElement('li');
+        li.setAttribute('data-status', it.status || '');
+        const st = document.createElement('span');
+        st.className = 'medicao-report-status is-' + (it.status || 'pulado');
+        st.textContent = statusLabelReport(it.status);
+        const name = document.createElement('strong');
+        name.textContent = it.nome || ('#' + (it.espelho_id || ''));
+        const msg = document.createElement('span');
+        msg.className = 'medicao-report-msg';
+        msg.textContent = it.message || '';
+        li.appendChild(st);
+        li.appendChild(name);
+        if (it.message) li.appendChild(msg);
+        reportList.appendChild(li);
+      });
+      if (reportEmpty) reportEmpty.hidden = filtered.length > 0;
+    };
+
+    const resetReport = () => {
+      reportItems = [];
+      reportFilter = 'todos';
+      document.querySelectorAll('.medicao-report-filter').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.getAttribute('data-filter') === 'todos');
+      });
+      if (reportToggle) {
+        reportToggle.hidden = true;
+        reportToggle.setAttribute('aria-expanded', 'false');
+      }
+      if (reportPanel) reportPanel.hidden = true;
+      renderReport();
+    };
+
+    if (reportToggle) {
+      reportToggle.addEventListener('click', () => {
+        const open = reportToggle.getAttribute('aria-expanded') === 'true';
+        reportToggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+        if (reportPanel) reportPanel.hidden = open;
+      });
+    }
+    document.querySelectorAll('.medicao-report-filter').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        reportFilter = btn.getAttribute('data-filter') || 'todos';
+        document.querySelectorAll('.medicao-report-filter').forEach((b) => {
+          b.classList.toggle('is-active', b === btn);
+        });
+        renderReport();
+      });
+    });
 
     const getTargetIds = () => {
       const marked = checks().filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => n > 0);
@@ -914,6 +1021,7 @@ foreach ($loteBotoes as $b) {
       if (progReload) progReload.hidden = true;
       if (progBar) progBar.style.width = '5%';
       if (progStats) progStats.textContent = `0 / ${ids.length}`;
+      resetReport();
 
       const sourceForm = formEl || form || reenvioForm;
       const ini = sourceForm?.querySelector('input[name="data_inicio"]')?.value || '';
@@ -932,29 +1040,43 @@ foreach ($loteBotoes as $b) {
             if (progBar) progBar.style.width = `${pct}%`;
             if (progStats) progStats.textContent = `${p.done} / ${p.total} (${p.ok} aplicado${p.ok === 1 ? '' : 's'})`;
             if (progTitle) progTitle.textContent = progressLabel || (isEmail ? 'Enviando e-mails...' : 'Processando lote...');
+            reportItems = Array.isArray(p.items) ? p.items.slice() : reportItems;
+            renderReport();
+            if (isEmail && reportToggle && reportItems.length > 0) {
+              reportToggle.hidden = false;
+            }
           },
         });
+
+        reportItems = Array.isArray(summary.items) ? summary.items.slice() : reportItems;
+        renderReport();
+        if (reportToggle && reportItems.length > 0) {
+          reportToggle.hidden = false;
+          reportToggle.setAttribute('aria-expanded', 'true');
+          if (reportPanel) reportPanel.hidden = false;
+          if (summary.errors.length > 0) {
+            reportFilter = 'falha';
+            document.querySelectorAll('.medicao-report-filter').forEach((b) => {
+              b.classList.toggle('is-active', b.getAttribute('data-filter') === 'falha');
+            });
+            renderReport();
+          }
+        }
 
         if (summary.errors.length === 0) {
           if (progTitle) progTitle.textContent = `Concluído: ${summary.ok} processado(s).`;
           if (window.Toast) window.Toast.show(`Lote finalizado (${summary.ok} processados).`, 'success');
-          window.setTimeout(() => window.location.reload(), 800);
+          // Com relatório aberto, dá tempo de ler antes de atualizar o painel.
+          window.setTimeout(() => window.location.reload(), isEmail ? 1800 : 800);
           return;
         }
 
-        if (progTitle) progTitle.textContent = `Concluído com ${summary.errors.length} pendência(s) (${summary.ok} ok):`;
-        if (progErrors) {
-          summary.errors.forEach((msg) => {
-            const li = document.createElement('li');
-            li.textContent = msg;
-            progErrors.appendChild(li);
-          });
-          progErrors.hidden = false;
-        }
+        if (progTitle) progTitle.textContent = `Concluído com ${summary.errors.length} falha(s) (${summary.ok} ok) — falhas ficam na etapa 6.`;
+        if (progErrors) progErrors.hidden = true;
         if (progReload) progReload.hidden = false;
         if (submitBtn) submitBtn.disabled = false;
         if (reenvioBtn) reenvioBtn.disabled = false;
-        if (window.Toast) window.Toast.show(`${summary.ok} processado(s), ${summary.errors.length} pendência(s).`, 'warning');
+        if (window.Toast) window.Toast.show(`${summary.ok} ok, ${summary.errors.length} falha(s). Quem falhou permanece na etapa 6.`, 'warning');
       } catch (err) {
         const msg = (err && err.message) ? err.message : 'Erro ao executar lote.';
         if (progTitle) progTitle.textContent = msg;

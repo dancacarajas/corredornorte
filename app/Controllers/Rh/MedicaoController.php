@@ -56,7 +56,7 @@ final class MedicaoController
             'pageTitle' => 'Medição',
             'pageSubtitle' => 'Jornada do período até o dossiê assinado',
             'activeMenu' => 'medicao',
-            'extraCss' => ['css/medicao.css?v=whatsapp-20261114'],
+            'extraCss' => ['css/medicao.css?v=email-report-20261114'],
             'dbOk' => $dbOk,
             'periodosGerados' => $periodos,
             'dataInicio' => $dataInicio,
@@ -291,13 +291,21 @@ final class MedicaoController
             $ok = 0;
             $skipped = 0;
             $erros = [];
+            $items = [];
             foreach ($painel['colaboradores'] as $row) {
                 $espId = (int) ($row['espelho_id'] ?? 0);
                 if ($selectedMap !== null && !isset($selectedMap[$espId])) {
                     continue;
                 }
+                $nomeRow = (string) ($row['nome'] ?? '');
                 if (!empty($row['concluido'])) {
                     $skipped++;
+                    $items[] = [
+                        'espelho_id' => $espId,
+                        'nome' => $nomeRow,
+                        'status' => 'pulado',
+                        'message' => 'já concluído',
+                    ];
                     continue;
                 }
                 try {
@@ -305,11 +313,30 @@ final class MedicaoController
                     // Strings "já ..." não contam como avanço real do lote.
                     if (is_string($resultado) && str_starts_with(mb_strtolower($resultado), 'já ')) {
                         $skipped++;
+                        $items[] = [
+                            'espelho_id' => $espId,
+                            'nome' => $nomeRow,
+                            'status' => 'pulado',
+                            'message' => (string) $resultado,
+                        ];
                         continue;
                     }
                     $ok++;
+                    $items[] = [
+                        'espelho_id' => $espId,
+                        'nome' => $nomeRow,
+                        'status' => 'ok',
+                        'message' => is_string($resultado) ? $resultado : 'ok',
+                    ];
                 } catch (Throwable $e) {
-                    $erros[] = $row['nome'] . ': ' . $e->getMessage();
+                    $msg = $e->getMessage();
+                    $erros[] = $nomeRow . ': ' . $msg;
+                    $items[] = [
+                        'espelho_id' => $espId,
+                        'nome' => $nomeRow,
+                        'status' => 'falha',
+                        'message' => $msg,
+                    ];
                 }
             }
 
@@ -320,6 +347,7 @@ final class MedicaoController
                     'processed' => $ok,
                     'skipped' => $skipped,
                     'errors' => $erros,
+                    'items' => $items,
                 ], JSON_UNESCAPED_UNICODE);
                 exit;
             }
