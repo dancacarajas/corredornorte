@@ -35,6 +35,17 @@ if (function_exists('mb_internal_encoding')) {
     mb_internal_encoding('UTF-8');
 }
 
+// PHP 8.4+/8.5: depreciações de libs (FPDI/QRCode) não podem ir para o browser —
+// quebram redirect/PDF com "headers already sent".
+$errorLevel = E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED;
+if (defined('E_STRICT')) {
+    $errorLevel &= ~E_STRICT;
+}
+error_reporting($errorLevel);
+$debug = (($config['env'] ?? '') === 'local') && !empty($config['debug']);
+ini_set('display_errors', $debug ? '1' : '0');
+ini_set('log_errors', '1');
+
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
 header('Referrer-Policy: strict-origin-when-cross-origin');

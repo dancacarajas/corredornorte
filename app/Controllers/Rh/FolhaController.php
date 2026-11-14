@@ -458,6 +458,7 @@ final class FolhaController
 
     private function headersPortal(): void
     {
+        @ini_set('display_errors', '0');
         header('Cache-Control: no-store');
         header('Referrer-Policy: no-referrer');
         header('X-Content-Type-Options: nosniff');
