@@ -57,7 +57,7 @@ final class EmailContaController
             'pageTitle' => 'Conta de e-mail',
             'pageSubtitle' => 'Conecte com e-mail e senha — sem Client ID',
             'activeMenu' => 'email',
-            'extraCss' => ['css/email.css?v=tpl-edit-20261114'],
+            'extraCss' => ['css/email.css?v=tpl-enboarder-20261114'],
             'dbOk' => $dbOk,
             'contas' => $contas,
             'gmail' => $gmail,

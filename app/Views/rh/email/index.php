@@ -261,7 +261,7 @@ $provedorLabel = static function (string $p): string {
     <div class="card-header">
         <div>
             <h2 class="card-title">Templates de e-mail</h2>
-            <p class="card-subtitle">Edite o conteúdo que o sistema envia em cada gatilho</p>
+            <p class="card-subtitle">Layout padrão Arcadis (logo + card + botão laranja). Edite só o texto de cada gatilho.</p>
         </div>
     </div>
     <div class="card-body email-tpl-list">

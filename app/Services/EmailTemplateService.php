@@ -4,18 +4,22 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Helpers\AppUrl;
 use PDO;
 use RuntimeException;
 
 /**
  * Templates editáveis (DB) com fallback para defaults.
+ * Layout visual padrão: Arcadis / Enboarder (logo, card branco, CTA laranja #e4610f).
  * Placeholders: {{nome}}, {{periodo}}, {{cta_bloco}}, etc.
  */
 final class EmailTemplateService
 {
+    private const BRAND_ORANGE = '#e4610f';
+    private const BG_GRAY = '#e1e1e1';
+    private const TEXT = '#212121';
+
     /**
-     * Catálogo fixo — chave, rótulo, gatilho e variáveis.
-     *
      * @return array<string,array{label:string,trigger:string,vars:list<string>}>
      */
     public static function catalog(): array
@@ -24,7 +28,7 @@ final class EmailTemplateService
             'folha.envio_colaborador' => [
                 'label' => 'Envio da folha de ponto',
                 'trigger' => 'Enviar PDF (folha unitária e lote da medição)',
-                'vars' => ['nome', 'matricula', 'periodo', 'competencia', 'codigo', 'portal_url', 'matricula_badge', 'codigo_linha', 'cta_bloco', 'link_fallback'],
+                'vars' => ['nome', 'matricula', 'periodo', 'competencia', 'codigo', 'portal_url', 'matricula_linha', 'codigo_linha', 'cta_bloco', 'link_fallback'],
             ],
             'sistema.email_teste' => [
                 'label' => 'Teste de conexão',
@@ -44,65 +48,38 @@ final class EmailTemplateService
         return match ($key) {
             'folha.envio_colaborador' => [
                 'assunto' => 'Folha de Ponto ({{competencia}}) — {{nome}}',
-                'titulo' => 'Folha de Ponto para Conferência',
-                'texto' => "Olá, {{nome}},\n\nSua Folha de Ponto ({{periodo}}) está pronta para conferência.\n{{codigo_txt}}\n{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'titulo' => 'Folha de Ponto',
+                'texto' => "Oi {{nome}},\n\nEsperamos que você esteja bem hoje.\n\nSua Folha de Ponto ({{periodo}}) está pronta para conferência e assinatura eletrônica.{{codigo_txt}}{{portal_txt}}\nO PDF também segue anexado para sua guarda.\n\nArcadis RH — Corredor Norte",
                 'corpo_html' => <<<'HTML'
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-  <tr>
-    <td style="font-size:15px;line-height:1.6;color:#1E293B;padding-bottom:16px;">
-      Olá, <strong>{{nome}}</strong>.{{matricula_badge}}
-      <p style="margin:12px 0 0;">Sua folha de ponto referente ao período indicado abaixo está disponível. Confira os dias trabalhados, horas extras e ocorrências e registre sua assinatura eletrônica.</p>
-    </td>
-  </tr>
-  <tr>
-    <td style="padding-bottom:20px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
-        <tr>
-          <td style="padding:10px 12px;font-size:13px;color:#0F172A;"><strong>Período:</strong> {{periodo}}</td>
-        </tr>
-        {{codigo_linha}}
-      </table>
-    </td>
-  </tr>
-  {{cta_bloco}}
-  {{link_fallback}}
-</table>
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Esperamos que você esteja bem hoje.</p>
+<p>Sua folha de ponto do período <strong>{{periodo}}</strong> está pronta para conferência. Confira os dias trabalhados, horas extras e ocorrências e registre sua assinatura eletrônica.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Clique no botão abaixo para começar.</p>
+{{cta_bloco}}
+{{link_fallback}}
 HTML,
-                'rodape' => 'Arcadis RH — O PDF da folha também segue anexado para sua guarda. Em caso de dúvida, contate o RH pelo portal.',
+                'rodape' => 'Este e-mail contém informações pessoais. Se você não for o destinatário correto, por favor avise o RH. O PDF da folha também segue anexado para sua guarda.',
             ],
             'sistema.email_teste' => [
                 'assunto' => 'Arcadis RH — teste de conexão de e-mail',
-                'titulo' => 'Teste de conexão de e-mail',
-                'texto' => "Este é um e-mail de teste do módulo Conta de e-mail do Arcadis RH.\n\nSe você recebeu, a conta está funcionando.\n{{conta_txt}}\nArcadis RH — Corredor Norte",
+                'titulo' => 'Teste de conexão',
+                'texto' => "Oi,\n\nEste é um e-mail de teste do módulo Conta de e-mail do Arcadis RH.\n\nSe você recebeu, a conta está funcionando.\n{{conta_txt}}\nArcadis RH — Corredor Norte",
                 'corpo_html' => <<<'HTML'
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-  <tr>
-    <td style="font-size:15px;line-height:1.6;color:#1E293B;padding-bottom:16px;">
-      <p style="margin:0;">Este é um e-mail de teste do módulo <strong>Conta de e-mail</strong>.</p>
-      <p style="margin:12px 0 0;">Se você recebeu esta mensagem, a conexão está funcionando.</p>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
-        <tr>
-          <td style="padding:10px 12px;font-size:13px;color:#0F172A;"><strong>Destinatário:</strong> {{destinatario}}</td>
-        </tr>
-        {{conta_linha}}
-      </table>
-    </td>
-  </tr>
-</table>
+<p>Oi,</p>
+<p>Esperamos que você esteja bem hoje.</p>
+<p>Este é um e-mail de teste do módulo <strong>Conta de e-mail</strong>. Se você recebeu esta mensagem, a conexão está funcionando.</p>
+<p><strong>Destinatário:</strong> {{destinatario}}</p>
+{{conta_linha}}
 HTML,
-                'rodape' => 'Arcadis RH — Corredor Norte. Mensagem automática de diagnóstico.',
+                'rodape' => 'Este e-mail contém informações pessoais. Se você não for o destinatário correto, por favor avise o RH. Mensagem automática de diagnóstico.',
             ],
             default => throw new RuntimeException('Template desconhecido: ' . $key),
         };
     }
 
     /**
-     * Conteúdo efetivo para edição (DB ou default).
-     *
      * @return array{chave:string,label:string,trigger:string,vars:list<string>,assunto:string,titulo:string,texto:string,corpo_html:string,rodape:string,customizado:bool,atualizado_em:?string}
      */
     public static function loadForEdit(?PDO $pdo, string $key): array
@@ -255,31 +232,9 @@ HTML,
             $fallback = '';
             $portalTxt = '';
             if ($portalUrl !== '') {
-                $urlEsc = $e($portalUrl);
-                $cta = <<<HTML
-<tr>
-  <td style="padding:8px 0 20px;">
-    <a href="{$urlEsc}" target="_blank" rel="noopener"
-       style="display:inline-block;background-color:#EA580C;color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;font-weight:700;text-decoration:none;padding:14px 26px;border-radius:8px;">
-      Conferir e Assinar Folha de Ponto
-    </a>
-  </td>
-</tr>
-<tr>
-  <td style="padding:12px 14px;background-color:#FFF7ED;border-left:4px solid #EA580C;border-radius:6px;font-size:13px;line-height:1.5;color:#7C2D12;">
-    <strong>Encontrou alguma divergência?</strong> Não assine com erro — abra o link acima e clique em <strong>Reportar divergência ao RH</strong> para correção antes da assinatura.
-  </td>
-</tr>
-HTML;
-                $fallback = <<<HTML
-<tr>
-  <td style="padding-top:16px;font-size:12px;line-height:1.5;color:#64748B;word-break:break-all;">
-    Se o botão não abrir, copie e cole este endereço no navegador:<br>
-    <a href="{$urlEsc}" style="color:#EA580C;text-decoration:underline;">{$urlEsc}</a>
-  </td>
-</tr>
-HTML;
-                $portalTxt = "\nPara revisar os apontamentos e assinar eletronicamente, acesse:\n{$portalUrl}\nCaso identifique qualquer divergência, utilize o botão \"Reportar divergência ao RH\" dentro do portal antes de assinar.\n";
+                $cta = self::ctaButtonHtml($portalUrl, 'ABRA AGORA');
+                $fallback = self::ctaFallbackHtml($portalUrl);
+                $portalTxt = "\n\nPara revisar e assinar, acesse:\n{$portalUrl}\nCaso identifique divergência, use “Reportar divergência ao RH” no portal antes de assinar.\n";
             }
 
             return [
@@ -289,13 +244,13 @@ HTML;
                 'competencia' => $competencia,
                 'codigo' => $codigo,
                 'portal_url' => $portalUrl,
-                'matricula_badge' => $matricula !== ''
-                    ? '<div style="font-size:13px;color:#64748B;margin-top:2px;">Matrícula: ' . $e($matricula) . '</div>'
+                'matricula_linha' => $matricula !== ''
+                    ? '<p style="margin-top:12px;"><strong>Matrícula:</strong> ' . $e($matricula) . '</p>'
                     : '',
                 'codigo_linha' => $codigo !== ''
-                    ? '<tr><td style="padding:10px 12px;border-top:1px solid #E2E8F0;font-size:13px;color:#0F172A;"><strong>Código:</strong> <span style="font-family:Consolas,monospace;font-weight:700;">' . $e($codigo) . '</span></td></tr>'
+                    ? '<p style="margin-top:12px;"><strong>Código de verificação:</strong> <span style="font-family:Consolas,monospace;font-weight:700;">' . $e($codigo) . '</span></p>'
                     : '',
-                'codigo_txt' => $codigo !== '' ? "Código de verificação: {$codigo}\n" : '',
+                'codigo_txt' => $codigo !== '' ? "\nCódigo de verificação: {$codigo}\n" : '',
                 'cta_bloco' => $cta,
                 'link_fallback' => $fallback,
                 'portal_txt' => $portalTxt,
@@ -309,10 +264,50 @@ HTML;
             'destinatario' => $dest,
             'conta_email' => $conta,
             'conta_linha' => $conta !== ''
-                ? '<tr><td style="padding:10px 12px;border-top:1px solid #E2E8F0;font-size:13px;color:#0F172A;"><strong>Conta:</strong> ' . $e($conta) . '</td></tr>'
+                ? '<p style="margin-top:12px;"><strong>Conta:</strong> ' . $e($conta) . '</p>'
                 : '',
             'conta_txt' => $conta !== '' ? "Conta remetente: {$conta}\n" : '',
         ];
+    }
+
+    private static function ctaButtonHtml(string $url, string $label): string
+    {
+        $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $urlEsc = $e($url);
+        $labelEsc = $e($label);
+        $orange = self::BRAND_ORANGE;
+
+        return <<<HTML
+<table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-top:24px;">
+  <tr>
+    <td align="center" style="padding-top:16px;">
+      <table border="0" cellspacing="0" cellpadding="0">
+        <tr>
+          <td align="center" style="background-color:{$orange};border-radius:8px;padding:12px 18px;">
+            <a href="{$urlEsc}" target="_blank" rel="noopener"
+               style="font-size:18px;font-weight:bold;font-family:Helvetica,Arial,sans-serif;color:#FFFFFF;text-decoration:none;display:block;">
+              <strong style="text-decoration:none;">{$labelEsc}</strong>
+            </a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+HTML;
+    }
+
+    private static function ctaFallbackHtml(string $url): string
+    {
+        $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $urlEsc = $e($url);
+
+        return <<<HTML
+<p style="padding-top:24px;font-size:13px;line-height:1.5;color:#212121;text-align:center;">
+  Caso não consiga visualizar ou clicar no botão acima, favor
+  <a target="_blank" rel="noopener" href="{$urlEsc}" style="color:#212121;text-decoration:underline;">utilizar este link</a>.
+</p>
+HTML;
     }
 
     /**
@@ -328,8 +323,7 @@ HTML;
                     return '';
                 }
                 $val = (string) $map[$k];
-                // Blocos HTML pré-montados não escapam de novo
-                if (in_array($k, ['cta_bloco', 'link_fallback', 'matricula_badge', 'codigo_linha', 'conta_linha'], true)) {
+                if (in_array($k, ['cta_bloco', 'link_fallback', 'matricula_linha', 'codigo_linha', 'conta_linha', 'matricula_badge'], true)) {
                     return $val;
                 }
                 if ($htmlContext) {
@@ -369,42 +363,106 @@ HTML;
         return $key;
     }
 
+    private static function logoUrl(): string
+    {
+        $app = require dirname(__DIR__, 2) . '/config/app.php';
+        $base = rtrim(trim((string) ($app['url'] ?? '')), '/');
+        if ($base === '') {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+            $host = AppUrl::sanitizeHost((string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1:8090'));
+            $base = ($https ? 'https' : 'http') . '://' . $host;
+        }
+        if (str_ends_with(strtolower($base), '/public')) {
+            $base = rtrim(substr($base, 0, -7), '/');
+        }
+
+        return $base . '/assets/img/logo-arcadis-email.png';
+    }
+
+    /**
+     * Layout padrão Arcadis (referência Enboarder): fundo cinza, card branco, logo, CTA laranja.
+     */
     private static function wrapLayout(string $title, string $body, string $footer): string
     {
         $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $titleEsc = $e($title);
+        $titleEsc = $e($title !== '' ? $title : 'Arcadis');
         $footerEsc = $e($footer);
+        $logo = $e(self::logoUrl());
+        $bg = self::BG_GRAY;
+        $text = self::TEXT;
 
         return <<<HTML
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <title>{$titleEsc}</title>
+  <style type="text/css">
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
+    table { border-collapse: collapse !important; }
+    body { background: {$bg}; height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; }
+    p, ul, ol { margin-bottom: 12px; font-weight: normal; color: {$text}; font-size: 18px; line-height: 1.6; }
+    p { margin-top: 18px; }
+    a { color: {$text}; text-decoration: underline; word-break: break-all; }
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
+    @media screen and (max-width: 525px) {
+      .wrapper { width: 100% !important; max-width: 100% !important; }
+      .responsive-table { width: 100% !important; }
+      .img-max { max-width: 100% !important; height: auto !important; }
+    }
+  </style>
 </head>
-<body style="margin:0;padding:0;background-color:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0F172A;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#F1F5F9;padding:24px 12px;">
+<body style="margin:0 !important;padding:0 !important;background-color:{$bg};">
+  <table border="0" cellpadding="0" cellspacing="0" width="100%">
     <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background-color:#FFFFFF;border-radius:12px;border:1px solid #E2E8F0;overflow:hidden;">
+      <td bgcolor="{$bg}" align="center" style="padding-top:24px;">
+        <!--[if (gte mso 9)|(IE)]>
+        <table align="center" border="0" cellspacing="0" cellpadding="0" width="600"><tr><td align="center" valign="top" width="600">
+        <![endif]-->
+        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;" class="responsive-table wrapper" bgcolor="{$bg}">
           <tr>
-            <td style="background-color:#0F172A;padding:20px 24px;border-bottom:4px solid #EA580C;">
-              <div style="font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#FDBA74;">ARCADIS — CORREDOR NORTE</div>
-              <div style="font-size:20px;font-weight:700;color:#FFFFFF;margin-top:4px;">{$titleEsc}</div>
+            <td bgcolor="#ffffff">
+              <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center" style="padding-top:24px;">
+                    <img src="{$logo}" width="auto" height="120" border="0" alt="Arcadis"
+                         style="display:block;max-height:120px;max-width:100%;color:{$text};font-family:Helvetica,Arial,sans-serif;font-size:16px;"
+                         class="img-max">
+                  </td>
+                </tr>
+                <tr>
+                  <td align="left" style="font-size:18px;line-height:25px;font-family:Helvetica,Arial,sans-serif;color:{$text};padding:24px;">
+                    {$body}
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
+        </table>
+        <!--[if (gte mso 9)|(IE)]>
+        </td></tr></table>
+        <![endif]-->
+      </td>
+    </tr>
+    <tr>
+      <td align="center" style="padding:20px 25px;background-color:{$bg};">
+        <!--[if (gte mso 9)|(IE)]>
+        <table align="center" border="0" cellspacing="0" cellpadding="0" width="600"><tr><td align="center" valign="top" width="600">
+        <![endif]-->
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" align="center" style="max-width:600px;" class="responsive-table">
           <tr>
-            <td style="padding:24px;">
-              {$body}
-            </td>
-          </tr>
-          <tr>
-            <td style="background-color:#F8FAFC;padding:14px 24px;border-top:1px solid #E2E8F0;font-size:12px;color:#64748B;">
+            <td align="center" style="font-size:12px;line-height:18px;font-family:Helvetica,Arial,sans-serif;color:{$text};padding:0 25px;">
               {$footerEsc}
             </td>
           </tr>
         </table>
+        <!--[if (gte mso 9)|(IE)]>
+        </td></tr></table>
+        <![endif]-->
       </td>
     </tr>
   </table>
