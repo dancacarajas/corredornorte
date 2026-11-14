@@ -185,7 +185,7 @@ final class MedicaoService
 
         $st = $this->db->prepare(
             "SELECT e.id AS espelho_id, e.status AS espelho_status, e.colaborador_id,
-                    c.nome, c.matricula, c.email_corp, COALESCE(c.he_fluxo, 'off') AS he_fluxo,
+                    c.nome, c.matricula, c.email_corp, c.telefone, COALESCE(c.he_fluxo, 'off') AS he_fluxo,
                     r.id AS relatorio_id, r.status AS ra_status,
                     d.id AS documento_id, d.status AS folha_status, d.portal_token,
                     d.arquivo_path AS folha_path, d.arquivo_assinado_path AS folha_assinada_path,
@@ -245,6 +245,9 @@ final class MedicaoService
                 'nome' => (string) $row['nome'],
                 'matricula' => (string) $row['matricula'],
                 'email_corp' => $row['email_corp'] !== null ? (string) $row['email_corp'] : null,
+                'telefone' => isset($row['telefone']) && $row['telefone'] !== null && trim((string) $row['telefone']) !== ''
+                    ? trim((string) $row['telefone'])
+                    : null,
                 'espelho_status' => $statusEsp,
                 'relatorio_id' => isset($row['relatorio_id']) ? (int) $row['relatorio_id'] : null,
                 'documento_id' => $docId > 0 ? $docId : null,

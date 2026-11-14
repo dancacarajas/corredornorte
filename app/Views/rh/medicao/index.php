@@ -1,6 +1,7 @@
 <?php
 
 use App\Helpers\View;
+use App\Helpers\WhatsApp;
 
 $dbOk = $dbOk ?? false;
 $periodosGerados = $periodosGerados ?? [];
@@ -652,7 +653,47 @@ foreach ($loteBotoes as $b) {
                                     <?php endforeach; ?>
                                 </div>
                             </td>
-                            <td class="text-right">
+                            <td class="text-right medicao-row-actions">
+                                <?php if ($filtro === 'email' || $filtro === 'assinaturas'): ?>
+                                    <?php
+                                    $portalZap = trim((string) ($c['portal_url'] ?? ''));
+                                    $telZap = $c['telefone'] ?? null;
+                                    $nomeZap = (string) ($c['nome'] ?? '');
+                                    $periodoZap = $periodoLabel !== '' ? $periodoLabel : 'período atual';
+                                    $msgZap = $filtro === 'assinaturas'
+                                        ? "Oi {$nomeZap}, lembrete: sua Folha de Ponto ({$periodoZap}) ainda aguarda sua assinatura. Acesse: {$portalZap}"
+                                        : "Oi {$nomeZap}, sua Folha de Ponto ({$periodoZap}) está pronta para conferência e assinatura. Acesse: {$portalZap}";
+                                    $waUrl = ($portalZap !== '')
+                                        ? WhatsApp::chatUrl(is_string($telZap) ? $telZap : null, $msgZap)
+                                        : null;
+                                    $waTitle = $waUrl !== null
+                                        ? 'Abrir WhatsApp'
+                                        : ($portalZap === ''
+                                            ? 'Sem link de assinatura'
+                                            : 'Sem WhatsApp cadastrado');
+                                    ?>
+                                    <?php if ($waUrl !== null): ?>
+                                        <a class="medicao-wa-btn"
+                                           href="<?= View::e($waUrl) ?>"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           title="<?= View::e($waTitle) ?>"
+                                           aria-label="<?= View::e($waTitle . ' — ' . $nomeZap) ?>">
+                                            <svg class="medicao-wa-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                                <path fill="currentColor" d="M12.04 2c-5.46 0-9.91 4.44-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21h.01c5.46 0 9.91-4.44 9.91-9.91C21.96 6.44 17.5 2 12.04 2zm5.78 14.15c-.24.68-1.41 1.25-1.95 1.33-.5.08-1.14.11-1.84-.12-.42-.14-.97-.31-1.67-.61-2.94-1.27-4.85-4.23-5-4.42-.14-.19-1.18-1.57-1.18-3 0-1.42.74-2.12 1.01-2.41.26-.28.58-.35.77-.35h.56c.18 0 .42-.07.66.5.24.58.82 2 .89 2.15.07.14.12.31.02.5-.1.19-.14.31-.28.48-.14.17-.29.37-.42.5-.14.14-.28.29-.12.56.16.28.7 1.15 1.5 1.86 1.03.92 1.9 1.21 2.17 1.35.28.14.44.12.6-.07.17-.19.7-.81.88-1.09.19-.28.37-.23.63-.14.26.1 1.64.77 1.92.91.28.14.47.21.54.33.07.12.07.68-.17 1.36z"/>
+                                            </svg>
+                                        </a>
+                                    <?php else: ?>
+                                        <span class="medicao-wa-btn is-disabled"
+                                              title="<?= View::e($waTitle) ?>"
+                                              aria-label="<?= View::e($waTitle . ' — ' . $nomeZap) ?>"
+                                              aria-disabled="true">
+                                            <svg class="medicao-wa-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                                <path fill="currentColor" d="M12.04 2c-5.46 0-9.91 4.44-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21h.01c5.46 0 9.91-4.44 9.91-9.91C21.96 6.44 17.5 2 12.04 2zm5.78 14.15c-.24.68-1.41 1.25-1.95 1.33-.5.08-1.14.11-1.84-.12-.42-.14-.97-.31-1.67-.61-2.94-1.27-4.85-4.23-5-4.42-.14-.19-1.18-1.57-1.18-3 0-1.42.74-2.12 1.01-2.41.26-.28.58-.35.77-.35h.56c.18 0 .42-.07.66.5.24.58.82 2 .89 2.15.07.14.12.31.02.5-.1.19-.14.31-.28.48-.14.17-.29.37-.42.5-.14.14-.28.29-.12.56.16.28.7 1.15 1.5 1.86 1.03.92 1.9 1.21 2.17 1.35.28.14.44.12.6-.07.17-.19.7-.81.88-1.09.19-.28.37-.23.63-.14.26.1 1.64.77 1.92.91.28.14.47.21.54.33.07.12.07.68-.17 1.36z"/>
+                                            </svg>
+                                        </span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                                 <a class="btn btn-ghost btn-sm" href="/rh/ponto/<?= (int) $c['espelho_id'] ?>?<?= View::e($qs) ?>">Ponto</a>
                                 <?php if (!empty($c['documento_id'])): ?>
                                     <a class="btn btn-ghost btn-sm" href="/rh/folha/<?= (int) $c['espelho_id'] ?>?<?= View::e($qs) ?>">Folha</a>
