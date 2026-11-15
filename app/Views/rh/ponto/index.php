@@ -15,6 +15,7 @@ use App\Services\CalculoPontoService;
 /** @var string $busca */
 /** @var string $filtroStatus */
 /** @var list<array{label:string,data_inicio:string,data_fim:string}> $atalhosPeriodo */
+/** @var list<array{id:int,data_inicio:string,data_fim:string,status:string,espelhos:int,label:string}> $periodosGerados */
 /** @var bool $periodoInexistente */
 /** @var bool $periodoJaGerado */
 
@@ -22,6 +23,7 @@ $podeGerar = $podeGerar ?? $mesUnico;
 $rotuloGerar = $rotuloGerar ?? 'Gerar espelhos';
 $periodoInexistente = (bool) ($periodoInexistente ?? false);
 $periodoJaGerado = (bool) ($periodoJaGerado ?? false);
+$periodosGerados = is_array($periodosGerados ?? null) ? $periodosGerados : [];
 $resumo = $resumo ?? [
     'total' => 0, 'abertos' => 0, 'tratamento' => 0, 'conferidos' => 0, 'fechados' => 0,
     'he_min' => 0, 'falta_min' => 0, 'atraso_min' => 0, 'he_autorizadas' => 0, 'he_pendentes' => 0,
@@ -66,6 +68,31 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
 <?php if (!empty($avisoPeriodo)): ?>
     <div class="alert alert-warning"><?= View::e($avisoPeriodo) ?></div>
 <?php endif; ?>
+
+<section class="ponto-periodos-bar" aria-label="Períodos com folhas geradas">
+    <div class="ponto-periodos">
+        <span class="ponto-periodos-label">Períodos gerados</span>
+        <?php if ($periodosGerados === []): ?>
+            <span class="muted text-sm">Nenhum período com folhas ainda — use “Gerar espelhos do período”.</span>
+        <?php else: ?>
+            <?php foreach ($periodosGerados as $pg):
+                $ativo = $pg['data_inicio'] === $dataInicio && $pg['data_fim'] === $dataFim;
+                ?>
+                <a class="btn <?= $ativo ? 'btn-primary' : 'btn-secondary' ?> btn-sm"
+                   href="/rh/ponto?<?= View::e(http_build_query([
+                       'data_inicio' => $pg['data_inicio'],
+                       'data_fim' => $pg['data_fim'],
+                       'q' => $busca !== '' ? $busca : null,
+                       'status' => $filtroStatus !== '' ? $filtroStatus : null,
+                       'filtro' => $filtroEspecial !== '' ? $filtroEspecial : null,
+                   ])) ?>">
+                    <?= View::e($pg['label']) ?>
+                    <span class="ponto-chip-count">· <?= (int) $pg['espelhos'] ?></span>
+                </a>
+            <?php endforeach; ?>
+        <?php endif; ?>
+    </div>
+</section>
 
 <?php if ($filtroEspecial === 'divergencia'): ?>
     <div class="alert alert-warning" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
@@ -215,11 +242,15 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
     <?php if ($espelhos === []): ?>
         <div class="empty-state">
             <h3><?= $periodoInexistente ? 'Nenhum cartão gerado para este período' : 'Nenhum espelho no período' ?></h3>
-            <p><?= $periodoInexistente
-                ? 'Não existe cartão de ponto gerado para ' . View::e($rotuloPeriodo) . '. Gere os espelhos deste período para começar.'
-                : ($podeGerar
-                    ? 'Clique em “' . View::e($rotuloGerar) . '” para criar os espelhos deste período.'
-                    : 'Ajuste o filtro ou selecione um período válido para gerar os espelhos.') ?></p>
+            <p><?php if ($periodoInexistente && $periodosGerados !== []): ?>
+                Não há folhas em <?= View::e($rotuloPeriodo) ?>. Selecione um período gerado acima ou gere os espelhos deste intervalo.
+            <?php elseif ($periodoInexistente): ?>
+                Não existe cartão de ponto gerado para <?= View::e($rotuloPeriodo) ?>. Gere os espelhos deste período para começar.
+            <?php elseif ($podeGerar): ?>
+                Clique em “<?= View::e($rotuloGerar) ?>” para criar os espelhos deste período.
+            <?php else: ?>
+                Ajuste o filtro ou selecione um período válido para gerar os espelhos.
+            <?php endif; ?></p>
         </div>
     <?php else: ?>
         <form method="post" action="/rh/ponto/lote-status" id="pontoLoteForm">

@@ -8,6 +8,7 @@ use App\Helpers\Auth;
 use App\Helpers\Db;
 use App\Helpers\View;
 use App\Services\CalculoPontoService;
+use App\Services\MedicaoService;
 use App\Services\MotorPontoService;
 use App\Services\PainelExcecoesService;
 use App\Services\PeriodoPonto;
@@ -21,7 +22,25 @@ final class PontoController
     public function index(): void
     {
         $pdo = Db::tryConnection();
-        $periodo = $this->resolverPeriodo($_GET);
+        $dbOk = $pdo instanceof PDO;
+        $periodosGerados = [];
+        if ($dbOk) {
+            try {
+                $periodosGerados = (new MedicaoService($pdo))->listarPeriodosGerados(24);
+            } catch (Throwable) {
+                $periodosGerados = [];
+            }
+        }
+
+        $get = $_GET;
+        $getIni = isset($get['data_inicio']) ? trim((string) $get['data_inicio']) : '';
+        $getFim = isset($get['data_fim']) ? trim((string) $get['data_fim']) : '';
+        if ($getIni === '' && $getFim === '' && $periodosGerados !== []) {
+            $get['data_inicio'] = (string) $periodosGerados[0]['data_inicio'];
+            $get['data_fim'] = (string) $periodosGerados[0]['data_fim'];
+        }
+
+        $periodo = $this->resolverPeriodo($get);
         $dataInicio = $periodo['inicio'];
         $dataFim = $periodo['fim'];
         $busca = trim((string) ($_GET['q'] ?? ''));
@@ -51,7 +70,6 @@ final class PontoController
             'he_autorizadas' => 0,
             'he_pendentes' => 0,
         ];
-        $dbOk = $pdo instanceof PDO;
 
         if ($dbOk) {
             $motor = new MotorPontoService($pdo);
@@ -221,7 +239,7 @@ final class PontoController
             'pageSubtitle' => date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', strtotime($dataFim)),
             'activeMenu' => 'ponto',
             'topbarActions' => $topbarActions,
-            'extraCss' => ['css/ponto.css?v=ponto-periodo-20261113'],
+            'extraCss' => ['css/ponto.css?v=ponto-periodos-20261114'],
             'dbOk' => $dbOk,
             'espelhos' => $espelhos,
             'resumo' => $resumo,
@@ -237,6 +255,7 @@ final class PontoController
             'filtroStatus' => $filtroStatus,
             'filtroEspecial' => $filtroEspecial,
             'faltantesSemEspelho' => $faltantesSemEspelho,
+            'periodosGerados' => $periodosGerados,
             'atalhosPeriodo' => $this->atalhosPeriodo(),
         ]);
     }
