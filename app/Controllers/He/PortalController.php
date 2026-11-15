@@ -23,8 +23,9 @@ final class PortalController
     public function showLogin(): void
     {
         HePortalAuth::start();
+        $next = HePortalAuth::safeNext((string) ($_GET['next'] ?? ''));
         if (HePortalAuth::check()) {
-            header('Location: /he');
+            header('Location: ' . $next);
             exit;
         }
         View::render('he/login', [
@@ -33,6 +34,7 @@ final class PortalController
             'ok' => null,
             'cpf' => '',
             'otpPending' => null,
+            'next' => $next,
         ], null);
     }
 
@@ -40,6 +42,7 @@ final class PortalController
     {
         HePortalAuth::start();
         $ip = $this->clientIp();
+        $next = HePortalAuth::safeNext((string) ($_POST['next'] ?? $_GET['next'] ?? ''));
         $pdo = null;
         try {
             $pdo = Database::connection();
@@ -57,6 +60,7 @@ final class PortalController
                     'error' => 'Serviço temporariamente indisponível.',
                     'cpf' => '',
                     'otpPending' => null,
+                    'next' => $next,
                 ], null);
                 return;
             }
@@ -77,12 +81,13 @@ final class PortalController
                         'mascara' => (new \App\Services\HePortalLoginService($pdo))
                             ->mascararEmail((string) ($pending['email'] ?? '')),
                     ] : null,
+                    'next' => $next,
                 ], null);
                 return;
             }
             $loginSvc->registrarSucesso((string) $colab['cpf'], $ip);
             HePortalAuth::attempt($colab);
-            header('Location: /he');
+            header('Location: ' . $next);
             exit;
         }
 
@@ -94,6 +99,7 @@ final class PortalController
                 'error' => 'Serviço temporariamente indisponível.',
                 'cpf' => $cpf,
                 'otpPending' => null,
+                'next' => $next,
             ], null);
             return;
         }
@@ -105,6 +111,7 @@ final class PortalController
                 'error' => 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
                 'cpf' => $cpf,
                 'otpPending' => null,
+                'next' => $next,
             ], null);
             return;
         }
@@ -117,6 +124,7 @@ final class PortalController
                 'error' => 'CPF não encontrado ou colaborador inativo.',
                 'cpf' => $cpf,
                 'otpPending' => null,
+                'next' => $next,
             ], null);
             return;
         }
@@ -129,6 +137,7 @@ final class PortalController
                 'ok' => 'Enviamos um código de 6 dígitos para ' . $otpInfo['mascara'] . '.',
                 'cpf' => $cpf,
                 'otpPending' => $otpInfo,
+                'next' => $next,
             ], null);
         } catch (RuntimeException $e) {
             $loginSvc->registrarFalha($cpf, $ip);
@@ -137,6 +146,7 @@ final class PortalController
                 'error' => $e->getMessage(),
                 'cpf' => $cpf,
                 'otpPending' => null,
+                'next' => $next,
             ], null);
         }
     }

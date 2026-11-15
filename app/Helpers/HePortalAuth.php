@@ -35,9 +35,31 @@ final class HePortalAuth
     public static function requireLogin(): void
     {
         if (!self::check()) {
-            header('Location: /he/login');
+            $path = (string) (parse_url($_SERVER['REQUEST_URI'] ?? '/he', PHP_URL_PATH) ?: '/he');
+            $qs = (string) (parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_QUERY) ?: '');
+            $next = $path . ($qs !== '' ? ('?' . $qs) : '');
+            if (!str_starts_with($next, '/he')) {
+                $next = '/he';
+            }
+            header('Location: /he/login?next=' . rawurlencode($next));
             exit;
         }
+    }
+
+    /** Destino seguro pós-login no portal HE (apenas paths /he...). */
+    public static function safeNext(?string $raw): string
+    {
+        $next = trim((string) $raw);
+        if ($next === '') {
+            return '/he';
+        }
+        if (!str_starts_with($next, '/he')) {
+            return '/he';
+        }
+        if (str_contains($next, '://') || str_starts_with($next, '//')) {
+            return '/he';
+        }
+        return $next;
     }
 
     public static function id(): ?int

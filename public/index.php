@@ -50,7 +50,7 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
-header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline'");
+header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; connect-src 'self'; frame-src 'self' blob:");
 if ((($config['env'] ?? '') === 'production')
     || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
     || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')) {
@@ -368,11 +368,14 @@ $router->post('/rh/ponto/{id}/status', [$ponto, 'status']);
 $router->post('/rh/ponto/{id}/apontar', [$ponto, 'apontar']);
 $router->post('/rh/ponto/{id}/he-ra/{raDiaId}/aplicar', [$ponto, 'aplicarHeRa']);
 $router->post('/rh/ponto/{id}/he-ra/{raDiaId}/divergente', [$ponto, 'divergenteHeRa']);
+$router->post('/rh/ponto/{id}/he-cliente/aplicar-todas', [$ponto, 'heClienteAplicarTodas']);
 $router->post('/rh/ponto/{id}/apontar-previsto', [$ponto, 'apontarPrevisto']);
 $router->post('/rh/ponto/{id}/resolver-divergencia', [$ponto, 'resolverDivergencia']);
+$router->post('/rh/ponto/{id}/resolver-divergencia-reenviar', [$ponto, 'resolverDivergenciaEReenviar']);
 
 $raRh = RelatorioAtividadesController::class;
 $router->get('/rh/relatorios-atividades', [$raRh, 'index']);
+$router->post('/rh/relatorios-atividades/lote', [$raRh, 'acaoLote']);
 $router->get('/rh/relatorios-atividades/{id}/pdf', [$raRh, 'pdf']);
 $router->get('/rh/relatorios-atividades/{id}/excel', [$raRh, 'excel']);
 $router->get('/rh/relatorios-atividades/{id}', [$raRh, 'show']);

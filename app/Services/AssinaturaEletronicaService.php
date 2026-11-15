@@ -85,8 +85,11 @@ final class AssinaturaEletronicaService
     /** @return array{portal_url:string,documento_id:int} */
     public function gerarLinkPortal(int $documentoId, ?int $usuarioId = null, ?int $espelhoId = null): array
     {
-        $documentoId = (new FolhaPontoService($this->db))->atualizarModeloPendente($documentoId, $usuarioId, $espelhoId);
-        $this->db->beginTransaction();
+        $transacaoPropria = !$this->db->inTransaction();
+        if ($transacaoPropria) {
+            $documentoId = (new FolhaPontoService($this->db))->atualizarModeloPendente($documentoId, $usuarioId, $espelhoId);
+            $this->db->beginTransaction();
+        }
         try {
             $stmt = $this->db->prepare('SELECT * FROM documentos WHERE id = ? FOR UPDATE');
             $stmt->execute([$documentoId]);
@@ -116,9 +119,11 @@ final class AssinaturaEletronicaService
                 )->execute([(int) $doc['espelho_id']]);
             }
             $this->auditar($documentoId, 'link_assinatura', ['hash_sha256' => $hashes['sha256']], $usuarioId);
-            $this->db->commit();
+            if ($transacaoPropria) {
+                $this->db->commit();
+            }
         } catch (Throwable $e) {
-            if ($this->db->inTransaction()) {
+            if ($transacaoPropria && $this->db->inTransaction()) {
                 $this->db->rollBack();
             }
             throw $e;
@@ -142,6 +147,10 @@ final class AssinaturaEletronicaService
             }
             if ($this->espelhoEmDivergencia((int) $doc['espelho_id'])) {
                 throw new RuntimeException('Esta folha está em análise de divergência pelo RH. Aguarde a correção e o reenvio.');
+            }
+            $statusEspelhoAtual = $this->statusEspelho((int) $doc['espelho_id']);
+            if ($statusEspelhoAtual !== null && !in_array($statusEspelhoAtual, ['fechado', 'enviado', 'assinado'], true)) {
+                throw new RuntimeException('O ponto do período foi reaberto para tratamento. Solicite uma nova via ao RH.');
             }
             if ((int) $doc['layout_pdf'] !== FolhaPontoService::LAYOUT_PDF_ATUAL) {
                 throw new RuntimeException('Peça ao RH para atualizar esta folha antes de assinar.');
@@ -281,6 +290,7 @@ final class AssinaturaEletronicaService
              FROM documentos d
              INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
              WHERE e.colaborador_id = :c
+               AND e.status IN ('fechado', 'enviado')
                AND d.status = 'enviado'
                AND d.portal_token IS NOT NULL
                AND d.portal_token <> ''"
@@ -402,7 +412,19 @@ final class AssinaturaEletronicaService
 
     private function espelhoEmDivergencia(int $espelhoId): bool
     {
-        return $this->statusEspelho($espelhoId) === 'em_divergencia';
+        if ($this->statusEspelho($espelhoId) === 'em_divergencia') {
+            return true;
+        }
+        try {
+            self::ensureDivergenciaSchema($this->db);
+            $st = $this->db->prepare(
+                "SELECT 1 FROM ponto_divergencias WHERE espelho_id = ? AND status IN ('aberta', 'em_analise') LIMIT 1"
+            );
+            $st->execute([$espelhoId]);
+            return (bool) $st->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**
@@ -413,7 +435,8 @@ final class AssinaturaEletronicaService
      *   espelho_status:string,
      *   totais:array{trab_min:int,he50_min:int,he100_min:int,falta_min:int,adn_min:int,dias:int},
      *   dias:list<array<string,mixed>>,
-     *   divergencias:list<array<string,mixed>>
+     *   divergencias:list<array<string,mixed>>,
+     *   ra_resumo:?array{relatorio_id:int,status:string,doc_status:string,portal_token:string,assinar_url:string}
      * }
      */
     public function carregarResumoEspelho(array $doc): array
@@ -443,7 +466,12 @@ final class AssinaturaEletronicaService
             }
 
             $sqlDias = "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo,
-                               d.horas_trab_min, d.horas_extras_min, d.horas_falta_min, d.adicional_noturno_min
+                               d.total_trab_min AS horas_trab_min,
+                               d.horas_extras_min,
+                               d.he_50_min,
+                               d.he_100_min,
+                               d.horas_falta_min,
+                               d.adn_min AS adicional_noturno_min
                         FROM ponto_dias d
                         WHERE {$where}
                         ORDER BY d.data ASC";
@@ -452,12 +480,24 @@ final class AssinaturaEletronicaService
                 $stmtDias->execute($params);
                 $rows = $stmtDias->fetchAll();
             } catch (Throwable) {
-                // Bancos legados sem colunas calculadas retornam lista básica
-                $stmtDias = $this->db->prepare(
-                    "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
-                );
-                $stmtDias->execute($params);
-                $rows = $stmtDias->fetchAll();
+                // Fallback sem he_50/he_100 (schema parcial) — ainda usa total_trab_min/adn_min.
+                try {
+                    $stmtDias = $this->db->prepare(
+                        "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo,
+                                d.total_trab_min AS horas_trab_min, d.horas_extras_min, d.horas_falta_min,
+                                d.adn_min AS adicional_noturno_min
+                         FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
+                    );
+                    $stmtDias->execute($params);
+                    $rows = $stmtDias->fetchAll();
+                } catch (Throwable) {
+                    // Bancos legados sem colunas calculadas retornam lista básica
+                    $stmtDias = $this->db->prepare(
+                        "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
+                    );
+                    $stmtDias->execute($params);
+                    $rows = $stmtDias->fetchAll();
+                }
             }
 
             $marcPorDia = [];
@@ -477,20 +517,23 @@ final class AssinaturaEletronicaService
             foreach ($rows as $r) {
                 $trab = (int) ($r['horas_trab_min'] ?? 0);
                 $he = (int) ($r['horas_extras_min'] ?? 0);
+                $he50 = array_key_exists('he_50_min', $r) ? (int) $r['he_50_min'] : null;
+                $he100 = array_key_exists('he_100_min', $r) ? (int) $r['he_100_min'] : null;
                 $falta = (int) ($r['horas_falta_min'] ?? 0);
                 $adn = (int) ($r['adicional_noturno_min'] ?? 0);
                 $tipo = (string) ($r['tipo_dia'] ?? 'trabalho');
-                $isCem = in_array($tipo, ['folga', 'feriado', 'folga_escala'], true);
+                if ($he50 === null || $he100 === null) {
+                    $isCem = in_array($tipo, ['folga', 'feriado', 'folga_escala'], true);
+                    $he50 = $isCem ? 0 : $he;
+                    $he100 = $isCem ? $he : 0;
+                }
 
                 $totais['trab_min'] += $trab;
                 $totais['falta_min'] += $falta;
                 $totais['adn_min'] += $adn;
-                if ($isCem) {
-                    $totais['he100_min'] += $he;
-                } else {
-                    $totais['he50_min'] += $he;
-                }
-                if ($trab > 0 || $he > 0 || $falta > 0 || !empty($marcPorDia[(int) $r['id']])) {
+                $totais['he50_min'] += $he50;
+                $totais['he100_min'] += $he100;
+                if ($trab > 0 || $he > 0 || $he50 > 0 || $he100 > 0 || $falta > 0 || !empty($marcPorDia[(int) $r['id']])) {
                     $totais['dias']++;
                 }
 
@@ -499,7 +542,7 @@ final class AssinaturaEletronicaService
                     'tipo_dia' => $tipo,
                     'batidas' => $marcPorDia[(int) $r['id']] ?? [],
                     'trab_min' => $trab,
-                    'he_min' => $he,
+                    'he_min' => $he50 + $he100 > 0 ? ($he50 + $he100) : $he,
                     'falta_min' => $falta,
                     'resumo' => (string) ($r['ocorrencia_resumo'] ?? ''),
                 ];
@@ -520,11 +563,97 @@ final class AssinaturaEletronicaService
             }
         }
 
+        $raResumo = $this->carregarRaResumoPorEspelho($espelhoId);
+
         return [
             'espelho_status' => $espelhoStatus,
             'totais' => $totais,
             'dias' => $dias,
             'divergencias' => $divergencias,
+            'ra_resumo' => $raResumo,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    public function portalDadosPorToken(string $token): ?array
+    {
+        $doc = $this->buscarPorPortalToken($token);
+        if ($doc === null) {
+            return null;
+        }
+        $resumo = $this->carregarResumoEspelho($doc);
+        return array_merge($doc, $resumo);
+    }
+
+    /**
+     * @return array{relatorio_id:int,status:string,doc_status:string,portal_token:string,assinar_url:string}|null
+     */
+    private function carregarRaResumoPorEspelho(int $espelhoId): ?array
+    {
+        if ($espelhoId <= 0) {
+            return null;
+        }
+        $raRow = false;
+        try {
+            $stRa = $this->db->prepare(
+                "SELECT r.id AS relatorio_id, r.status,
+                        rd.status AS doc_status, rd.portal_token
+                 FROM ponto_espelhos e
+                 INNER JOIN ra_relatorios r
+                    ON r.colaborador_id = e.colaborador_id AND r.periodo_id = e.periodo_id
+                 LEFT JOIN ra_documentos rd ON rd.id = (
+                     SELECT d2.id FROM ra_documentos d2
+                     WHERE d2.relatorio_id = r.id AND d2.status <> 'invalidado'
+                     ORDER BY d2.id DESC LIMIT 1
+                 )
+                 WHERE e.id = ?
+                 ORDER BY r.id DESC
+                 LIMIT 1"
+            );
+            $stRa->execute([$espelhoId]);
+            $raRow = $stRa->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable) {
+            try {
+                $stRa = $this->db->prepare(
+                    'SELECT r.id AS relatorio_id, r.status
+                     FROM ponto_espelhos e
+                     INNER JOIN ra_relatorios r
+                        ON r.colaborador_id = e.colaborador_id AND r.periodo_id = e.periodo_id
+                     WHERE e.id = ?
+                     ORDER BY r.id DESC
+                     LIMIT 1'
+                );
+                $stRa->execute([$espelhoId]);
+                $raRow = $stRa->fetch(PDO::FETCH_ASSOC);
+            } catch (Throwable) {
+                $raRow = false;
+            }
+        }
+        if (!is_array($raRow) || empty($raRow['relatorio_id'])) {
+            return null;
+        }
+        $relId = (int) $raRow['relatorio_id'];
+        $raStatus = (string) ($raRow['status'] ?? 'rascunho');
+        $raDocStatus = (string) ($raRow['doc_status'] ?? '');
+        $raToken = trim((string) ($raRow['portal_token'] ?? ''));
+        // Assinado/enviado com token: portal público. Caso contrário: login HE com retorno ao RA.
+        if ($raToken !== '' && in_array($raDocStatus, ['enviado', 'assinado', 'pendente'], true)) {
+            $assinarUrl = '/assinar-relatorio/' . $raToken;
+        } elseif ($raToken !== '' && in_array($raStatus, ['enviado', 'aprovado'], true)) {
+            $assinarUrl = '/assinar-relatorio/' . $raToken;
+        } else {
+            $assinarUrl = '/he/login?next=' . rawurlencode('/he/relatorios/' . $relId);
+        }
+
+        return [
+            'relatorio_id' => $relId,
+            'status' => $raStatus,
+            'doc_status' => $raDocStatus,
+            'portal_token' => $raToken,
+            'assinar_url' => $assinarUrl,
+            'assinado' => $raDocStatus === 'assinado',
         ];
     }
 
@@ -636,6 +765,12 @@ final class AssinaturaEletronicaService
         $obs = trim($observacao) !== '' ? trim($observacao) : 'Ajustado pelo RH.';
         $this->db->beginTransaction();
         try {
+            $stIds = $this->db->prepare(
+                "SELECT id FROM ponto_divergencias WHERE espelho_id = ? AND status IN ('aberta','em_analise')"
+            );
+            $stIds->execute([$espelhoId]);
+            $divIds = array_map('intval', $stIds->fetchAll(PDO::FETCH_COLUMN) ?: []);
+
             $upd = $this->db->prepare(
                 "UPDATE ponto_divergencias
                  SET status = 'resolvida', resolucao_obs = ?, resolvido_por = ?, resolvido_em = NOW()
@@ -648,7 +783,26 @@ final class AssinaturaEletronicaService
                 "UPDATE ponto_espelhos SET status = 'em_tratamento' WHERE id = ? AND status = 'em_divergencia'"
             )->execute([$espelhoId]);
 
+            $this->db->prepare(
+                "UPDATE documentos SET status = 'invalidado' WHERE espelho_id = :eid AND status IN ('gerado', 'enviado')"
+            )->execute(['eid' => $espelhoId]);
+
+            try {
+                $this->db->prepare(
+                    "UPDATE documentos d
+                     INNER JOIN documentos_espelhos de ON de.documento_id = d.id
+                     SET d.status = 'invalidado'
+                     WHERE de.espelho_id = :eid AND d.status IN ('gerado', 'enviado')"
+                )->execute(['eid' => $espelhoId]);
+            } catch (Throwable) {
+            }
+
             $this->db->commit();
+
+            foreach ($divIds as $divergenciaId) {
+                AlertasService::resolverEvento('divergencia:' . $divergenciaId);
+            }
+
             return $count;
         } catch (Throwable $e) {
             $this->db->rollBack();

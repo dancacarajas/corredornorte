@@ -32,6 +32,25 @@ $resumoEspelho = $resumoEspelho ?? [
 $totais = $resumoEspelho['totais'] ?? [];
 $diasResumo = $resumoEspelho['dias'] ?? [];
 $divergencias = $resumoEspelho['divergencias'] ?? [];
+$dados = is_array($dados ?? null) ? $dados : [];
+if (empty($dados['ra_resumo'])) {
+    if (!empty($resumoEspelho['ra_resumo']) && is_array($resumoEspelho['ra_resumo'])) {
+        $dados['ra_resumo'] = $resumoEspelho['ra_resumo'];
+    } elseif (!empty($documento['ra_resumo']) && is_array($documento['ra_resumo'])) {
+        $dados['ra_resumo'] = $documento['ra_resumo'];
+    } elseif ($documento !== null && ($pdoPortal = \App\Helpers\Db::tryConnection()) instanceof \PDO) {
+        $assPortal = new \App\Services\AssinaturaEletronicaService($pdoPortal);
+        if (method_exists($assPortal, 'portalDadosPorToken')) {
+            try {
+                $pd = $assPortal->portalDadosPorToken($token);
+                if (is_array($pd) && !empty($pd['ra_resumo'])) {
+                    $dados['ra_resumo'] = $pd['ra_resumo'];
+                }
+            } catch (\Throwable) {
+            }
+        }
+    }
+}
 $emDivergencia = (($resumoEspelho['espelho_status'] ?? '') === 'em_divergencia')
     && (($documento['status'] ?? '') !== 'assinado');
 
@@ -506,6 +525,11 @@ $ogDesc = $periodoTexto !== ''
 
         <div class="ap-grid">
             <section class="ap-card" style="padding:0;overflow:hidden;" aria-label="Visualização do documento PDF">
+                <div style="padding:10px 12px;background:#EFF6FF;border-bottom:1px solid var(--border, #E2E8F0);display:flex;justify-content:center;">
+                    <a class="btn btn-primary btn-sm" href="<?= View::e($pdfUrl) ?>" target="_blank" rel="noopener noreferrer" style="width:100%;justify-content:center;text-align:center;font-weight:700;">
+                        Abrir / Baixar PDF da Folha em tela cheia
+                    </a>
+                </div>
                 <div class="ap-viewer-bar">
                     <div class="ap-viewer-controls">
                         <button type="button" class="btn btn-secondary btn-sm" id="apPdfPrev" aria-label="Página anterior">‹</button>
@@ -522,57 +546,97 @@ $ogDesc = $periodoTexto !== ''
                 <div class="ap-viewer-stage" id="apPdfStage" data-pdf-url="<?= View::e($pdfUrl) ?>">
                     <canvas id="apPdfCanvas"></canvas>
                 </div>
+                <div style="padding:10px 12px;background:#F8FAFC;border-top:1px solid var(--border, #E2E8F0);display:flex;justify-content:center;">
+                    <a class="btn btn-secondary btn-sm" href="<?= View::e($pdfUrl) ?>" target="_blank" rel="noopener noreferrer" download style="width:100%;justify-content:center;text-align:center;">
+                        Abrir / Baixar PDF da Folha em tela cheia
+                    </a>
+                </div>
             </section>
 
-            <section class="ap-card" aria-label="Ações de assinatura">
-                <?php if ($disponivel): ?>
-                    <h2 style="margin:0 0 6px;font-size:1.1rem;">Confirmar e Assinar Folha</h2>
-                    <p class="muted" style="margin:0 0 14px;font-size:.9rem;">
-                        Confira o resumo acima e o PDF ao lado. Se tudo estiver correto, preencha seu nome completo para registrar a assinatura eletrônica<?= $assinaturaConfigurada ? ' com selo PAdES' : '' ?>.
-                    </p>
-                    <form method="post" action="/assinar/<?= View::e($token) ?>/assinar" id="apSignForm">
-                        <input type="hidden" name="csrf" value="<?= View::e($csrf) ?>">
-                        <input type="hidden" name="hash_sha256" value="<?= View::e((string) $documento['hash_sha256']) ?>">
+            <div style="display:grid;gap:16px;align-content:start;">
+                <section class="ap-card" aria-label="Ações de assinatura">
+                    <?php if ($disponivel): ?>
+                        <h2 style="margin:0 0 6px;font-size:1.1rem;">Confirmar e Assinar Folha</h2>
+                        <p class="muted" style="margin:0 0 14px;font-size:.9rem;">
+                            Confira o resumo acima e o PDF ao lado. Se tudo estiver correto, preencha seu nome completo para registrar a assinatura eletrônica<?= $assinaturaConfigurada ? ' com selo PAdES' : '' ?>.
+                        </p>
+                        <form method="post" action="/assinar/<?= View::e($token) ?>/assinar" id="apSignForm">
+                            <input type="hidden" name="csrf" value="<?= View::e($csrf) ?>">
+                            <input type="hidden" name="hash_sha256" value="<?= View::e((string) $documento['hash_sha256']) ?>">
 
-                        <label class="ap-check">
-                            <input type="checkbox" name="aceite" value="1" required>
-                            <span><?= View::e($textoAceite) ?></span>
-                        </label>
+                            <label class="ap-check">
+                                <input type="checkbox" name="aceite" value="1" required>
+                                <span><?= View::e($textoAceite) ?></span>
+                            </label>
 
-                        <div class="ap-field">
-                            <label for="apNomeInput">Nome completo (conforme consta na folha)</label>
-                            <input id="apNomeInput" name="nome" type="text" required maxlength="160" autocomplete="name"
-                                   value="<?= View::e($nomeInformado) ?>"
-                                   placeholder="Digite seu nome completo">
-                        </div>
+                            <div class="ap-field">
+                                <label for="apNomeInput">Nome completo (conforme consta na folha)</label>
+                                <input id="apNomeInput" name="nome" type="text" required maxlength="160" autocomplete="name"
+                                       value="<?= View::e($nomeInformado !== '' ? $nomeInformado : (string) ($documento['colaborador_nome'] ?? $documento['nome'] ?? '')) ?>"
+                                       placeholder="Digite seu nome completo">
+                            </div>
 
-                        <button type="submit" class="ap-btn-main" id="apSignBtn">
-                            <span class="ap-spinner" aria-hidden="true"></span>
-                            <span class="ap-btn-label">Assinar Folha Eletronicamente</span>
+                            <button type="submit" class="ap-btn-main" id="apSignBtn">
+                                <span class="ap-spinner" aria-hidden="true"></span>
+                                <span class="ap-btn-label">Assinar Folha Eletronicamente</span>
+                            </button>
+                        </form>
+
+                        <button type="button" class="ap-btn-sec" id="apOpenDivBtn">
+                            Reportar divergência ao RH
                         </button>
-                    </form>
+                    <?php elseif ($assinada): ?>
+                        <h2 style="margin:0 0 6px;font-size:1.1rem;">Documento concluído</h2>
+                        <p class="muted" style="margin:0;font-size:.92rem;">
+                            Esta folha já foi assinada eletronicamente e encontra-se protegida para consulta e verificação.
+                        </p>
+                    <?php elseif ($emDivergencia): ?>
+                        <h2 style="margin:0 0 6px;font-size:1.1rem;">Aguardando revisão do RH</h2>
+                        <p class="muted" style="margin:0;font-size:.92rem;">
+                            Enquanto a divergência estiver em análise, a assinatura permanece bloqueada para evitar validação com dados incorretos.
+                        </p>
+                        <button type="button" class="ap-btn-sec" id="apOpenDivBtn">
+                            Complementar divergência ao RH
+                        </button>
+                    <?php else: ?>
+                        <h2 style="margin:0 0 6px;font-size:1.1rem;">Assinatura indisponível</h2>
+                        <p class="muted" style="margin:0;font-size:.92rem;">Solicite ao RH a atualização e o reenvio desta folha de ponto.</p>
+                    <?php endif; ?>
+                </section>
 
-                    <button type="button" class="ap-btn-sec" id="apOpenDivBtn">
-                        Reportar divergência ao RH
-                    </button>
-                <?php elseif ($assinada): ?>
-                    <h2 style="margin:0 0 6px;font-size:1.1rem;">Documento concluído</h2>
-                    <p class="muted" style="margin:0;font-size:.92rem;">
-                        Esta folha já foi assinada eletronicamente e encontra-se protegida para consulta e verificação.
-                    </p>
-                <?php elseif ($emDivergencia): ?>
-                    <h2 style="margin:0 0 6px;font-size:1.1rem;">Aguardando revisão do RH</h2>
-                    <p class="muted" style="margin:0;font-size:.92rem;">
-                        Enquanto a divergência estiver em análise, a assinatura permanece bloqueada para evitar validação com dados incorretos.
-                    </p>
-                    <button type="button" class="ap-btn-sec" id="apOpenDivBtn">
-                        Complementar divergência ao RH
-                    </button>
-                <?php else: ?>
-                    <h2 style="margin:0 0 6px;font-size:1.1rem;">Assinatura indisponível</h2>
-                    <p class="muted" style="margin:0;font-size:.92rem;">Solicite ao RH a atualização e o reenvio desta folha de ponto.</p>
+                <?php if (!empty($dados['ra_resumo']) && is_array($dados['ra_resumo'])):
+                    $ra = $dados['ra_resumo'];
+                    $raStatus = (string) ($ra['status_assinatura'] ?? $ra['documento_status'] ?? $ra['status'] ?? 'pendente');
+                    $raAssinado = ($raStatus === 'assinado' || !empty($ra['assinado']));
+                    $raUrl = (string) ($ra['assinar_url'] ?? $ra['portal_url'] ?? $ra['url'] ?? '/he');
+                    $raLabelBtn = $raAssinado
+                        ? 'Visualizar Relatório de Atividades (RA) assinado'
+                        : (!empty($ra['assinar_url']) && str_contains((string) $ra['assinar_url'], '/assinar-relatorio/')
+                            ? 'Assinar Relatório de Atividades (RA)'
+                            : 'Preencher / Assinar Relatório de Atividades (RA)');
+                ?>
+                    <section class="ap-card" style="border-left:4px solid var(--brand-primary, #EA580C);background:#FFFBEB;" aria-label="Relatório de Atividades (RA) do Período">
+                        <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+                            <h2 style="margin:0;font-size:1.05rem;">Relatório de Atividades (RA) do Período</h2>
+                            <span class="pill <?= $raAssinado ? 'pill-brand' : 'pill-warning' ?>">
+                                <?= View::e($raAssinado ? 'RA Assinado' : 'RA Pendente') ?>
+                            </span>
+                        </div>
+                        <p class="muted" style="margin:0 0 12px;font-size:.9rem;">
+                            <?= $raAssinado
+                                ? 'Seu Relatório de Atividades deste período já foi assinado eletronicamente.'
+                                : (str_contains($raUrl, '/assinar-relatorio/')
+                                    ? 'Complete sua jornada do período assinando também o Relatório de Atividades (RA) — mesmo tipo de link desta folha.'
+                                    : 'Complete sua jornada do período: o botão abre o Portal do Colaborador já direcionado ao RA deste período (login com código OTP do e-mail).') ?>
+                        </p>
+                        <?php if ($raUrl !== ''): ?>
+                            <a class="ap-btn-main" href="<?= View::e($raUrl) ?>" style="text-decoration:none;">
+                                <?= View::e($raLabelBtn) ?>
+                            </a>
+                        <?php endif; ?>
+                    </section>
                 <?php endif; ?>
-            </section>
+            </div>
         </div>
     <?php endif; ?>
 </main>
@@ -667,7 +731,7 @@ $ogDesc = $periodoTexto !== ''
     if (qrBox && qrBox.dataset.verifyUrl) {
         const fullUrl = window.location.origin + qrBox.dataset.verifyUrl;
         const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+        s.src = '/assets/vendor/qrcode/qrcode.min.js';
         s.onload = () => {
             if (window.QRCode) {
                 qrBox.innerHTML = '';
@@ -678,7 +742,7 @@ $ogDesc = $periodoTexto !== ''
         document.head.appendChild(s);
     }
 
-    // 5. Visualizador PDF.js com fallback automático para iframe
+    // 5. Visualizador PDF.js (self-host) com fallback automático para iframe
     const stage = document.getElementById('apPdfStage');
     const canvas = document.getElementById('apPdfCanvas');
     const info = document.getElementById('apPdfPageInfo');
@@ -690,10 +754,10 @@ $ogDesc = $periodoTexto !== ''
     };
 
     const pdfScript = document.createElement('script');
-    pdfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    pdfScript.src = '/assets/vendor/pdfjs/pdf.min.js';
     pdfScript.onload = async () => {
         if (!window.pdfjsLib) return mountFallback();
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdfjs/pdf.worker.min.js';
         try {
             const pdf = await window.pdfjsLib.getDocument(pdfUrl).promise;
             let pageNum = 1;

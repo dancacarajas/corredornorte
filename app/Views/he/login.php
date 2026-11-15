@@ -1,12 +1,14 @@
 <?php
 
 use App\Helpers\Csrf;
+use App\Helpers\HePortalAuth;
 use App\Helpers\View;
 
 $error = $error ?? null;
 $ok = $ok ?? null;
 $cpf = $cpf ?? '';
 $otpPending = is_array($otpPending ?? null) ? $otpPending : null;
+$next = HePortalAuth::safeNext(isset($next) ? (string) $next : (string) ($_GET['next'] ?? $_POST['next'] ?? ''));
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -62,6 +64,7 @@ $otpPending = is_array($otpPending ?? null) ? $otpPending : null;
     <?php if ($otpPending): ?>
         <form method="post" action="/he/login" class="section-stack">
             <?= Csrf::field() ?>
+            <input type="hidden" name="next" value="<?= View::e($next) ?>">
             <input type="hidden" name="otp_challenge" value="<?= View::e((string) ($otpPending['challenge'] ?? '')) ?>">
             <div class="form-field">
                 <label class="form-label" for="otp">Código de acesso</label>
@@ -72,12 +75,14 @@ $otpPending = is_array($otpPending ?? null) ? $otpPending : null;
         </form>
         <form method="post" action="/he/login" style="margin-top:.85rem;">
             <?= Csrf::field() ?>
+            <input type="hidden" name="next" value="<?= View::e($next) ?>">
             <input type="hidden" name="cpf" value="<?= View::e($cpf) ?>">
             <button class="btn btn-ghost btn-sm" type="submit" style="width:100%;">Reenviar código</button>
         </form>
     <?php else: ?>
         <form method="post" action="/he/login" class="section-stack">
             <?= Csrf::field() ?>
+            <input type="hidden" name="next" value="<?= View::e($next) ?>">
             <div class="form-field">
                 <label class="form-label" for="cpf">CPF</label>
                 <input class="form-control" id="cpf" name="cpf" inputmode="numeric" autocomplete="username"
