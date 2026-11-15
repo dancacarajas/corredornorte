@@ -194,12 +194,85 @@
   font-weight: 600;
 }
 
+.dash-hero-progress {
+  margin: 0.45rem 0 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.dash-hero-splits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
+.dash-hero-split {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+}
+
+.dash-hero-split.is-ok {
+  border-color: #A7F3D0;
+  background: #ECFDF5;
+}
+
+.dash-hero-split.is-danger {
+  border-color: #FECACA;
+  background: #FEF2F2;
+}
+
+.dash-hero-split.is-warning {
+  border-color: #FDE68A;
+  background: #FFFBEB;
+}
+
+.dash-hero-split-num {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.dash-hero-split.is-ok .dash-hero-split-num {
+  color: #047857;
+}
+
+.dash-hero-split.is-danger .dash-hero-split-num {
+  color: #B91C1C;
+}
+
+.dash-hero-split-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
 /* Mini Pipeline 7 Etapas no Hero */
+.dash-pipe-wrap {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.dash-pipe-legend {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+}
+
 .dash-pipe {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 0.35rem;
-  padding-top: 0.25rem;
 }
 
 .dash-pipe-step {
@@ -224,6 +297,20 @@
 
 .dash-pipe-step.is-full .dash-pipe-fill {
   background: var(--success);
+}
+
+.dash-pipe-step.is-atual .dash-pipe-track {
+  outline: 2px solid rgba(224, 96, 8, 0.35);
+  outline-offset: 1px;
+}
+
+.dash-pipe-step.is-atual .dash-pipe-fill {
+  background: var(--brand-primary);
+}
+
+.dash-pipe-step.is-atual .dash-pipe-num {
+  color: var(--brand-primary);
+  font-weight: 800;
 }
 
 .dash-pipe-num {
@@ -258,6 +345,12 @@
   background: var(--brand-primary-soft);
   padding: 0.35rem 0.65rem;
   border-radius: var(--radius-sm);
+}
+
+.dash-hero-blocker a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* Matriz 2x2 de Exceções P0 */
@@ -519,10 +612,13 @@
   .dash-kpi-grid {
     grid-template-columns: 1fr;
   }
+  .dash-hero-splits {
+    grid-template-columns: 1fr;
+  }
   .dash-pipe {
     gap: 0.2rem;
   }
   .dash-pipe-num {
-    display: none;
+    font-size: 0.58rem;
   }
 }

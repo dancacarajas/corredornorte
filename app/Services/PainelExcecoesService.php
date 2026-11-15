@@ -79,6 +79,7 @@ final class PainelExcecoesService
             $heBloqueante,
             $emailSemEntrega,
             $canalEmail,
+            $assinaturas,
             $qs
         );
 
@@ -617,6 +618,7 @@ final class PainelExcecoesService
      * @param array<string,mixed> $heBloqueante
      * @param array<string,mixed> $emailSemEntrega
      * @param array<string,mixed> $canalEmail
+     * @param array<string,mixed> $assinaturas
      * @return array<string,mixed>
      */
     private function resolverGargaloHero(
@@ -626,6 +628,7 @@ final class PainelExcecoesService
         array $heBloqueante,
         array $emailSemEntrega,
         array $canalEmail,
+        array $assinaturas,
         string $qs
     ): array {
         $total = (int) ($resumo['total'] ?? 0);
@@ -650,45 +653,47 @@ final class PainelExcecoesService
         }
 
         if ($total === 0) {
-            return [
+            $faltantes = (int) $cobertura['faltantes'];
+            return $this->montarHeroPayload([
                 'chave' => 'sem_espelho',
                 'kicker' => 'Etapa inicial',
                 'titulo' => 'Nenhum cartão gerado neste período',
-                'subtitulo' => $cobertura['faltantes'] > 0
-                    ? $cobertura['faltantes'] . ' colaborador(es) ativo(s) aguardam geração de espelho.'
+                'subtitulo' => $faltantes > 0
+                    ? $faltantes . ' colaborador(es) ativo(s) aguardam geração de espelho.'
                     : 'Selecione outro período ou gere os espelhos em Gestão de Ponto.',
-                'quantidade' => (int) $cobertura['faltantes'],
+                'quantidade' => $faltantes,
+                'metric_label' => 'espelhos a gerar',
+                'progresso_label' => null,
                 'cta_label' => 'Gerar cartões no Ponto',
                 'cta_href' => '/rh/ponto?' . $qs,
-                'secondary_href' => null,
-                'bloqueio_nota' => null,
                 'tom' => 'brand',
                 'total' => 0,
                 'concluidos' => 0,
                 'pct' => 0,
                 'pronto_dossie' => false,
-                'barra' => $barra,
-            ];
+                'etapa_atual' => null,
+            ], $barra);
         }
 
         if ($pronto) {
-            return [
+            return $this->montarHeroPayload([
                 'chave' => 'dossie',
                 'kicker' => 'Pronto para medição',
                 'titulo' => 'Dossiê 100% concluído',
                 'subtitulo' => 'Todos os ' . $total . ' colaboradores concluíram cartão de ponto e RA assinados.',
                 'quantidade' => $concluidos,
+                'metric_label' => 'de ' . $total . ' prontos para o dossiê',
+                'progresso_label' => '7 etapas concluídas · 100%',
                 'cta_label' => 'Baixar ZIP do Dossiê',
                 'cta_href' => '/rh/medicao/dossie?' . $qs,
                 'secondary_href' => '/rh/medicao?' . $qs,
-                'bloqueio_nota' => null,
                 'tom' => 'success',
                 'total' => $total,
                 'concluidos' => $concluidos,
                 'pct' => 100,
                 'pronto_dossie' => true,
-                'barra' => $barra,
-            ];
+                'etapa_atual' => 'assinaturas',
+            ], $barra);
         }
 
         $mapaAcao = [
@@ -696,137 +701,343 @@ final class PainelExcecoesService
                 'kicker' => 'Gargalo atual · Etapa 2',
                 'titulo' => 'Conferir cartões pendentes',
                 'cta' => 'Conferir na Medição',
+                'feito_label' => 'já conferidos',
+                'pendente_label' => 'ainda nesta etapa',
             ],
             'fechar' => [
                 'kicker' => 'Gargalo atual · Etapa 3',
                 'titulo' => 'Fechar espelhos conferidos',
                 'cta' => 'Fechar na Medição',
+                'feito_label' => 'já fechados',
+                'pendente_label' => 'ainda nesta etapa',
             ],
             'pdf' => [
                 'kicker' => 'Gargalo atual · Etapa 4',
                 'titulo' => 'Emitir PDFs das folhas',
                 'cta' => 'Gerar PDFs',
+                'feito_label' => 'já com PDF',
+                'pendente_label' => 'ainda nesta etapa',
             ],
             'link' => [
                 'kicker' => 'Gargalo atual · Etapa 5',
                 'titulo' => 'Gerar links de assinatura',
                 'cta' => 'Gerar links',
+                'feito_label' => 'já com link',
+                'pendente_label' => 'ainda nesta etapa',
             ],
             'email' => [
                 'kicker' => 'Gargalo atual · Etapa 6',
                 'titulo' => 'Enviar folhas por e-mail',
                 'cta' => 'Enviar e-mails',
+                'feito_label' => 'já enviados',
+                'pendente_label' => 'ainda nesta etapa',
             ],
         ];
 
         if (is_string($proxima) && isset($mapaAcao[$proxima]) && (int) ($elegiveis[$proxima] ?? 0) > 0) {
             $qtdElegiveis = (int) $elegiveis[$proxima];
+            $feitosEtapa = (int) ($feitos[$proxima] ?? 0);
             $naFilaEtapa = count(array_filter(
                 $colaboradores,
                 fn (array $c): bool => $this->pertenceAoGargalo($c, $proxima)
             ));
-            $qtdExibida = max($qtdElegiveis, $naFilaEtapa);
 
-            $notas = [];
-            if ($proxima !== 'conferir' && (int) $heBloqueante['total'] > 0) {
-                $notas[] = $heBloqueante['total'] . ' bloqueado(s) por HE no RA (Etapa 2)';
-            }
+            $prontos = $qtdElegiveis;
+            $bloqueados = 0;
+            $bloqueioNota = null;
+            $bloqueioHref = null;
+            $ctaSecLabel = null;
+            $ctaSecHref = null;
+            $splits = [];
+
             if ($proxima === 'email') {
-                if ((int) $emailSemEntrega['total'] > 0 && ($canalEmail['estado'] ?? '') === 'ok') {
-                    $notas[] = $emailSemEntrega['total'] . ' na fila com falha/e-mail inválido';
+                $contagemEmail = $this->contarFilaEmail($colaboradores);
+                $prontos = $contagemEmail['prontos'];
+                $bloqueados = $contagemEmail['bloqueados'];
+                $naFilaEtapa = $contagemEmail['na_fila'];
+                $qtdElegiveis = max($prontos, 0);
+
+                $splits = [
+                    [
+                        'valor' => $prontos,
+                        'label' => 'prontos para envio',
+                        'tom' => $prontos > 0 ? 'ok' : 'muted',
+                    ],
+                    [
+                        'valor' => $bloqueados,
+                        'label' => 'bloqueados por e-mail',
+                        'tom' => $bloqueados > 0 ? 'danger' : 'muted',
+                    ],
+                ];
+
+                if ($bloqueados > 0) {
+                    $bloqueioNota = $bloqueados . ' não podem receber e-mail (sem cadastro, domínio inválido ou falha de envio).';
+                    $bloqueioHref = (string) $emailSemEntrega['href'];
                 }
-            } elseif ((int) $emailSemEntrega['total'] > 0) {
-                $notas[] = $emailSemEntrega['total'] . ' com bloqueio de e-mail na Etapa 6';
+            } else {
+                if ($proxima !== 'conferir' && (int) $heBloqueante['total'] > 0) {
+                    $bloqueados = (int) $heBloqueante['total'];
+                    $bloqueioNota = $bloqueados . ' ainda bloqueados por HE no RA — resolva na Etapa 2.';
+                    $bloqueioHref = (string) $heBloqueante['href'];
+                    $ctaSecLabel = 'Revisar HE (' . $bloqueados . ')';
+                    $ctaSecHref = $bloqueioHref;
+                } elseif ((int) $emailSemEntrega['total'] > 0) {
+                    $bloqueados = (int) $emailSemEntrega['total'];
+                    $bloqueioNota = $bloqueados . ' terão problema na Etapa 6 (e-mail inválido ou falha).';
+                    $bloqueioHref = (string) $emailSemEntrega['href'];
+                    $ctaSecLabel = 'Corrigir e-mails (' . $bloqueados . ')';
+                    $ctaSecHref = $bloqueioHref;
+                }
+
+                if ($naFilaEtapa > 0) {
+                    $splits = [
+                        [
+                            'valor' => $prontos,
+                            'label' => 'prontos para esta ação',
+                            'tom' => $prontos > 0 ? 'ok' : 'muted',
+                        ],
+                        [
+                            'valor' => max(0, $naFilaEtapa - $prontos),
+                            'label' => 'ainda retidos antes desta etapa',
+                            'tom' => ($naFilaEtapa - $prontos) > 0 ? 'warning' : 'muted',
+                        ],
+                    ];
+                }
             }
 
-            $subtitulo = $proxima === 'email' && $naFilaEtapa > $qtdElegiveis
-                ? $qtdElegiveis . ' pronto(s) para envio e ' . ($naFilaEtapa - $qtdElegiveis) . ' sem e-mail cadastrado · ' . $concluidos . ' concluído(s).'
-                : $qtdExibida . ' de ' . $total . ' na fila desta etapa · ' . $concluidos . ' concluído(s).';
+            $meta = $mapaAcao[$proxima];
+            $faltamEtapa = max(0, $total - $feitosEtapa);
+            $progressoLabel = $feitosEtapa . ' de ' . $total . ' ' . $meta['feito_label']
+                . ' · faltam ' . $faltamEtapa;
 
-            $ctaLabel = ($proxima === 'email' && ($canalEmail['estado'] ?? '') !== 'ok')
-                ? 'Revisar fila na Medição (' . $qtdExibida . ')'
-                : ($mapaAcao[$proxima]['cta'] . ' (' . $qtdElegiveis . ')');
+            $canalOk = ($canalEmail['estado'] ?? '') === 'ok';
+            $priorizarBloqueio = $proxima === 'email' && $bloqueados > 0 && $prontos === 0;
+            $priorizarBloqueio = $priorizarBloqueio || ($proxima === 'email' && $bloqueados > $prontos && !$canalOk);
 
-            return [
+            if ($proxima === 'email' && !$canalOk) {
+                $ctaLabel = 'Revisar canal de e-mail';
+                $ctaHref = (string) ($canalEmail['href'] ?? '/rh/email');
+                $quantidade = $naFilaEtapa;
+                $metricLabel = $faltamEtapa . ' ainda nesta etapa';
+            } elseif ($priorizarBloqueio || ($proxima === 'email' && $bloqueados > 0 && $prontos === 0)) {
+                $ctaLabel = 'Corrigir e-mails (' . $bloqueados . ')';
+                $ctaHref = (string) $emailSemEntrega['href'];
+                $quantidade = $bloqueados;
+                $metricLabel = 'bloqueados — sem envio possível';
+                if ($prontos > 0) {
+                    $ctaSecLabel = 'Enviar os prontos (' . $prontos . ')';
+                    $ctaSecHref = '/rh/medicao?' . $qs . '&filtro=email';
+                }
+            } elseif ($proxima === 'email') {
+                $ctaLabel = 'Enviar os prontos (' . $prontos . ')';
+                $ctaHref = '/rh/medicao?' . $qs . '&filtro=email';
+                $quantidade = $prontos > 0 ? $prontos : $naFilaEtapa;
+                $metricLabel = $prontos > 0
+                    ? 'prontos para envio agora'
+                    : $meta['pendente_label'];
+                if ($bloqueados > 0) {
+                    $ctaSecLabel = 'Corrigir e-mails (' . $bloqueados . ')';
+                    $ctaSecHref = (string) $emailSemEntrega['href'];
+                }
+            } else {
+                $ctaLabel = $meta['cta'] . ' (' . $prontos . ')';
+                $ctaHref = '/rh/medicao?' . $qs . '&filtro=' . $proxima;
+                $quantidade = $prontos > 0 ? $prontos : $naFilaEtapa;
+                $metricLabel = $prontos > 0
+                    ? 'prontos para esta ação'
+                    : $meta['pendente_label'];
+            }
+
+            $subtitulo = $proxima === 'email'
+                ? ($prontos . ' podem ser enviados agora'
+                    . ($bloqueados > 0 ? ' · ' . $bloqueados . ' precisam corrigir e-mail' : '')
+                    . ' · ' . $concluidos . ' já com dossiê completo.')
+                : ($prontos . ' prontos para a ação'
+                    . ($bloqueados > 0 ? ' · ' . $bloqueados . ' com bloqueio paralelo' : '')
+                    . ' · ' . $concluidos . ' já com dossiê completo.');
+
+            return $this->montarHeroPayload([
                 'chave' => $proxima,
-                'kicker' => $mapaAcao[$proxima]['kicker'],
-                'titulo' => $mapaAcao[$proxima]['titulo'],
+                'kicker' => $meta['kicker'],
+                'titulo' => $meta['titulo'],
                 'subtitulo' => $subtitulo,
-                'quantidade' => $qtdExibida,
+                'quantidade' => $quantidade,
+                'metric_label' => $metricLabel,
+                'progresso_label' => $progressoLabel,
+                'splits' => $splits,
                 'cta_label' => $ctaLabel,
-                'cta_href' => '/rh/medicao?' . $qs . '&filtro=' . $proxima,
+                'cta_href' => $ctaHref,
+                'cta_secundario_label' => $ctaSecLabel,
+                'cta_secundario_href' => $ctaSecHref,
                 'secondary_href' => '/rh/medicao?' . $qs,
-                'bloqueio_nota' => $notas !== [] ? implode(' · ', $notas) : null,
-                'tom' => 'brand',
+                'bloqueio_nota' => $bloqueioNota,
+                'bloqueio_href' => $bloqueioHref,
+                'tom' => ($proxima === 'email' && $bloqueados > $prontos) ? 'danger' : 'brand',
                 'total' => $total,
                 'concluidos' => $concluidos,
                 'pct' => $pct,
                 'pronto_dossie' => false,
-                'barra' => $barra,
-            ];
+                'etapa_atual' => $proxima,
+            ], $barra);
         }
 
         if ((int) $heBloqueante['total'] > 0) {
             $qtd = (int) $heBloqueante['total'];
-            return [
+            $feitosEtapa = (int) ($feitos['conferir'] ?? 0);
+            return $this->montarHeroPayload([
                 'chave' => 'he',
-                'kicker' => 'Trava na Etapa 2',
+                'kicker' => 'Bloqueio na Etapa 2',
                 'titulo' => 'Aplicar HE Cliente para destravar',
-                'subtitulo' => $qtd . ' colaborador(es) com hora extra declarada no RA impedindo conferência.',
+                'subtitulo' => $qtd . ' colaborador(es) com hora extra no RA impedindo a conferência.',
                 'quantidade' => $qtd,
+                'metric_label' => 'bloqueados por HE',
+                'progresso_label' => $feitosEtapa . ' de ' . $total . ' já conferidos · faltam '
+                    . max(0, $total - $feitosEtapa),
                 'cta_label' => 'Revisar HE (' . $qtd . ')',
                 'cta_href' => (string) $heBloqueante['href'],
                 'secondary_href' => '/rh/medicao?' . $qs,
-                'bloqueio_nota' => null,
                 'tom' => 'warning',
                 'total' => $total,
                 'concluidos' => $concluidos,
                 'pct' => $pct,
                 'pronto_dossie' => false,
-                'barra' => $barra,
-            ];
+                'etapa_atual' => 'conferir',
+            ], $barra);
         }
 
         if ((int) $emailSemEntrega['total'] > 0) {
             $qtd = (int) $emailSemEntrega['total'];
-            return [
+            $feitosEtapa = (int) ($feitos['email'] ?? 0);
+            $contagemEmail = $this->contarFilaEmail($colaboradores);
+            return $this->montarHeroPayload([
                 'chave' => 'email',
-                'kicker' => 'Trava na Etapa 6',
+                'kicker' => 'Bloqueio na Etapa 6',
                 'titulo' => 'Corrigir e-mails que não entregam',
                 'subtitulo' => $qtd . ' colaborador(es) sem e-mail válido ou com falha de disparo.',
                 'quantidade' => $qtd,
-                'cta_label' => 'Corrigir envios (' . $qtd . ')',
+                'metric_label' => 'bloqueados — sem envio possível',
+                'progresso_label' => $feitosEtapa . ' de ' . $total . ' já enviados · faltam '
+                    . max(0, $total - $feitosEtapa),
+                'splits' => [
+                    [
+                        'valor' => $contagemEmail['prontos'],
+                        'label' => 'prontos para envio',
+                        'tom' => $contagemEmail['prontos'] > 0 ? 'ok' : 'muted',
+                    ],
+                    [
+                        'valor' => $qtd,
+                        'label' => 'bloqueados por e-mail',
+                        'tom' => 'danger',
+                    ],
+                ],
+                'cta_label' => 'Corrigir e-mails (' . $qtd . ')',
                 'cta_href' => (string) $emailSemEntrega['href'],
+                'cta_secundario_label' => $contagemEmail['prontos'] > 0
+                    ? 'Enviar os prontos (' . $contagemEmail['prontos'] . ')'
+                    : null,
+                'cta_secundario_href' => $contagemEmail['prontos'] > 0
+                    ? '/rh/medicao?' . $qs . '&filtro=email'
+                    : null,
                 'secondary_href' => '/rh/medicao?' . $qs,
-                'bloqueio_nota' => null,
+                'bloqueio_nota' => $qtd . ' não podem receber e-mail até o cadastro/domínio ser corrigido.',
                 'tom' => 'danger',
                 'total' => $total,
                 'concluidos' => $concluidos,
                 'pct' => $pct,
                 'pronto_dossie' => false,
-                'barra' => $barra,
-            ];
+                'etapa_atual' => 'email',
+            ], $barra);
         }
 
         $faltamAss = max(0, $total - $concluidos);
-        return [
+        $feitosEtapa = (int) ($feitos['assinaturas'] ?? 0);
+        return $this->montarHeroPayload([
             'chave' => 'assinaturas',
             'kicker' => 'Reta final · Etapa 7',
             'titulo' => 'Aguardando assinaturas para o dossiê',
-            'subtitulo' => $assinaturas['folhas_pendentes'] . ' folha(s) e '
-                . ($assinaturas['ras_pendentes'] + $assinaturas['ras_rascunho']) . ' RA(s) ainda pendentes.',
+            'subtitulo' => (int) ($assinaturas['folhas_pendentes'] ?? 0) . ' folha(s) e '
+                . ((int) ($assinaturas['ras_pendentes'] ?? 0) + (int) ($assinaturas['ras_rascunho'] ?? 0))
+                . ' RA(s) ainda pendentes.',
             'quantidade' => $faltamAss,
+            'metric_label' => 'aguardando assinatura',
+            'progresso_label' => $feitosEtapa . ' de ' . $total . ' já assinados · faltam ' . $faltamAss,
             'cta_label' => 'Acompanhar assinaturas (' . $faltamAss . ')',
             'cta_href' => '/rh/medicao?' . $qs . '&filtro=assinaturas',
             'secondary_href' => '/rh/medicao?' . $qs,
-            'bloqueio_nota' => null,
             'tom' => !empty($assinaturas['em_atraso']) ? 'warning' : 'brand',
             'total' => $total,
             'concluidos' => $concluidos,
             'pct' => $pct,
             'pronto_dossie' => false,
-            'barra' => $barra,
+            'etapa_atual' => 'assinaturas',
+        ], $barra);
+    }
+
+    /**
+     * @param list<array<string,mixed>> $colaboradores
+     * @return array{prontos:int,bloqueados:int,na_fila:int}
+     */
+    private function contarFilaEmail(array $colaboradores): array
+    {
+        $prontos = 0;
+        $bloqueados = 0;
+        foreach ($colaboradores as $c) {
+            if (!$this->pertenceAoGargalo($c, 'email')) {
+                continue;
+            }
+            if (self::diagnosticarFalhaEmail($c) !== null) {
+                $bloqueados++;
+            } else {
+                $prontos++;
+            }
+        }
+
+        return [
+            'prontos' => $prontos,
+            'bloqueados' => $bloqueados,
+            'na_fila' => $prontos + $bloqueados,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @param list<array<string,mixed>> $barra
+     * @return array<string,mixed>
+     */
+    private function montarHeroPayload(array $payload, array $barra): array
+    {
+        $total = (int) ($payload['total'] ?? 0);
+        $etapaAtual = $payload['etapa_atual'] ?? null;
+        $barraOut = [];
+        foreach ($barra as $st) {
+            $atual = is_string($etapaAtual) && (string) $st['key'] === $etapaAtual;
+            $barraOut[] = [
+                'num' => (int) $st['num'],
+                'key' => (string) $st['key'],
+                'label' => (string) $st['label'],
+                'feitos' => (int) $st['feitos'],
+                'pct' => (int) $st['pct'],
+                'atual' => $atual,
+                'rotulo' => $total > 0
+                    ? ((int) $st['feitos'] . '/' . $total)
+                    : (string) (int) $st['feitos'],
+            ];
+        }
+
+        return array_merge([
+            'metric_label' => null,
+            'progresso_label' => null,
+            'splits' => [],
+            'cta_secundario_label' => null,
+            'cta_secundario_href' => null,
+            'secondary_href' => null,
+            'bloqueio_nota' => null,
+            'bloqueio_href' => null,
+            'barra' => $barraOut,
+            'etapa_atual' => $etapaAtual,
+        ], $payload, [
+            'barra' => $barraOut,
+        ]);
     }
 
     /**

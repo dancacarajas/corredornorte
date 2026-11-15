@@ -67,7 +67,7 @@ final class HomeController
             'pageTitle' => 'Visão geral',
             'pageSubtitle' => 'Exceções, gargalos e destravamento do fechamento',
             'activeMenu' => 'dashboard',
-            'extraCss' => ['css/dashboard.css?v=p0-20261114'],
+            'extraCss' => ['css/dashboard.css?v=hero-leitura-20261114'],
             'dbOk' => $dbOk,
             'painel' => $painel,
             'periodoLabel' => PeriodoPonto::rotulo($periodo),

@@ -145,41 +145,75 @@ $assBadge = (int) ($ass['total'] ?? 0) === 0
                 <div class="dash-hero-metric">
                     <span class="dash-hero-num"><?= (int) ($gargalo['quantidade'] ?? 0) ?></span>
                     <span class="dash-hero-unit">
-                        <?php if (!empty($gargalo['pronto_dossie'])): ?>
+                        <?php if (!empty($gargalo['metric_label'])): ?>
+                            <?= View::e((string) $gargalo['metric_label']) ?>
+                        <?php elseif (!empty($gargalo['pronto_dossie'])): ?>
                             de <?= (int) $gargalo['total'] ?> prontos (100%)
-                        <?php elseif ((int) $gargalo['total'] > 0): ?>
-                            na fila desta etapa · <?= (int) $gargalo['pct'] ?>% médio da esteira
                         <?php else: ?>
                             espelhos a gerar
                         <?php endif; ?>
                     </span>
                 </div>
+
+                <?php if (!empty($gargalo['progresso_label'])): ?>
+                    <p class="dash-hero-progress"><?= View::e((string) $gargalo['progresso_label']) ?></p>
+                <?php endif; ?>
+
+                <?php
+                $splits = is_array($gargalo['splits'] ?? null) ? $gargalo['splits'] : [];
+                $splits = array_values(array_filter(
+                    $splits,
+                    static fn(array $s): bool => (int) ($s['valor'] ?? 0) > 0 || ($s['tom'] ?? '') === 'danger'
+                ));
+                ?>
+                <?php if ($splits !== []): ?>
+                    <div class="dash-hero-splits" aria-label="Prontos versus bloqueados">
+                        <?php foreach ($splits as $sp): ?>
+                            <div class="dash-hero-split is-<?= View::e((string) ($sp['tom'] ?? 'muted')) ?>">
+                                <span class="dash-hero-split-num"><?= (int) ($sp['valor'] ?? 0) ?></span>
+                                <span class="dash-hero-split-label"><?= View::e((string) ($sp['label'] ?? '')) ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <?php if (!empty($gargalo['barra']) && (int) ($gargalo['total'] ?? 0) > 0): ?>
-                <div class="dash-pipe" aria-label="Progresso por etapa da Medição">
-                    <?php foreach ($gargalo['barra'] as $st): ?>
-                        <div class="dash-pipe-step <?= (int) $st['pct'] >= 100 ? 'is-full' : '' ?>"
-                             title="<?= View::e($st['num'] . '. ' . $st['label'] . ': ' . $st['feitos'] . '/' . $gargalo['total']) ?>">
-                            <div class="dash-pipe-track">
-                                <span class="dash-pipe-fill" style="width: <?= max(0, min(100, (int) $st['pct'])) ?>%"></span>
+                <div class="dash-pipe-wrap">
+                    <div class="dash-pipe-legend">Feitos / total por etapa</div>
+                    <div class="dash-pipe" aria-label="Progresso por etapa da Medição (feitos de <?= (int) $gargalo['total'] ?>)">
+                        <?php foreach ($gargalo['barra'] as $st): ?>
+                            <div class="dash-pipe-step <?= (int) $st['pct'] >= 100 ? 'is-full' : '' ?> <?= !empty($st['atual']) ? 'is-atual' : '' ?>"
+                                 title="<?= View::e($st['num'] . '. ' . $st['label'] . ': ' . ($st['rotulo'] ?? ($st['feitos'] . '/' . $gargalo['total'])) . ' feitos') ?>">
+                                <div class="dash-pipe-track">
+                                    <span class="dash-pipe-fill" style="width: <?= max(0, min(100, (int) $st['pct'])) ?>%"></span>
+                                </div>
+                                <span class="dash-pipe-num">E<?= (int) $st['num'] ?> · <?= View::e((string) ($st['rotulo'] ?? $st['feitos'])) ?></span>
                             </div>
-                            <span class="dash-pipe-num">E<?= (int) $st['num'] ?> · <?= (int) $st['feitos'] ?></span>
-                        </div>
-                    <?php endforeach; ?>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
             <?php endif; ?>
 
             <div class="dash-hero-foot">
                 <?php if (!empty($gargalo['bloqueio_nota'])): ?>
                     <div class="dash-hero-blocker">
-                        <span>Trava paralela: <?= View::e((string) $gargalo['bloqueio_nota']) ?></span>
+                        <?php if (!empty($gargalo['bloqueio_href'])): ?>
+                            <a href="<?= View::e((string) $gargalo['bloqueio_href']) ?>"><?= View::e((string) $gargalo['bloqueio_nota']) ?></a>
+                        <?php else: ?>
+                            <span><?= View::e((string) $gargalo['bloqueio_nota']) ?></span>
+                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
                 <div class="dash-hero-actions">
                     <a class="btn btn-primary" href="<?= View::e((string) $gargalo['cta_href']) ?>">
                         <?= View::e((string) $gargalo['cta_label']) ?>
                     </a>
+                    <?php if (!empty($gargalo['cta_secundario_href']) && !empty($gargalo['cta_secundario_label'])): ?>
+                        <a class="btn btn-secondary btn-sm" href="<?= View::e((string) $gargalo['cta_secundario_href']) ?>">
+                            <?= View::e((string) $gargalo['cta_secundario_label']) ?>
+                        </a>
+                    <?php endif; ?>
                     <?php if (!empty($gargalo['secondary_href'])): ?>
                         <a class="btn btn-ghost btn-sm" href="<?= View::e((string) $gargalo['secondary_href']) ?>">
                             Abrir Medição completa
