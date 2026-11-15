@@ -69,6 +69,14 @@ SVG;
                     </a>
                 </li>
                 <?php endif; ?>
+                <?php if ($can('dashboard.ver')): ?>
+                <li>
+                    <a class="nav-link<?= $isActive('mapa-sistema') ?>" href="/ui/mapa-sistema">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8.2 6h7.6M6 8.2v7.6M18 8.2v7.6M8.2 18h7.6"/></svg>
+                        Mapa do sistema
+                    </a>
+                </li>
+                <?php endif; ?>
             </ul>
         </div>
 
