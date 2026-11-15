@@ -9,6 +9,7 @@ use App\Helpers\Db;
 use App\Helpers\View;
 use App\Services\CalculoPontoService;
 use App\Services\MotorPontoService;
+use App\Services\PainelExcecoesService;
 use App\Services\PeriodoPonto;
 use PDO;
 use PDOException;
@@ -25,6 +26,8 @@ final class PontoController
         $dataFim = $periodo['fim'];
         $busca = trim((string) ($_GET['q'] ?? ''));
         $filtroStatus = trim((string) ($_GET['status'] ?? ''));
+        $filtroRaw = trim((string) ($_GET['filtro'] ?? ''));
+        $filtroEspecial = in_array($filtroRaw, ['divergencia', 'sem_espelho'], true) ? $filtroRaw : '';
         $podeGerar = false;
         try {
             $this->assertPeriodoGeracao($dataInicio, $dataFim);
@@ -34,6 +37,7 @@ final class PontoController
         }
         $avisoPeriodo = $periodo['aviso'];
         $espelhos = [];
+        $faltantesSemEspelho = [];
         $periodoGerado = null;
         $resumo = [
             'total' => 0,
@@ -113,12 +117,37 @@ final class PontoController
                     $hePorColab = [];
                 }
 
+                $espelhosComDivergencia = [];
+                if ($filtroEspecial === 'divergencia') {
+                    try {
+                        $divStmt = $pdo->prepare(
+                            "SELECT DISTINCT d.espelho_id
+                             FROM ponto_divergencias d
+                             INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                             WHERE pp.data_inicio = :ini AND pp.data_fim = :fim
+                               AND d.status IN ('aberta', 'em_analise')"
+                        );
+                        $divStmt->execute(['ini' => $dataInicio, 'fim' => $dataFim]);
+                        foreach ($divStmt->fetchAll(PDO::FETCH_COLUMN) ?: [] as $eid) {
+                            $espelhosComDivergencia[(int) $eid] = true;
+                        }
+                    } catch (Throwable) {
+                        $espelhosComDivergencia = [];
+                    }
+                }
+
+                $idsComEspelho = [];
                 foreach ($stmt->fetchAll() as $row) {
                     $status = (string) ($row['status'] ?? 'em_aberto');
                     $cid = (int) $row['colaborador_id'];
+                    $idsComEspelho[$cid] = true;
                     $row['he_aprovadas'] = (int) ($hePorColab[$cid]['aprovadas'] ?? 0);
                     $row['he_pendentes'] = (int) ($hePorColab[$cid]['pendentes'] ?? 0);
 
+                    if ($filtroEspecial === 'divergencia' && !isset($espelhosComDivergencia[(int) $row['id']])) {
+                        continue;
+                    }
                     if ($busca !== '') {
                         $hay = mb_strtolower(
                             (string) $row['nome'] . ' ' . (string) $row['matricula'] . ' '
@@ -151,6 +180,21 @@ final class PontoController
                     } else {
                         $resumo['abertos']++;
                     }
+                }
+            } else {
+                $idsComEspelho = [];
+            }
+
+            if ($filtroEspecial === 'sem_espelho') {
+                try {
+                    $faltantesSemEspelho = PainelExcecoesService::listarColaboradoresSemEspelho(
+                        $pdo,
+                        $dataInicio,
+                        $dataFim,
+                        $idsComEspelho
+                    );
+                } catch (Throwable) {
+                    $faltantesSemEspelho = [];
                 }
             }
         }
@@ -191,6 +235,8 @@ final class PontoController
             'periodoJaGerado' => $periodoGerado !== null,
             'busca' => $busca,
             'filtroStatus' => $filtroStatus,
+            'filtroEspecial' => $filtroEspecial,
+            'faltantesSemEspelho' => $faltantesSemEspelho,
             'atalhosPeriodo' => $this->atalhosPeriodo(),
         ]);
     }

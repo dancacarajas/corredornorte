@@ -25,6 +25,7 @@ final class EmailTemplateService
     public static function catalog(): array
     {
         $folhaVars = ['nome', 'matricula', 'periodo', 'competencia', 'codigo', 'portal_url', 'matricula_linha', 'codigo_linha', 'cta_bloco', 'link_fallback', 'tentativa'];
+        $cobrancaVars = ['nome', 'matricula', 'periodo', 'competencia', 'codigo', 'portal_url', 'matricula_linha', 'codigo_linha', 'cta_bloco', 'link_fallback', 'prazo_limite', 'nivel', 'documento_tipo'];
 
         return [
             'folha.envio_colaborador' => [
@@ -45,6 +46,24 @@ final class EmailTemplateService
                 'trigger' => 'Botão “Enviar lembrete” na folha (status enviado, sem assinar)',
                 'vars' => $folhaVars,
             ],
+            'folha.cobranca_1' => [
+                'label' => 'Cobrança 1 — Folha (dia 1)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron manhã — 1º dia útil após fechamento do período',
+                'vars' => $cobrancaVars,
+            ],
+            'folha.cobranca_2' => [
+                'label' => 'Cobrança 2 — Folha (dia 2 manhã)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron manhã — 2º dia útil (último dia do prazo)',
+                'vars' => $cobrancaVars,
+            ],
+            'folha.cobranca_3' => [
+                'label' => 'Cobrança 3 — Folha (prazo final)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron tarde — 2º dia útil (prazo final hoje)',
+                'vars' => $cobrancaVars,
+            ],
             'folha.divergencia_aviso_rh' => [
                 'label' => 'Divergência reportada (RH)',
                 'group' => 'Folha de ponto',
@@ -56,6 +75,24 @@ final class EmailTemplateService
                 'group' => 'Folha de ponto',
                 'trigger' => 'Colaborador conclui a assinatura eletrônica',
                 'vars' => ['nome', 'matricula', 'periodo', 'codigo', 'verificar_url', 'cta_bloco', 'link_fallback'],
+            ],
+            'ra.cobranca_1' => [
+                'label' => 'Cobrança 1 — RA (dia 1)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron manhã — 1º dia útil após fechamento (RA pendente)',
+                'vars' => $cobrancaVars,
+            ],
+            'ra.cobranca_2' => [
+                'label' => 'Cobrança 2 — RA (dia 2 manhã)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron manhã — 2º dia útil (RA pendente)',
+                'vars' => $cobrancaVars,
+            ],
+            'ra.cobranca_3' => [
+                'label' => 'Cobrança 3 — RA (prazo final)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron tarde — 2º dia útil (prazo final RA)',
+                'vars' => $cobrancaVars,
             ],
             'sistema.email_teste' => [
                 'label' => 'Teste de conexão',
@@ -123,6 +160,102 @@ HTML,
 {{link_fallback}}
 HTML,
                 'rodape' => $rodapePadrao,
+            ],
+            'folha.cobranca_1' => [
+                'assunto' => 'Assinatura pendente — Folha de Ponto ({{competencia}})',
+                'titulo' => 'Assinatura pendente',
+                'texto' => "Oi {{nome}},\n\nO período {{periodo}} foi encerrado e sua Folha de Ponto ainda não foi assinada.\nPrazo para assinatura: {{prazo_limite}} (2 dias úteis após o fechamento).{{codigo_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>O período <strong>{{periodo}}</strong> foi encerrado e sua <strong>Folha de Ponto</strong> ainda aguarda assinatura eletrônica.</p>
+<p>O prazo máximo é <strong>{{prazo_limite}}</strong> (2 dias úteis após o fechamento). Fora disso, a entrega da medição atrasa.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Assine agora pelo botão abaixo.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática — dia 1 do prazo.',
+            ],
+            'folha.cobranca_2' => [
+                'assunto' => 'Urgente — assine sua Folha de Ponto hoje ({{competencia}})',
+                'titulo' => 'Último dia do prazo',
+                'texto' => "Oi {{nome}},\n\nHoje ({{prazo_limite}}) é o último dia do prazo para assinar sua Folha de Ponto ({{periodo}}).\nApós essa data a entrega da medição fica atrasada.{{codigo_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p><strong>Hoje ({{prazo_limite}}) é o último dia</strong> do prazo para assinar sua Folha de Ponto do período <strong>{{periodo}}</strong>.</p>
+<p>Depois disso a entrega da medição fica atrasada.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Assine ainda hoje.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática — dia 2 (manhã).',
+            ],
+            'folha.cobranca_3' => [
+                'assunto' => 'PRAZO FINAL hoje — Folha de Ponto ({{competencia}})',
+                'titulo' => 'Prazo final hoje',
+                'texto' => "Oi {{nome}},\n\nPRAZO FINAL: assine sua Folha de Ponto ({{periodo}}) ainda hoje ({{prazo_limite}}).\nSem a assinatura a medição atrasa.{{codigo_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p><strong>Prazo final hoje ({{prazo_limite}})</strong>: sua Folha de Ponto do período <strong>{{periodo}}</strong> ainda não foi assinada.</p>
+<p>Sem essa assinatura a entrega da medição atrasa.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Assine agora.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática — prazo final (tarde).',
+            ],
+            'ra.cobranca_1' => [
+                'assunto' => 'Assinatura pendente — Relatório de Atividades ({{competencia}})',
+                'titulo' => 'Assinatura pendente — RA',
+                'texto' => "Oi {{nome}},\n\nO período {{periodo}} foi encerrado e seu Relatório de Atividades ainda não foi assinado.\nPrazo para assinatura: {{prazo_limite}} (2 dias úteis após o fechamento).{{codigo_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>O período <strong>{{periodo}}</strong> foi encerrado e seu <strong>Relatório de Atividades</strong> ainda aguarda assinatura eletrônica.</p>
+<p>O prazo máximo é <strong>{{prazo_limite}}</strong> (2 dias úteis após o fechamento). Fora disso, a entrega da medição atrasa.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Assine agora pelo botão abaixo.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática RA — dia 1 do prazo.',
+            ],
+            'ra.cobranca_2' => [
+                'assunto' => 'Urgente — assine seu Relatório de Atividades hoje ({{competencia}})',
+                'titulo' => 'Último dia do prazo — RA',
+                'texto' => "Oi {{nome}},\n\nHoje ({{prazo_limite}}) é o último dia do prazo para assinar seu Relatório de Atividades ({{periodo}}).\nApós essa data a entrega da medição fica atrasada.{{codigo_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p><strong>Hoje ({{prazo_limite}}) é o último dia</strong> do prazo para assinar seu Relatório de Atividades do período <strong>{{periodo}}</strong>.</p>
+<p>Depois disso a entrega da medição fica atrasada.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Assine ainda hoje.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática RA — dia 2 (manhã).',
+            ],
+            'ra.cobranca_3' => [
+                'assunto' => 'PRAZO FINAL hoje — Relatório de Atividades ({{competencia}})',
+                'titulo' => 'Prazo final hoje — RA',
+                'texto' => "Oi {{nome}},\n\nPRAZO FINAL: assine seu Relatório de Atividades ({{periodo}}) ainda hoje ({{prazo_limite}}).\nSem a assinatura a medição atrasa.{{codigo_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p><strong>Prazo final hoje ({{prazo_limite}})</strong>: seu Relatório de Atividades do período <strong>{{periodo}}</strong> ainda não foi assinado.</p>
+<p>Sem essa assinatura a entrega da medição atrasa.</p>
+{{matricula_linha}}
+{{codigo_linha}}
+<p>Assine agora.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática RA — prazo final (tarde).',
             ],
             'folha.divergencia_aviso_rh' => [
                 'assunto' => 'Divergência na folha — {{nome}} ({{periodo}})',
@@ -291,11 +424,26 @@ HTML,
             'portalUrl' => '#preview-assinatura',
             'tentativa' => '2',
         ];
+        $cobrancaSample = $folhaSample + [
+            'prazo_limite' => '17/11/2026',
+            'nivel' => '1',
+            'documento_tipo' => 'Folha de Ponto',
+            'cta_label' => 'ASSINAR AGORA',
+        ];
 
         return match ($key) {
             'folha.envio_colaborador',
             'folha.reenvio_colaborador',
             'folha.lembrete_assinatura' => $folhaSample,
+            'folha.cobranca_1',
+            'folha.cobranca_2',
+            'folha.cobranca_3' => $cobrancaSample,
+            'ra.cobranca_1',
+            'ra.cobranca_2',
+            'ra.cobranca_3' => array_merge($cobrancaSample, [
+                'documento_tipo' => 'Relatório de Atividades',
+                'portalUrl' => '#preview-assinatura-ra',
+            ]),
             'folha.divergencia_aviso_rh' => [
                 'nome' => 'Jarbas',
                 'matricula' => '12345',
@@ -359,7 +507,7 @@ HTML,
     {
         $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
-        if (str_starts_with($key, 'folha.')) {
+        if (str_starts_with($key, 'folha.') || str_starts_with($key, 'ra.')) {
             $nome = trim((string) ($vars['nome'] ?? 'Colaborador'));
             $matricula = trim((string) ($vars['matricula'] ?? ''));
             $periodo = trim((string) ($vars['periodo'] ?? ''));
@@ -368,6 +516,9 @@ HTML,
             $motivo = trim((string) ($vars['motivo'] ?? ''));
             $dataOcorrencia = trim((string) ($vars['data_ocorrencia'] ?? ''));
             $tentativa = trim((string) ($vars['tentativa'] ?? ''));
+            $prazoLimite = trim((string) ($vars['prazo_limite'] ?? ''));
+            $nivel = trim((string) ($vars['nivel'] ?? ''));
+            $documentoTipo = trim((string) ($vars['documento_tipo'] ?? ''));
             $portalUrl = trim((string) ($vars['portalUrl'] ?? $vars['portal_url'] ?? $vars['link_rh'] ?? $vars['verificar_url'] ?? ''));
             $ctaLabel = trim((string) ($vars['cta_label'] ?? 'ABRA AGORA'));
             if ($ctaLabel === '') {
@@ -381,6 +532,9 @@ HTML,
             }
             if ($dataOcorrencia === '') {
                 $dataOcorrencia = 'Não informada';
+            }
+            if ($documentoTipo === '') {
+                $documentoTipo = str_starts_with($key, 'ra.') ? 'Relatório de Atividades' : 'Folha de Ponto';
             }
 
             $cta = '';
@@ -401,6 +555,9 @@ HTML,
                 'motivo' => $motivo,
                 'data_ocorrencia' => $dataOcorrencia,
                 'tentativa' => $tentativa,
+                'prazo_limite' => $prazoLimite,
+                'nivel' => $nivel,
+                'documento_tipo' => $documentoTipo,
                 'portal_url' => $portalUrl,
                 'link_rh' => $portalUrl,
                 'verificar_url' => $portalUrl,

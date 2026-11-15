@@ -191,6 +191,7 @@ def main() -> int:
             f"if [ -f {bak}/config/app.local.php ]; then cp -a {bak}/config/app.local.php {remote_root}/config/; fi; "
             f"if [ -f {bak}/storage/install.lock ]; then cp -a {bak}/storage/install.lock {remote_root}/storage/; fi; "
             f"if [ -f {bak}/storage/app.key ]; then cp -a {bak}/storage/app.key {remote_root}/storage/; fi; "
+            f"if [ -f {bak}/storage/cron.secret ]; then cp -a {bak}/storage/cron.secret {remote_root}/storage/; fi; "
             f"for d in uploads assinaturas logs; do "
             f"  if [ -d {bak}/storage/$d ]; then cp -a {bak}/storage/$d/. {remote_root}/storage/$d/; fi; "
             f"done; "

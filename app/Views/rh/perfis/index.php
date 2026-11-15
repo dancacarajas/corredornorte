@@ -66,8 +66,12 @@ $msgs = [
                                 <?= View::e((string) ($p['status'] ?? 'ativo')) ?>
                             </span>
                         </td>
-                        <td>
+                        <td style="white-space:nowrap;">
                             <a class="btn btn-ghost btn-sm" href="/rh/perfis/<?= (int) $p['id'] ?>/editar">Editar</a>
+                            <button class="btn btn-ghost btn-sm" type="button"
+                                    onclick="window.duplicarPerfil && window.duplicarPerfil(<?= (int) $p['id'] ?>, <?= json_encode((string) $p['codigo'], JSON_UNESCAPED_UNICODE) ?>, <?= json_encode((string) $p['nome'], JSON_UNESCAPED_UNICODE) ?>)">
+                                Duplicar
+                            </button>
                         </td>
                     </tr>
                 <?php endforeach; ?>
@@ -76,3 +80,25 @@ $msgs = [
         </div>
     <?php endif; ?>
 </section>
+
+<form id="perfilDuplicarForm" method="post" action="" style="display:none;">
+    <?= \App\Helpers\Csrf::field() ?>
+    <input type="hidden" name="codigo" id="dupCodigo">
+    <input type="hidden" name="nome" id="dupNome">
+</form>
+<script>
+window.duplicarPerfil = function (id, codigoBase, nomeBase) {
+  const codigo = window.prompt('Código do novo perfil:', String(codigoBase || 'perfil') + '_copia');
+  if (!codigo) return;
+  const nome = window.prompt('Nome do novo perfil:', String(nomeBase || 'Perfil') + ' (cópia)');
+  if (!nome) return;
+  const form = document.getElementById('perfilDuplicarForm');
+  const c = document.getElementById('dupCodigo');
+  const n = document.getElementById('dupNome');
+  if (!form || !c || !n) return;
+  form.action = '/rh/perfis/' + id + '/duplicar';
+  c.value = codigo;
+  n.value = nome;
+  form.submit();
+};
+</script>

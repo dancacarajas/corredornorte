@@ -33,6 +33,7 @@ final class PerfilController
             'pageTitle' => 'Perfis',
             'pageSubtitle' => 'Papéis e permissões de acesso',
             'activeMenu' => 'perfis',
+            'extraCss' => ['css/perfis.css?v=perfis-list-20261114'],
             'topbarActions' => $topbarActions,
             'dbOk' => $dbOk,
             'perfis' => $perfis,
@@ -74,10 +75,31 @@ final class PerfilController
             'pageTitle' => $perfil ? 'Editar perfil' : 'Novo perfil',
             'pageSubtitle' => $perfil ? (string) $perfil['codigo'] : 'Defina o papel e as permissões',
             'activeMenu' => 'perfis',
+            'extraCss' => ['css/perfis.css?v=perfis-list-20261114'],
             'perfil' => $perfil,
             'permissoes' => $permissoes,
             'error' => null,
         ]);
+    }
+
+    public function duplicar(string $id = ''): void
+    {
+        Auth::requirePermission('perfis.gerenciar');
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            header('Location: /rh/perfis?erro=' . rawurlencode('MySQL indisponível'));
+            exit;
+        }
+        try {
+            $origemId = (int) $id;
+            $codigo = (string) ($_POST['codigo'] ?? '');
+            $nome = (string) ($_POST['nome'] ?? '');
+            (new PerfilService($pdo))->duplicar($origemId, $codigo, $nome, Auth::id());
+            header('Location: /rh/perfis?ok=criado');
+        } catch (Throwable $e) {
+            header('Location: /rh/perfis?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
     }
 
     public function store(): void
@@ -132,6 +154,7 @@ final class PerfilController
                 'pageTitle' => $id ? 'Editar perfil' : 'Novo perfil',
                 'pageSubtitle' => 'Corrija os dados e salve novamente',
                 'activeMenu' => 'perfis',
+                'extraCss' => ['css/perfis.css?v=perfis-list-20261114'],
                 'perfil' => $perfil,
                 'permissoes' => $permissoes,
                 'error' => $e->getMessage(),

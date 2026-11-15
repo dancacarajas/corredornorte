@@ -6,24 +6,28 @@ namespace App\Controllers;
 
 use App\Helpers\Db;
 use App\Helpers\View;
+use App\Services\MedicaoService;
+use App\Services\PainelExcecoesService;
 use App\Services\PeriodoPonto;
 use DateTimeImmutable;
 use PDO;
 use RuntimeException;
+use Throwable;
 
 final class HomeController
 {
     public function index(): void
     {
         $pdo = Db::tryConnection();
+        $dbOk = $pdo instanceof PDO;
         $hoje = new DateTimeImmutable('today');
         $anoAtual = (int) $hoje->format('Y');
         $mesAtual = (int) $hoje->format('n');
         $erroPeriodo = null;
         $periodosGerados = [];
 
-        if ($pdo instanceof PDO) {
-            $periodosGerados = $this->listarPeriodosGerados($pdo);
+        if ($dbOk) {
+            $periodosGerados = (new MedicaoService($pdo))->listarPeriodosGerados(24);
         }
 
         $getIni = isset($_GET['data_inicio']) ? (string) $_GET['data_inicio'] : null;
@@ -47,159 +51,32 @@ final class HomeController
             $erroPeriodo = $erro->getMessage();
         }
 
-        $kpis = array_fill_keys(['esperadas', 'tratadas', 'fechadas', 'enviadas', 'assinadas'], 0);
-        $colaboradores = [];
-
-        if ($pdo instanceof PDO) {
-            $lista = $pdo->prepare(
-                "SELECT c.id, c.matricula, c.nome, loc.municipio, loc.uf, l.codigo AS lotacao_codigo
-                 FROM rh_colaboradores c
-                 LEFT JOIN rh_colaborador_lotacoes cl ON cl.id = (
-                     SELECT vinculo.id FROM rh_colaborador_lotacoes vinculo
-                     WHERE vinculo.colaborador_id = c.id AND vinculo.vigencia_inicio <= :fim
-                       AND (vinculo.vigencia_fim IS NULL OR vinculo.vigencia_fim >= :inicio)
-                     ORDER BY vinculo.vigencia_inicio DESC, vinculo.id DESC LIMIT 1
-                 )
-                 LEFT JOIN rh_lotacoes l ON l.id = cl.lotacao_id
-                 LEFT JOIN rh_localidades loc ON loc.id = l.localidade_id
-                 WHERE c.status = 'ativo'
-                 ORDER BY c.nome, c.id"
-            );
-            $lista->execute(['inicio' => $periodo['data_inicio'], 'fim' => $periodo['data_fim']]);
-            $colaboradores = $lista->fetchAll();
-            $kpis['esperadas'] = count($colaboradores);
-
-            $espelhos = $pdo->prepare(
-                "SELECT e.id, e.colaborador_id, e.status, pp.data_inicio AS inicio, pp.data_fim AS fim
-                 FROM ponto_espelhos e
-                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
-                 INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id AND c.status = 'ativo'
-                 WHERE pp.data_inicio <= ? AND pp.data_fim >= ?
-                 ORDER BY pp.data_inicio ASC, pp.data_fim ASC"
-            );
-            $espelhos->execute([$periodo['data_fim'], $periodo['data_inicio']]);
-            $espelhosPorPessoa = [];
-            foreach ($espelhos as $espelho) {
-                $espelhosPorPessoa[(int) $espelho['colaborador_id']][] = $espelho;
+        $painel = null;
+        if ($dbOk) {
+            try {
+                $painel = (new PainelExcecoesService($pdo))->carregar(
+                    (string) $periodo['data_inicio'],
+                    (string) $periodo['data_fim']
+                );
+            } catch (Throwable $e) {
+                $erroPeriodo = $erroPeriodo ?? $e->getMessage();
             }
-
-            $folhas = $pdo->prepare(
-                "SELECT e.colaborador_id, d.status,
-                        COALESCE(d.periodo_inicio, pp.data_inicio) AS inicio,
-                        COALESCE(d.periodo_fim, pp.data_fim) AS fim
-                 FROM documentos d
-                 INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
-                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
-                 INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id AND c.status = 'ativo'
-                 WHERE d.tipo = 'folha_ponto' AND d.status IN ('enviado', 'assinado')
-                 HAVING inicio <= :fim AND fim >= :inicio
-                 ORDER BY inicio, fim"
-            );
-            $folhas->execute(['inicio' => $periodo['data_inicio'], 'fim' => $periodo['data_fim']]);
-            $folhasPorPessoa = [];
-            $assinadasPorPessoa = [];
-            foreach ($folhas as $folha) {
-                $id = (int) $folha['colaborador_id'];
-                $folhasPorPessoa[$id][] = $folha;
-                if ($folha['status'] === 'assinado') {
-                    $assinadasPorPessoa[$id][] = $folha;
-                }
-            }
-
-            $statusTratados = ['em_tratamento', 'conferido', 'fechado', 'enviado', 'assinado'];
-            $statusFechados = ['fechado', 'enviado', 'assinado'];
-            foreach ($colaboradores as &$pessoa) {
-                $id = (int) $pessoa['id'];
-                $mensais = $espelhosPorPessoa[$id] ?? [];
-                $pessoa['espelho_id'] = $mensais !== [] ? $mensais[count($mensais) - 1]['id'] : null;
-                $tratados = array_values(array_filter(
-                    $mensais,
-                    static fn(array $m): bool => in_array((string) $m['status'], $statusTratados, true)
-                ));
-                $fechados = array_values(array_filter(
-                    $mensais,
-                    static fn(array $m): bool => in_array((string) $m['status'], $statusFechados, true)
-                ));
-                $kpis['tratadas'] += (int) $this->cobrePeriodo($tratados, $periodo);
-                $kpis['fechadas'] += (int) $this->cobrePeriodo($fechados, $periodo);
-                $pessoa['periodo_enviado'] = $this->cobrePeriodo($folhasPorPessoa[$id] ?? [], $periodo);
-                $pessoa['periodo_assinado'] = $this->cobrePeriodo($assinadasPorPessoa[$id] ?? [], $periodo);
-                $kpis['enviadas'] += (int) $pessoa['periodo_enviado'];
-                $kpis['assinadas'] += (int) $pessoa['periodo_assinado'];
-            }
-            unset($pessoa);
         }
-
-        $divergenciasAbertas = $pdo instanceof PDO
-            ? \App\Services\AssinaturaEletronicaService::listarDivergenciasAbertas($pdo, 12)
-            : [];
 
         View::render('ui/dashboard', [
             'pageTitle' => 'Visão geral',
-            'pageSubtitle' => 'Assinaturas no período',
+            'pageSubtitle' => 'Exceções, gargalos e destravamento do fechamento',
             'activeMenu' => 'dashboard',
-            'dbOk' => $pdo instanceof PDO,
-            'kpis' => $kpis,
+            'extraCss' => ['css/dashboard.css?v=p0-20261114'],
+            'dbOk' => $dbOk,
+            'painel' => $painel,
             'periodoLabel' => PeriodoPonto::rotulo($periodo),
-            'dataInicio' => $periodo['data_inicio'],
-            'dataFim' => $periodo['data_fim'],
+            'dataInicio' => (string) $periodo['data_inicio'],
+            'dataFim' => (string) $periodo['data_fim'],
             'consultaPeriodo' => PeriodoPonto::consulta($periodo),
             'erroPeriodo' => $erroPeriodo,
-            'colaboradores' => $colaboradores,
             'periodosGerados' => $periodosGerados,
-            'divergenciasAbertas' => $divergenciasAbertas,
         ]);
-    }
-
-    /**
-     * Períodos com pelo menos um espelho gerado (mais recentes primeiro).
-     * @return list<array{id:int,data_inicio:string,data_fim:string,status:string,espelhos:int,label:string}>
-     */
-    private function listarPeriodosGerados(PDO $pdo): array
-    {
-        $rows = $pdo->query(
-            "SELECT pp.id, pp.data_inicio, pp.data_fim, pp.status,
-                    COUNT(e.id) AS espelhos
-             FROM ponto_periodos pp
-             INNER JOIN ponto_espelhos e ON e.periodo_id = pp.id
-             GROUP BY pp.id, pp.data_inicio, pp.data_fim, pp.status
-             ORDER BY pp.data_inicio DESC, pp.data_fim DESC, pp.id DESC
-             LIMIT 24"
-        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-        $out = [];
-        foreach ($rows as $row) {
-            $ini = (string) $row['data_inicio'];
-            $fim = (string) $row['data_fim'];
-            $out[] = [
-                'id' => (int) $row['id'],
-                'data_inicio' => $ini,
-                'data_fim' => $fim,
-                'status' => (string) $row['status'],
-                'espelhos' => (int) $row['espelhos'],
-                'label' => date('d/m/Y', strtotime($ini)) . ' a ' . date('d/m/Y', strtotime($fim)),
-            ];
-        }
-        return $out;
-    }
-
-    /** @param list<array{inicio:string,fim:string}> $folhas Vias em ordem de início */
-    private function cobrePeriodo(array $folhas, array $periodo): bool
-    {
-        $proximaData = $periodo['data_inicio'];
-        foreach ($folhas as $folha) {
-            if ($folha['inicio'] > $proximaData) {
-                break;
-            }
-            if ($folha['fim'] >= $periodo['data_fim']) {
-                return true;
-            }
-            if ($folha['fim'] >= $proximaData) {
-                $proximaData = (new DateTimeImmutable($folha['fim']))->modify('+1 day')->format('Y-m-d');
-            }
-        }
-
-        return false;
     }
 
     public function showcase(): void

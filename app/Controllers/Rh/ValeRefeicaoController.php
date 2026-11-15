@@ -6,6 +6,8 @@ namespace App\Controllers\Rh;
 
 use App\Helpers\Db;
 use App\Helpers\View;
+use App\Services\VrExcelExporter;
+use App\Services\VrPdfRenderer;
 use App\Services\VrService;
 use PDO;
 use RuntimeException;
@@ -16,61 +18,107 @@ final class ValeRefeicaoController
     public function index(): void
     {
         $pdo = Db::tryConnection();
-        $hoje = new \DateTimeImmutable('today');
-        $ref = ((int) $hoje->format('j') >= 16) ? $hoje : $hoje->modify('-1 month');
-        $defaultInicio = $ref->format('Y-m-16');
-        $defaultFim = $ref->modify('+1 month')->format('Y-m-15');
-        $dataInicio = (string) ($_GET['data_inicio'] ?? $defaultInicio);
-        $dataFim = (string) ($_GET['data_fim'] ?? $defaultFim);
         $editarId = (int) ($_GET['editar'] ?? 0);
         $verId = (int) ($_GET['ver'] ?? 0);
         $dbOk = $pdo instanceof PDO;
         $configs = [];
         $contratos = [];
-        $calculo = [];
         $cfgAtiva = null;
         $editando = null;
         $visualizando = null;
-        $erroCalc = null;
 
         if ($dbOk) {
             $svc = new VrService($pdo);
             try {
                 $configs = $svc->listarConfigs();
                 $contratos = $svc->listarContratos();
-                $cfgAtiva = $svc->configAtiva($dataInicio);
+                $cfgAtiva = $svc->configAtiva(date('Y-m-d'));
                 if ($editarId > 0) {
                     $editando = $svc->obterConfig($editarId);
                 }
                 if ($verId > 0) {
                     $visualizando = $svc->obterConfig($verId);
                 }
-                if (
-                    preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio)
-                    && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)
-                    && $cfgAtiva !== null
-                ) {
-                    $calculo = $svc->calcularPeriodo($dataInicio, $dataFim);
-                }
             } catch (Throwable $e) {
-                $erroCalc = $e->getMessage();
+                $_SESSION['vr_error'] = $e->getMessage();
             }
         }
 
         View::render('rh/vale_refeicao/index', [
-            'pageTitle' => 'Vale Refeição',
-            'pageSubtitle' => 'Valor por dia Remoto e cálculo por período',
-            'activeMenu' => 'vr',
+            'pageTitle' => 'Vale Refeição · Configuração',
+            'pageSubtitle' => 'Cadastre regras gerais ou por contrato',
+            'activeMenu' => 'vr-config',
+            'extraCss' => ['css/vr.css?v=vr-ui-20261114'],
             'dbOk' => $dbOk,
             'configs' => $configs,
             'contratos' => $contratos,
             'cfgAtiva' => $cfgAtiva,
             'editando' => $editando,
             'visualizando' => $visualizando,
+            'flash' => $_SESSION['vr_flash'] ?? null,
+            'error' => $_SESSION['vr_error'] ?? null,
+        ]);
+        unset($_SESSION['vr_flash'], $_SESSION['vr_error']);
+    }
+
+    public function relatorio(): void
+    {
+        [$dataInicio, $dataFim] = $this->periodoPadrao();
+        $dataInicio = (string) ($_GET['data_inicio'] ?? $dataInicio);
+        $dataFim = (string) ($_GET['data_fim'] ?? $dataFim);
+        $pdo = Db::tryConnection();
+        $dbOk = $pdo instanceof PDO;
+        $calculo = [];
+        $periodos = [];
+        $erroCalc = null;
+        $gerou = isset($_GET['data_inicio'], $_GET['data_fim']);
+
+        if ($dbOk) {
+            try {
+                $periodos = (new \App\Services\MedicaoService($pdo))->listarPeriodosGerados(24);
+                if (!$gerou && $periodos !== []) {
+                    $dataInicio = (string) $periodos[0]['data_inicio'];
+                    $dataFim = (string) $periodos[0]['data_fim'];
+                }
+            } catch (Throwable) {
+                $periodos = [];
+            }
+
+            if (
+                $gerou
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio)
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)
+            ) {
+                try {
+                    $calculo = (new VrService($pdo))->calcularPeriodo($dataInicio, $dataFim);
+                } catch (Throwable $e) {
+                    $erroCalc = $e->getMessage();
+                }
+            }
+        }
+
+        $qs = http_build_query(['data_inicio' => $dataInicio, 'data_fim' => $dataFim]);
+        $labelPeriodo = '';
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)) {
+            $labelPeriodo = date('d/m/Y', strtotime($dataInicio) ?: time())
+                . ' a '
+                . date('d/m/Y', strtotime($dataFim) ?: time());
+        }
+
+        View::render('rh/vale_refeicao/relatorio', [
+            'pageTitle' => 'Vale Refeição · Relatório',
+            'pageSubtitle' => 'Visualizar na tela, PDF ou Excel',
+            'activeMenu' => 'vr-relatorio',
+            'extraCss' => ['css/vr.css?v=vr-ui-20261114'],
+            'dbOk' => $dbOk,
             'calculo' => $calculo,
+            'periodos' => $periodos,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
+            'labelPeriodo' => $labelPeriodo,
+            'gerou' => $gerou,
             'erroCalc' => $erroCalc,
+            'qs' => $qs,
             'flash' => $_SESSION['vr_flash'] ?? null,
             'error' => $_SESSION['vr_error'] ?? null,
         ]);
@@ -85,6 +133,7 @@ final class ValeRefeicaoController
                 throw new RuntimeException('Banco indisponível.');
             }
             $id = (int) ($_POST['id'] ?? 0);
+            $nome = (string) ($_POST['nome'] ?? '');
             $valor = (float) str_replace(',', '.', (string) ($_POST['valor_dia'] ?? '0'));
             $tipo = (string) ($_POST['tipo'] ?? 'dias_trabalhados');
             $ini = (string) ($_POST['vigencia_inicio'] ?? date('Y-m-d'));
@@ -98,7 +147,8 @@ final class ValeRefeicaoController
                 $fim,
                 $todos,
                 $contratoIds,
-                $id > 0 ? $id : null
+                $id > 0 ? $id : null,
+                $nome
             );
             $_SESSION['vr_flash'] = $id > 0 ? 'Configuração atualizada.' : 'Configuração salva.';
         } catch (Throwable $e) {
@@ -128,19 +178,83 @@ final class ValeRefeicaoController
         exit;
     }
 
-    /**
-     * Escapa prefixos perigosos em células CSV contra CSV Formula Injection (=, +, -, @, tab, CR).
-     */
-    public static function csvSafeCell(string $value): string
+    public function exportarPdf(): void
     {
-        $trimmed = ltrim($value);
-        if ($trimmed !== '' && in_array($trimmed[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
-            return "'" . $value;
+        [$dataInicio, $dataFim, $calculo] = $this->carregarCalculoOuRedirecionar();
+        $path = sys_get_temp_dir() . '/vr_' . bin2hex(random_bytes(6)) . '.pdf';
+        try {
+            (new VrPdfRenderer())->render($calculo, [
+                'data_inicio' => $dataInicio,
+                'data_fim' => $dataFim,
+                'emitido' => date('d/m/Y H:i'),
+            ], $path);
+        } catch (Throwable $e) {
+            $_SESSION['vr_error'] = $e->getMessage();
+            header('Location: /rh/vale-refeicao/relatorio?' . http_build_query([
+                'data_inicio' => $dataInicio,
+                'data_fim' => $dataFim,
+            ]));
+            exit;
         }
-        return $value;
+
+        $filename = sprintf('vale_refeicao_%s_a_%s.pdf', $dataInicio, $dataFim);
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: inline; filename="' . $filename . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        header('Cache-Control: no-store');
+        readfile($path);
+        @unlink($path);
+        exit;
     }
 
+    public function exportarExcel(): void
+    {
+        [$dataInicio, $dataFim, $calculo] = $this->carregarCalculoOuRedirecionar();
+        try {
+            $path = (new VrExcelExporter())->gerarArquivo($calculo, [
+                'data_inicio' => $dataInicio,
+                'data_fim' => $dataFim,
+            ]);
+        } catch (Throwable $e) {
+            $_SESSION['vr_error'] = $e->getMessage();
+            header('Location: /rh/vale-refeicao/relatorio?' . http_build_query([
+                'data_inicio' => $dataInicio,
+                'data_fim' => $dataFim,
+            ]));
+            exit;
+        }
+
+        $filename = sprintf('vale_refeicao_%s_a_%s.xlsx', $dataInicio, $dataFim);
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        header('Cache-Control: no-store');
+        readfile($path);
+        @unlink($path);
+        exit;
+    }
+
+    /** @deprecated Mantido por compatibilidade de links antigos → Excel */
     public function exportarCsv(): void
+    {
+        $this->exportarExcel();
+    }
+
+    /**
+     * @return array{0:string,1:string}
+     */
+    private function periodoPadrao(): array
+    {
+        $hoje = new \DateTimeImmutable('today');
+        $ref = ((int) $hoje->format('j') >= 16) ? $hoje : $hoje->modify('-1 month');
+
+        return [$ref->format('Y-m-16'), $ref->modify('+1 month')->format('Y-m-15')];
+    }
+
+    /**
+     * @return array{0:string,1:string,2:list<array<string,mixed>>}
+     */
+    private function carregarCalculoOuRedirecionar(): array
     {
         $pdo = Db::tryConnection();
         $dataInicio = trim((string) ($_GET['data_inicio'] ?? ''));
@@ -150,44 +264,22 @@ final class ValeRefeicaoController
             || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio)
             || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)
         ) {
-            $_SESSION['vr_error'] = 'Informe um período válido para exportar CSV.';
-            header('Location: /rh/vale-refeicao');
+            $_SESSION['vr_error'] = 'Informe um período válido.';
+            header('Location: /rh/vale-refeicao/relatorio');
             exit;
         }
 
         try {
-            $svc = new VrService($pdo);
-            $calculo = $svc->calcularPeriodo($dataInicio, $dataFim);
+            $calculo = (new VrService($pdo))->calcularPeriodo($dataInicio, $dataFim);
         } catch (Throwable $e) {
             $_SESSION['vr_error'] = $e->getMessage();
-            header('Location: /rh/vale-refeicao?' . http_build_query(['data_inicio' => $dataInicio, 'data_fim' => $dataFim]));
+            header('Location: /rh/vale-refeicao/relatorio?' . http_build_query([
+                'data_inicio' => $dataInicio,
+                'data_fim' => $dataFim,
+            ]));
             exit;
         }
 
-        $filename = sprintf('vale_refeicao_%s_a_%s.csv', $dataInicio, $dataFim);
-        header('Content-Type: text/csv; charset=UTF-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
-        header('X-Content-Type-Options: nosniff');
-
-        $out = fopen('php://output', 'wb');
-        if ($out === false) {
-            exit;
-        }
-        // UTF-8 BOM para abertura limpa no Excel Windows PT-BR
-        fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, ['Colaborador', 'Matrícula', 'Status Relatório', 'Dias Remoto', 'Valor Dia (R$)', 'Total VR (R$)'], ';');
-        foreach ($calculo as $row) {
-            fputcsv($out, [
-                self::csvSafeCell((string) ($row['nome'] ?? '')),
-                self::csvSafeCell((string) ($row['matricula'] ?? '')),
-                self::csvSafeCell((string) ($row['status'] ?? '')),
-                (string) ((int) ($row['dias_remoto'] ?? 0)),
-                number_format((float) ($row['valor_dia'] ?? 0), 2, ',', '.'),
-                number_format((float) ($row['valor_vr'] ?? 0), 2, ',', '.'),
-            ], ';');
-        }
-        fclose($out);
-        exit;
+        return [$dataInicio, $dataFim, $calculo];
     }
 }
-

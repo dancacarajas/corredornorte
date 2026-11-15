@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS ra_dias (
 
 CREATE TABLE IF NOT EXISTS vr_config (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(120) NOT NULL DEFAULT '',
   valor_dia DECIMAL(10,2) NOT NULL,
   tipo ENUM('dias_trabalhados','dias_uteis') NOT NULL DEFAULT 'dias_trabalhados',
   vigencia_inicio DATE NOT NULL,

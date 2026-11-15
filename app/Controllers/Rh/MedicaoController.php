@@ -36,6 +36,10 @@ final class MedicaoController
         if ($filtro !== 'assinaturas' || !in_array($statusPonto, ['enviado', 'assinado'], true)) {
             $statusPonto = '';
         }
+        $subfiltro = strtolower(trim((string) ($_GET['subfiltro'] ?? '')));
+        if (!in_array($subfiltro, ['he_bloqueante', 'email_falha'], true)) {
+            $subfiltro = '';
+        }
 
         if ($dbOk) {
             $svc = new MedicaoService($pdo);
@@ -76,6 +80,7 @@ final class MedicaoController
             'dataFim' => $dataFim,
             'filtro' => $filtro,
             'statusPonto' => $statusPonto,
+            'subfiltro' => $subfiltro,
             'painel' => $painel,
             'relatorioEnvios' => $relatorioEnvios,
             'errosLote' => $_SESSION['medicao_errors_list'] ?? [],

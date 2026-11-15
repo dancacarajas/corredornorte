@@ -28,14 +28,21 @@ $resumo = $resumo ?? [
 ];
 $busca = $busca ?? '';
 $filtroStatus = $filtroStatus ?? '';
+$filtroEspecial = (string) ($filtroEspecial ?? '');
+$faltantesSemEspelho = is_array($faltantesSemEspelho ?? null) ? $faltantesSemEspelho : [];
 $atalhosPeriodo = $atalhosPeriodo ?? [];
 $calc = new CalculoPontoService();
 $fmt = static fn(int $min): string => $min > 0 ? $calc->fmt($min) : '—';
+$qsPeriodo = http_build_query([
+    'data_inicio' => $dataInicio,
+    'data_fim' => $dataFim,
+]);
 $qsBase = http_build_query(array_filter([
     'data_inicio' => $dataInicio,
     'data_fim' => $dataFim,
     'q' => $busca !== '' ? $busca : null,
     'status' => $filtroStatus !== '' ? $filtroStatus : null,
+    'filtro' => $filtroEspecial !== '' ? $filtroEspecial : null,
 ]));
 $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', strtotime($dataFim));
 ?>
@@ -54,10 +61,74 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
     </div>
 <?php endif; ?>
 <?php if (!empty($_GET['erro'])): ?>
-    <div class="alert alert-danger"><?= View::e((string) $_GET['erro']) ?></div>
+    <div class="alert alert-danger"><?= View::e((string) ($_GET['erro']) ) ?></div>
 <?php endif; ?>
 <?php if (!empty($avisoPeriodo)): ?>
     <div class="alert alert-warning"><?= View::e($avisoPeriodo) ?></div>
+<?php endif; ?>
+
+<?php if ($filtroEspecial === 'divergencia'): ?>
+    <div class="alert alert-warning" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+        <span>
+            <strong>Filtro ativo:</strong> exibindo apenas espelhos com revisão/divergência aberta em
+            <?= View::e($rotuloPeriodo) ?> (<?= (int) $resumo['total'] ?> encontrado<?= $resumo['total'] === 1 ? '' : 's' ?>).
+        </span>
+        <a class="btn btn-secondary btn-sm" href="/rh/ponto?<?= View::e($qsPeriodo) ?>">Limpar filtro</a>
+    </div>
+<?php elseif ($filtroEspecial === 'sem_espelho'): ?>
+    <section class="card" style="margin-bottom:14px;">
+        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+                <h2 class="card-title">Colaboradores ativos sem espelho no período</h2>
+                <p class="card-subtitle">
+                    <?= count($faltantesSemEspelho) ?> colaborador<?= count($faltantesSemEspelho) === 1 ? '' : 'es' ?> ativo<?= count($faltantesSemEspelho) === 1 ? '' : 's' ?> ainda sem cartão de ponto em <?= View::e($rotuloPeriodo) ?>.
+                </p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <?php if ($faltantesSemEspelho !== [] && $podeGerar): ?>
+                    <form method="post" action="/rh/ponto/gerar" style="display:inline;">
+                        <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+                        <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+                        <button class="btn btn-primary btn-sm" type="submit" data-ponto-gerar>Gerar espelhos faltantes</button>
+                    </form>
+                <?php endif; ?>
+                <a class="btn btn-secondary btn-sm" href="/rh/ponto?<?= View::e($qsPeriodo) ?>">Limpar filtro</a>
+            </div>
+        </div>
+        <?php if ($faltantesSemEspelho === []): ?>
+            <div class="card-body">
+                <div class="alert alert-success" style="margin:0;">Todos os colaboradores ativos já possuem espelho gerado neste período.</div>
+            </div>
+        <?php else: ?>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Matrícula</th>
+                            <th>Colaborador</th>
+                            <th>Lotação</th>
+                            <th>Localidade</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($faltantesSemEspelho as $falt): ?>
+                            <tr>
+                                <td><code><?= View::e((string) ($falt['matricula'] ?? '')) ?></code></td>
+                                <td><a href="/rh/colaboradores/<?= (int) $falt['id'] ?>"><strong><?= View::e((string) ($falt['nome'] ?? '')) ?></strong></a></td>
+                                <td><?= View::e((string) (($falt['lotacao_codigo'] ?? '') !== '' ? $falt['lotacao_codigo'] : '—')) ?></td>
+                                <td>
+                                    <?php
+                                    $loc = trim((string) ($falt['municipio'] ?? '') . ($falt['uf'] ? '/' . $falt['uf'] : ''));
+                                    ?>
+                                    <?= View::e($loc !== '' ? $loc : '—') ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </section>
 <?php endif; ?>
 
 <section class="ponto-resumo-grid">

@@ -1,0 +1,140 @@
+.vr-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(140px, 0.7fr) minmax(140px, 0.7fr) auto;
+  gap: 0.85rem 1rem;
+  align-items: end;
+}
+
+.vr-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: end;
+}
+
+.vr-period-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(90deg, #FFF4E8 0%, #FFFFFF 72%);
+}
+
+.vr-period-banner .kicker {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #9A4100;
+  margin-bottom: 0.15rem;
+}
+
+.vr-period-banner strong {
+  font-size: 1.05rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.vr-export-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: #FAFBFC;
+}
+
+.vr-export-bar .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.vr-empty {
+  padding: 1.75rem 0.25rem;
+  text-align: center;
+}
+
+.vr-empty strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 1rem;
+}
+
+.vr-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.vr-kpi {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.vr-kpi .label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+  margin-bottom: 0.25rem;
+}
+
+.vr-kpi .value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1.15;
+}
+
+.vr-kpi.is-accent .value {
+  color: #C45C26;
+}
+
+.vr-table td:nth-child(4),
+.vr-table td:nth-child(5),
+.vr-table td:nth-child(6),
+.vr-table th:nth-child(4),
+.vr-table th:nth-child(5),
+.vr-table th:nth-child(6) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vr-table tfoot td {
+  background: #FFF4EC;
+  font-weight: 740;
+}
+
+@media (max-width: 980px) {
+  .vr-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .vr-toolbar-actions {
+    grid-column: 1 / -1;
+  }
+
+  .vr-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .vr-toolbar {
+    grid-template-columns: 1fr;
+  }
+}

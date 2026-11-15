@@ -22,6 +22,30 @@
 
   backdrop?.addEventListener('click', close);
 
+  // Acordeão do menu lateral (um grupo aberto por vez dentro da mesma seção)
+  document.querySelectorAll('[data-nav-group]').forEach((group) => {
+    const toggleBtn = group.querySelector('.nav-group-toggle');
+    const sublist = group.querySelector('.nav-sublist');
+    if (!(toggleBtn instanceof HTMLElement) || !(sublist instanceof HTMLElement)) return;
+
+    toggleBtn.addEventListener('click', () => {
+      const willOpen = !group.classList.contains('is-open');
+      const section = group.closest('.nav-section');
+      section?.querySelectorAll('[data-nav-group].is-open').forEach((openGroup) => {
+        if (openGroup === group) return;
+        openGroup.classList.remove('is-open');
+        const otherBtn = openGroup.querySelector('.nav-group-toggle');
+        const otherList = openGroup.querySelector('.nav-sublist');
+        otherBtn?.setAttribute('aria-expanded', 'false');
+        if (otherList instanceof HTMLElement) otherList.hidden = true;
+      });
+
+      group.classList.toggle('is-open', willOpen);
+      toggleBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      sublist.hidden = !willOpen;
+    });
+  });
+
   document.querySelectorAll('[data-modal-open]').forEach((el) => {
     el.addEventListener('click', () => {
       const id = el.getAttribute('data-modal-open');

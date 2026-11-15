@@ -9,6 +9,29 @@ $currentUser = $currentUser ?? ['name' => 'Administrador', 'role' => 'RH'];
 
 $isActive = static fn(string $key): string => $activeMenu === $key ? ' is-active' : '';
 $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
+
+$inGroup = static function (array $keys) use ($activeMenu): bool {
+    return in_array($activeMenu, $keys, true);
+};
+
+$orgKeys = ['empresas', 'contratos', 'centros', 'os', 'localidades'];
+$escalasKeys = ['jornadas', 'escalas', 'feriados'];
+$pessoasKeys = ['lotacoes', 'cargos', 'funcoes', 'gestores-arcadis', 'gestores-cliente', 'supervisores'];
+$medicaoKeys = ['ponto', 'folha', 'medicao', 'ra'];
+$vrKeys = ['vr-config', 'vr-relatorio'];
+
+$showRh = $can(
+    'efetivo.ver', 'cadastros.ver', 'ponto.ver', 'folha.ver',
+    'medicao.ver', 'ra.ver', 'vr.ver', 'vr.editar'
+);
+$showOrg = $can('cadastros.ver', 'cadastros.editar');
+$showPonto = $can('ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver');
+$showVr = $can('vr.ver', 'vr.editar');
+$showSistema = $can('usuarios.gerenciar', 'perfis.gerenciar', 'email.gerenciar', 'importacoes.gerenciar');
+
+$chevron = <<<'SVG'
+<svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+SVG;
 ?>
 <aside class="sidebar" id="sidebar">
     <div class="brand">
@@ -37,9 +60,9 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
             </ul>
         </div>
 
-        <?php if ($can('efetivo.ver', 'cadastros.ver')): ?>
+        <?php if ($showRh): ?>
         <div class="nav-section">
-            <div class="nav-section-title">RH · Efetivo</div>
+            <div class="nav-section-title">RH</div>
             <ul class="nav-list">
                 <?php if ($can('efetivo.ver')): ?>
                 <li>
@@ -49,140 +72,100 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
                     </a>
                 </li>
                 <?php endif; ?>
-                <?php if ($can('cadastros.ver')): ?>
-                <li>
-                    <a class="nav-link<?= $isActive('empresas') ?>" href="/rh/empresas">
+
+                <?php if ($showOrg): ?>
+                <?php $orgOpen = $inGroup($orgKeys); ?>
+                <li class="nav-group<?= $orgOpen ? ' is-open' : '' ?>" data-nav-group>
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?= $orgOpen ? 'true' : 'false' ?>">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
-                        Empresas
-                    </a>
+                        <span>Organização</span>
+                        <?= $chevron ?>
+                    </button>
+                    <ul class="nav-sublist"<?= $orgOpen ? '' : ' hidden' ?>>
+                        <li><a class="nav-sublink<?= $isActive('empresas') ?>" href="/rh/empresas">Empresas</a></li>
+                        <li><a class="nav-sublink<?= $isActive('contratos') ?>" href="/rh/contratos">Contratos</a></li>
+                        <li><a class="nav-sublink<?= $isActive('centros') ?>" href="/rh/centros-custo">Centros de Custo</a></li>
+                        <li><a class="nav-sublink<?= $isActive('os') ?>" href="/rh/ordens-servico">Ordens de Serviço</a></li>
+                        <li><a class="nav-sublink<?= $isActive('localidades') ?>" href="/rh/localidades">Localidades</a></li>
+                    </ul>
                 </li>
-                <li>
-                    <a class="nav-link<?= $isActive('contratos') ?>" href="/rh/contratos">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
-                        Contratos
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('centros') ?>" href="/rh/centros-custo">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>
-                        Centros de Custo
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('os') ?>" href="/rh/ordens-servico">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5h11M9 12h11M9 19h11"/><path d="M4 5h.01M4 12h.01M4 19h.01"/></svg>
-                        Ordens de Serviço
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('jornadas') ?>" href="/rh/jornadas">
+
+                <?php $escOpen = $inGroup($escalasKeys); ?>
+                <li class="nav-group<?= $escOpen ? ' is-open' : '' ?>" data-nav-group>
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?= $escOpen ? 'true' : 'false' ?>">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
-                        Jornadas
-                    </a>
+                        <span>Escalas e calendário</span>
+                        <?= $chevron ?>
+                    </button>
+                    <ul class="nav-sublist"<?= $escOpen ? '' : ' hidden' ?>>
+                        <li><a class="nav-sublink<?= $isActive('jornadas') ?>" href="/rh/jornadas">Jornadas</a></li>
+                        <li><a class="nav-sublink<?= $isActive('escalas') ?>" href="/rh/escalas">Escalas</a></li>
+                        <li><a class="nav-sublink<?= $isActive('feriados') ?>" href="/rh/calendarios">Feriados</a></li>
+                    </ul>
                 </li>
-                <li>
-                    <a class="nav-link<?= $isActive('escalas') ?>" href="/rh/escalas">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h14"/></svg>
-                        Escalas
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('localidades') ?>" href="/rh/localidades">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
-                        Localidades
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('feriados') ?>" href="/rh/calendarios">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                        Feriados
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('lotacoes') ?>" href="/rh/lotacoes">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
-                        Lotações
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('cargos') ?>" href="/rh/cargos">
+
+                <?php $pesOpen = $inGroup($pessoasKeys); ?>
+                <li class="nav-group<?= $pesOpen ? ' is-open' : '' ?>" data-nav-group>
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?= $pesOpen ? 'true' : 'false' ?>">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6M19 8v6"/></svg>
-                        Cargo
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('funcoes') ?>" href="/rh/funcoes">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h10M4 17h14"/><path d="M16 10l4 2-4 2"/></svg>
-                        Função
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('gestores-arcadis') ?>" href="/rh/gestores-arcadis">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l8 4v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
-                        Gestor Arcadis
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('gestores-cliente') ?>" href="/rh/gestores-cliente">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                        Gestor Cliente
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('supervisores') ?>" href="/rh/supervisores">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/><path d="M19 11v6M16 14h6"/></svg>
-                        Supervisor
-                    </a>
+                        <span>Pessoas e papéis</span>
+                        <?= $chevron ?>
+                    </button>
+                    <ul class="nav-sublist"<?= $pesOpen ? '' : ' hidden' ?>>
+                        <li><a class="nav-sublink<?= $isActive('lotacoes') ?>" href="/rh/lotacoes">Lotações</a></li>
+                        <li><a class="nav-sublink<?= $isActive('cargos') ?>" href="/rh/cargos">Cargo</a></li>
+                        <li><a class="nav-sublink<?= $isActive('funcoes') ?>" href="/rh/funcoes">Função</a></li>
+                        <li><a class="nav-sublink<?= $isActive('gestores-arcadis') ?>" href="/rh/gestores-arcadis">Gestor Arcadis</a></li>
+                        <li><a class="nav-sublink<?= $isActive('gestores-cliente') ?>" href="/rh/gestores-cliente">Gestor Cliente</a></li>
+                        <li><a class="nav-sublink<?= $isActive('supervisores') ?>" href="/rh/supervisores">Supervisor</a></li>
+                    </ul>
                 </li>
                 <?php endif; ?>
-            </ul>
-        </div>
-        <?php endif; ?>
 
-        <?php if ($can('ponto.ver', 'folha.ver')): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">RH · Ponto</div>
-            <ul class="nav-list">
-                <?php if ($can('ponto.ver')): ?>
-                <li>
-                    <a class="nav-link<?= $isActive('ponto') ?>" href="/rh/ponto">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                        Gestão de Ponto
-                    </a>
+                <?php if ($showPonto): ?>
+                <?php $medOpen = $inGroup($medicaoKeys); ?>
+                <li class="nav-group<?= $medOpen ? ' is-open' : '' ?>" data-nav-group>
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?= $medOpen ? 'true' : 'false' ?>">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-4"/></svg>
+                        <span>Medição e ponto</span>
+                        <?= $chevron ?>
+                    </button>
+                    <ul class="nav-sublist"<?= $medOpen ? '' : ' hidden' ?>>
+                        <?php if ($can('ponto.ver', 'ponto.editar')): ?>
+                        <li><a class="nav-sublink<?= $isActive('ponto') ?>" href="/rh/ponto">Gestão de Ponto</a></li>
+                        <?php endif; ?>
+                        <?php if ($can('folha.ver', 'folha.enviar')): ?>
+                        <li><a class="nav-sublink<?= $isActive('folha') ?>" href="/rh/folha">Folha de Ponto</a></li>
+                        <?php endif; ?>
+                        <?php if ($can('medicao.ver', 'medicao.editar', 'ponto.ver')): ?>
+                        <li><a class="nav-sublink<?= $isActive('medicao') ?>" href="/rh/medicao">Medição</a></li>
+                        <?php endif; ?>
+                        <?php if ($can('ra.ver', 'ra.editar', 'ponto.ver')): ?>
+                        <li><a class="nav-sublink<?= $isActive('ra') ?>" href="/rh/relatorios-atividades">Relatórios de Atividades</a></li>
+                        <?php endif; ?>
+                    </ul>
                 </li>
                 <?php endif; ?>
-                <?php if ($can('folha.ver')): ?>
-                <li>
-                    <a class="nav-link<?= $isActive('folha') ?>" href="/rh/folha">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>
-                        Folha de Ponto
-                    </a>
-                </li>
-                <?php endif; ?>
-                <?php if ($can('ponto.ver')): ?>
-                <li>
-                    <a class="nav-link<?= $isActive('medicao') ?>" href="/rh/medicao">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-4"/><circle cx="7" cy="7" r="1.5"/><circle cx="12" cy="3" r="1.5"/><circle cx="17" cy="10" r="1.5"/></svg>
-                        Medição
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('ra') ?>" href="/rh/relatorios-atividades">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>
-                        Relatórios de Atividades
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('vr') ?>" href="/rh/vale-refeicao">
+
+                <?php if ($showVr): ?>
+                <?php $vrOpen = $inGroup($vrKeys); ?>
+                <li class="nav-group<?= $vrOpen ? ' is-open' : '' ?>" data-nav-group>
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?= $vrOpen ? 'true' : 'false' ?>">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v10H4z"/><path d="M8 7V5a4 4 0 0 1 8 0v2"/><path d="M12 11v2"/></svg>
-                        Vale Refeição
-                    </a>
+                        <span>Vale Refeição</span>
+                        <?= $chevron ?>
+                    </button>
+                    <ul class="nav-sublist"<?= $vrOpen ? '' : ' hidden' ?>>
+                        <li><a class="nav-sublink<?= $isActive('vr-config') ?>" href="/rh/vale-refeicao">Configuração</a></li>
+                        <li><a class="nav-sublink<?= $isActive('vr-relatorio') ?>" href="/rh/vale-refeicao/relatorio">Gerar relatório</a></li>
+                    </ul>
                 </li>
                 <?php endif; ?>
             </ul>
         </div>
         <?php endif; ?>
 
+        <?php if ($showSistema): ?>
         <div class="nav-section">
             <div class="nav-section-title">Sistema</div>
             <ul class="nav-list">
@@ -220,6 +203,7 @@ $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
                 <?php endif; ?>
             </ul>
         </div>
+        <?php endif; ?>
     </nav>
 
     <div class="sidebar-footer">

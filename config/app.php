@@ -20,6 +20,8 @@ $config = [
         'from_name' => 'Arcadis RH',
         // Preferência: conta Gmail/Microsoft conectada em /rh/email
     ],
+    // Segredo do endpoint HTTP /cron/* (Hostinger wget/curl). Preferir ARCADIS_CRON_SECRET ou storage/cron.secret.
+    'cron_secret' => getenv('ARCADIS_CRON_SECRET') ?: '',
 ];
 
 $local = __DIR__ . '/app.local.php';

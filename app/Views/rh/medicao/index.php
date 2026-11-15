@@ -24,6 +24,7 @@ $proximaAcao = $resumo['proxima_acao'] ?? null;
 $elegiveis = is_array($resumo['elegiveis'] ?? null) ? $resumo['elegiveis'] : [];
 $filtro = (string) ($filtro ?? '');
 $statusPonto = (string) ($statusPonto ?? '');
+$subfiltro = (string) ($subfiltro ?? '');
 if ($filtro !== 'assinaturas' || !in_array($statusPonto, ['enviado', 'assinado'], true)) {
     $statusPonto = '';
 }
@@ -90,7 +91,7 @@ if ($filtro !== '' && !$modoDossie) {
         }
     }
     // Etapa "Enviar e-mails" zerada: consulta quem já recebeu (reenvio).
-    if ($filtro === 'email' && $colaboradoresFiltrados === [] && $alvosReenvioEmail !== []) {
+    if ($filtro === 'email' && $colaboradoresFiltrados === [] && $alvosReenvioEmail !== [] && $subfiltro !== 'email_falha') {
         $colaboradoresFiltrados = $alvosReenvioEmail;
         $modoConsultaEmail = true;
     }
@@ -106,6 +107,18 @@ if ($filtro !== '' && !$modoDossie) {
     $colaboradoresFiltrados = array_values(array_filter(
         $colaboradores,
         static fn(array $c): bool => empty($c['concluido'])
+    ));
+}
+
+if ($subfiltro === 'he_bloqueante') {
+    $colaboradoresFiltrados = array_values(array_filter(
+        $colaboradores,
+        static fn(array $c): bool => !empty($c['he_pendente'])
+    ));
+} elseif ($subfiltro === 'email_falha') {
+    $colaboradoresFiltrados = array_values(array_filter(
+        $colaboradores,
+        static fn(array $c): bool => \App\Services\PainelExcecoesService::diagnosticarFalhaEmail($c) !== null
     ));
 }
 
@@ -639,6 +652,11 @@ foreach ($loteBotoes as $b) {
                     · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
                 <?php elseif ($filtro !== ''): ?>
                     Filtro: <strong><?= View::e($filtroAtivoLabel) ?></strong>
+                    <?php if ($subfiltro === 'he_bloqueante'): ?>
+                        · Subfiltro: <strong>HE Cliente bloqueante</strong>
+                    <?php elseif ($subfiltro === 'email_falha'): ?>
+                        · Subfiltro: <strong>E-mails sem entrega</strong>
+                    <?php endif; ?>
                     — <?= count($colaboradoresFiltrados) ?> pendente<?= count($colaboradoresFiltrados) === 1 ? '' : 's' ?>
                     · <a href="<?= View::e($urlFiltro('')) ?>">limpar filtro</a>
                 <?php else: ?>

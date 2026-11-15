@@ -18,6 +18,7 @@ use App\Controllers\Rh\PerfilController;
 use App\Controllers\Rh\PontoController;
 use App\Controllers\Rh\RelatorioAtividadesController;
 use App\Controllers\Rh\UsuarioController;
+use App\Controllers\CronController;
 use App\Controllers\Rh\MedicaoController;
 use App\Controllers\Rh\ValeRefeicaoController;
 use App\Helpers\Auth;
@@ -101,6 +102,9 @@ $router->post('/assinar/{token}/divergencia', [$folha, 'portalDivergencia']);
 $router->get('/s/{token}', [$folha, 'shareWhatsapp']);
 $router->get('/og/arcadis-folha.jpg', [$folha, 'ogLogo']);
 
+$cron = CronController::class;
+$router->get('/cron/cobranca-assinatura', [$cron, 'cobrancaAssinatura']);
+
 $raAssinatura = RelatorioAssinaturaController::class;
 $router->get('/assinar-relatorio/{token}', [$raAssinatura, 'portalAssinatura']);
 $router->get('/assinar-relatorio/{token}/pdf', [$raAssinatura, 'portalPdf']);
@@ -139,6 +143,7 @@ $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/assinar-relatorio/')
     || str_starts_with($path, '/verificar-relatorio/')
     || str_starts_with($path, '/s/')
+    || str_starts_with($path, '/cron/')
     || $normalizedPath === '/og/arcadis-folha.jpg'
     || str_starts_with($path, '/he')
     || str_starts_with($path, '/install');
@@ -175,13 +180,20 @@ if (!$isPublic) {
         $requireAny('perfis.gerenciar');
     } elseif (str_starts_with($normalizedPath, '/rh/folha')) {
         $httpMethod === 'POST' ? $requireAny('folha.enviar') : $requireAny('folha.ver', 'folha.enviar');
-    } elseif (
-        str_starts_with($normalizedPath, '/rh/ponto')
-        || str_starts_with($normalizedPath, '/rh/medicao')
-        || str_starts_with($normalizedPath, '/rh/relatorios-atividades')
-        || str_starts_with($normalizedPath, '/rh/vale-refeicao')
-    ) {
+    } elseif (str_starts_with($normalizedPath, '/rh/ponto')) {
         $httpMethod === 'POST' ? $requireAny('ponto.editar') : $requireAny('ponto.ver', 'ponto.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/medicao')) {
+        $httpMethod === 'POST'
+            ? $requireAny('medicao.editar', 'ponto.editar')
+            : $requireAny('medicao.ver', 'medicao.editar', 'ponto.ver', 'ponto.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/relatorios-atividades')) {
+        $httpMethod === 'POST'
+            ? $requireAny('ra.editar', 'ponto.editar')
+            : $requireAny('ra.ver', 'ra.editar', 'ponto.ver', 'ponto.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/vale-refeicao')) {
+        $httpMethod === 'POST'
+            ? $requireAny('vr.editar', 'ponto.editar')
+            : $requireAny('vr.ver', 'vr.editar', 'ponto.ver', 'ponto.editar');
     } elseif (preg_match('#^/rh/(empresas|contratos|centros-custo|ordens-servico|localidades|jornadas|escalas|lotacoes|cargos|funcoes|gestores-arcadis|gestores-cliente|supervisores|calendarios)(/|$)#', $normalizedPath)) {
         if ($httpMethod === 'POST' || str_ends_with($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')) {
             $requireAny('cadastros.editar');
@@ -280,6 +292,7 @@ $router->get('/rh/perfis', [$perfisCtrl, 'index']);
 $router->get('/rh/perfis/novo', [$perfisCtrl, 'createForm']);
 $router->post('/rh/perfis', [$perfisCtrl, 'store']);
 $router->get('/rh/perfis/{id}/editar', [$perfisCtrl, 'editForm']);
+$router->post('/rh/perfis/{id}/duplicar', [$perfisCtrl, 'duplicar']);
 $router->post('/rh/perfis/{id}', [$perfisCtrl, 'update']);
 
 $router->get('/rh/ponto', [$ponto, 'index']);
@@ -308,6 +321,9 @@ $router->post('/rh/relatorios-atividades/{id}/reabrir', [$raRh, 'reabrir']);
 
 $vrRh = ValeRefeicaoController::class;
 $router->get('/rh/vale-refeicao', [$vrRh, 'index']);
+$router->get('/rh/vale-refeicao/relatorio', [$vrRh, 'relatorio']);
+$router->get('/rh/vale-refeicao/relatorio/pdf', [$vrRh, 'exportarPdf']);
+$router->get('/rh/vale-refeicao/relatorio/excel', [$vrRh, 'exportarExcel']);
 $router->get('/rh/vale-refeicao/exportar', [$vrRh, 'exportarCsv']);
 $router->post('/rh/vale-refeicao/config', [$vrRh, 'salvarConfig']);
 $router->post('/rh/vale-refeicao/config/{id}/excluir', [$vrRh, 'excluirConfig']);

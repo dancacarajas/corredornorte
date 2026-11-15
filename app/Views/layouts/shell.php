@@ -25,7 +25,7 @@ $currentUser = $currentUser ?? ($authUser ? [
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
     <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=p1-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>">
+    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=nav-perfis-20261114">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
     <?php endforeach; ?>
@@ -51,7 +51,7 @@ $currentUser = $currentUser ?? ($authUser ? [
         </main>
     </div>
 </div>
-<script src="<?= View::asset('js/app.js') ?>?v=p1-20261114"></script>
+<script src="<?= View::asset('js/app.js') ?>?v=nav-vr-20261114"></script>
 <script src="<?= View::asset('js/batch-runner.js') ?>?v=email-report-20261114"></script>
 <?php foreach (($extraJs ?? []) as $jsFile): ?>
 <script src="<?= View::asset($jsFile) ?>"></script>

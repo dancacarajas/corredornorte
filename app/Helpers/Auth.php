@@ -117,14 +117,9 @@ final class Auth
             $permissoes = [];
         }
 
-        // Admin legado: perfil admin = todas as permissões conhecidas
-        if (in_array('admin', $perfis, true)) {
-            try {
-                $all = $pdo->query('SELECT codigo FROM permissoes')->fetchAll(PDO::FETCH_COLUMN) ?: [];
-                $permissoes = array_values(array_unique(array_merge($permissoes, array_map('strval', $all))));
-            } catch (Throwable) {
-            }
-        }
+        // Permissões vêm só do que está marcado no(s) perfil(is).
+        // Novas permissões do catálogo são concedidas ao admin na migração (ensureCatalog),
+        // mas remoções manuais no formulário de perfis passam a valer.
 
         return [
             'role' => $role,

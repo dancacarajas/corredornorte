@@ -113,6 +113,9 @@ final class Installer
         $this->migrateHeCliente($pdo);
         $messages[] = 'Migração: HE via gestor cliente';
 
+        $this->migrateCobrancaAssinatura($pdo);
+        $messages[] = 'Migração: cobrança automática de assinatura';
+
         $adminPassword = 'admin123';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
         $stmt = $pdo->prepare('UPDATE usuarios SET senha_hash = :h WHERE email = :e');
@@ -458,39 +461,18 @@ final class Installer
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
 
-        $catalog = [
-            ['dashboard.ver', 'Ver dashboard', 'Principal', 'Acesso à visão geral'],
-            ['efetivo.ver', 'Ver efetivo', 'Efetivo', 'Listar colaboradores e estrutura'],
-            ['efetivo.editar', 'Editar efetivo', 'Efetivo', 'Criar/editar colaboradores e lotações'],
-            ['cadastros.ver', 'Ver cadastros', 'Cadastros', 'Empresas, jornadas, escalas, etc.'],
-            ['cadastros.editar', 'Editar cadastros', 'Cadastros', 'Alterar cadastros base'],
-            ['ponto.ver', 'Ver ponto', 'Ponto', 'Consultar espelhos de ponto'],
-            ['ponto.editar', 'Editar ponto', 'Ponto', 'Gerar e ajustar batidas'],
-            ['folha.ver', 'Ver folha', 'Folha', 'Consultar folhas e PDFs'],
-            ['folha.enviar', 'Enviar/assinar folha', 'Folha', 'Enviar e-mail e gerar link de assinatura'],
-            ['email.gerenciar', 'Conta de e-mail', 'Sistema', 'Conectar Gmail/Microsoft'],
-            ['importacoes.gerenciar', 'Importações', 'Sistema', 'Importar planilha de efetivo'],
-            ['usuarios.gerenciar', 'Gerenciar usuários', 'Sistema', 'Criar e editar usuários'],
-            ['perfis.gerenciar', 'Gerenciar perfis', 'Sistema', 'Criar perfis e permissões'],
-        ];
-
-        $ins = $pdo->prepare(
-            'INSERT INTO permissoes (codigo, nome, grupo, descricao)
-             VALUES (:c, :n, :g, :d)
-             ON DUPLICATE KEY UPDATE nome = VALUES(nome), grupo = VALUES(grupo), descricao = VALUES(descricao)'
-        );
-        foreach ($catalog as [$c, $n, $g, $d]) {
-            $ins->execute(['c' => $c, 'n' => $n, 'g' => $g, 'd' => $d]);
-        }
+        (new \App\Services\PerfilService($pdo))->ensureCatalog();
 
         $map = [
-            'admin' => array_column($catalog, 0),
+            'admin' => array_column(\App\Services\PerfilService::catalogoDefinicao(), 'codigo'),
             'rh' => [
                 'dashboard.ver', 'efetivo.ver', 'efetivo.editar', 'cadastros.ver', 'cadastros.editar',
-                'ponto.ver', 'ponto.editar', 'folha.ver', 'folha.enviar', 'email.gerenciar', 'importacoes.gerenciar',
+                'ponto.ver', 'ponto.editar', 'folha.ver', 'folha.enviar',
+                'medicao.ver', 'medicao.editar', 'ra.ver', 'ra.editar', 'vr.ver', 'vr.editar',
+                'email.gerenciar', 'importacoes.gerenciar',
             ],
             'gestor' => [
-                'dashboard.ver', 'efetivo.ver', 'ponto.ver', 'folha.ver',
+                'dashboard.ver', 'efetivo.ver', 'ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver', 'vr.ver',
             ],
         ];
 
@@ -622,6 +604,12 @@ final class Installer
               CONSTRAINT fk_vr_cc_contrato FOREIGN KEY (contrato_id) REFERENCES rh_contratos(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
+        if (!$this->hasColumn($pdo, 'vr_config', 'nome')) {
+            $pdo->exec(
+                "ALTER TABLE vr_config
+                 ADD COLUMN nome VARCHAR(120) NOT NULL DEFAULT '' AFTER id"
+            );
+        }
     }
 
     public function migrateRelatorioAssinatura(PDO $pdo): void
@@ -708,6 +696,38 @@ final class Installer
             }
             $pdo->exec("ALTER TABLE ra_dias ADD COLUMN {$col} {$def} AFTER {$after}");
             $after = $col;
+        }
+    }
+
+    public function migrateCobrancaAssinatura(PDO $pdo): void
+    {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS cobranca_envios (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                tipo ENUM('folha','ra') NOT NULL,
+                documento_id BIGINT UNSIGNED NOT NULL,
+                periodo_id BIGINT UNSIGNED NOT NULL,
+                nivel TINYINT UNSIGNED NOT NULL,
+                destinatario VARCHAR(160) NOT NULL,
+                status ENUM('enviado','falha') NOT NULL,
+                erro_mensagem VARCHAR(255) NULL,
+                enviado_em DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uk_cobranca_doc_nivel (tipo, documento_id, nivel),
+                KEY idx_cobranca_periodo (periodo_id),
+                KEY idx_cobranca_enviado (enviado_em)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        $secretFile = $this->root . '/storage/cron.secret';
+        if (!is_file($secretFile)) {
+            $dir = dirname($secretFile);
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0755, true);
+            }
+            @file_put_contents($secretFile, bin2hex(random_bytes(24)) . "\n");
+            @chmod($secretFile, 0640);
         }
     }
 
@@ -874,12 +894,22 @@ final class Installer
 
     private function writeAppLocal(string $appUrl, string $appName): void
     {
+        $cronSecret = '';
+        $secretFile = $this->root . '/storage/cron.secret';
+        if (is_file($secretFile)) {
+            $cronSecret = trim((string) file_get_contents($secretFile));
+        }
+        if ($cronSecret === '') {
+            $cronSecret = bin2hex(random_bytes(24));
+        }
+
         $data = [
             'name' => $appName !== '' ? $appName : 'Corredor Norte RH',
             'tagline' => 'RH Operacional',
             'env' => 'production',
             'url' => $appUrl,
             'timezone' => 'America/Belem',
+            'cron_secret' => $cronSecret,
         ];
         $export = var_export($data, true);
         $content = "<?php\n\ndeclare(strict_types=1);\n\nreturn {$export};\n";

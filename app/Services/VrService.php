@@ -15,6 +15,8 @@ final class VrService
     public function __construct(?PDO $db = null)
     {
         $this->db = $db ?? Database::connection();
+        $this->ensureNomeColumn();
+        $this->sanitizarDatasZero();
     }
 
     /** @return list<array{id:int,codigo:string,nome:string}> */
@@ -32,7 +34,7 @@ final class VrService
 
     /**
      * @return array{
-     *   id:int,valor_dia:string,tipo:string,vigencia_inicio:string,vigencia_fim:?string,
+     *   id:int,nome:string,valor_dia:string,tipo:string,vigencia_inicio:string,vigencia_fim:?string,
      *   todos_contratos:bool,ativo:bool,contrato_ids:list<int>,contratos_label:string
      * }|null
      */
@@ -49,7 +51,7 @@ final class VrService
 
     /**
      * Config vigente genérica (Todos) — usada no resumo da tela.
-     * @return array{id:int,valor_dia:string,tipo:string,vigencia_inicio:string,vigencia_fim:?string,todos_contratos:bool}|null
+     * @return array{id:int,nome:string,valor_dia:string,tipo:string,vigencia_inicio:string,vigencia_fim:?string,todos_contratos:bool}|null
      */
     public function configAtiva(?string $dataRef = null): ?array
     {
@@ -58,7 +60,7 @@ final class VrService
             'SELECT * FROM vr_config
              WHERE ativo = 1
                AND vigencia_inicio <= :d
-               AND (vigencia_fim IS NULL OR vigencia_fim = \'0000-00-00\' OR vigencia_fim >= :d2)
+               AND (vigencia_fim IS NULL OR vigencia_fim >= :d2)
              ORDER BY vigencia_inicio DESC, id DESC
              LIMIT 1'
         );
@@ -90,13 +92,16 @@ final class VrService
         ?string $vigenciaFim,
         bool $todosContratos,
         array $contratoIds,
-        ?int $id = null
+        ?int $id = null,
+        string $nome = ''
     ): int {
         $this->validarPayload($valorDia, $tipo, $vigenciaInicio, $vigenciaFim, $todosContratos, $contratoIds);
+        $nome = $this->normalizarNome($nome, $todosContratos, $contratoIds, $valorDia);
 
         $this->db->beginTransaction();
         try {
             $params = [
+                'n' => $nome,
                 'v' => number_format($valorDia, 2, '.', ''),
                 't' => $tipo,
                 'i' => $vigenciaInicio,
@@ -107,7 +112,7 @@ final class VrService
                 $params['id'] = $id;
                 $this->db->prepare(
                     'UPDATE vr_config
-                     SET valor_dia = :v, tipo = :t, vigencia_inicio = :i, vigencia_fim = :f,
+                     SET nome = :n, valor_dia = :v, tipo = :t, vigencia_inicio = :i, vigencia_fim = :f,
                          todos_contratos = :tc, ativo = 1
                      WHERE id = :id'
                 )->execute($params);
@@ -115,8 +120,8 @@ final class VrService
                 $this->db->prepare('DELETE FROM vr_config_contratos WHERE config_id = :id')->execute(['id' => $configId]);
             } else {
                 $this->db->prepare(
-                    'INSERT INTO vr_config (valor_dia, tipo, vigencia_inicio, vigencia_fim, todos_contratos, ativo)
-                     VALUES (:v, :t, :i, :f, :tc, 1)'
+                    'INSERT INTO vr_config (nome, valor_dia, tipo, vigencia_inicio, vigencia_fim, todos_contratos, ativo)
+                     VALUES (:n, :v, :t, :i, :f, :tc, 1)'
                 )->execute($params);
                 $configId = (int) $this->db->lastInsertId();
             }
@@ -201,6 +206,8 @@ final class VrService
                 'valor_dia' => $valorDia,
                 'tipo_calculo' => $cfg['tipo'],
                 'config_id' => $cfg['id'],
+                'config_nome' => (string) ($cfg['nome'] ?? ''),
+                'config_alocacao' => (string) ($cfg['contratos_label'] ?? ''),
                 'valor_vr' => round($valorDia * $dias, 2),
             ];
         }
@@ -238,7 +245,7 @@ final class VrService
             'SELECT * FROM vr_config
              WHERE ativo = 1
                AND vigencia_inicio <= :d
-               AND (vigencia_fim IS NULL OR vigencia_fim = \'0000-00-00\' OR vigencia_fim >= :d2)
+               AND (vigencia_fim IS NULL OR vigencia_fim >= :d2)
              ORDER BY vigencia_inicio DESC, id DESC'
         );
         $st->execute(['d' => $dataRef, 'd2' => $dataRef]);
@@ -248,6 +255,29 @@ final class VrService
             $out[] = $this->hidratarConfig($row);
         }
         return $out;
+    }
+
+    /**
+     * MySQL 8 (NO_ZERO_DATE) rejeita literal/comparação '0000-00-00'.
+     * Converte vigência aberta legada para NULL.
+     */
+    private function sanitizarDatasZero(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        $done = true;
+        try {
+            $this->db->exec(
+                "UPDATE vr_config
+                 SET vigencia_fim = NULL
+                 WHERE vigencia_fim IS NOT NULL
+                   AND CAST(vigencia_fim AS CHAR(10)) IN ('0000-00-00', '0')"
+            );
+        } catch (\Throwable) {
+            // Tabela ainda não migrada / sem permissão — queries já não usam o literal zero.
+        }
     }
 
     /** @param array<string,mixed> $row */
@@ -272,9 +302,17 @@ final class VrService
             }
         }
         $fim = $this->normalizarFim(isset($row['vigencia_fim']) ? (string) $row['vigencia_fim'] : null);
+        $alocacao = $todos ? 'Todos' : ($labels !== [] ? implode(', ', $labels) : '—');
+        $nome = trim((string) ($row['nome'] ?? ''));
+        if ($nome === '') {
+            $nome = $todos
+                ? 'VR geral — Todos'
+                : ('VR — ' . ($labels !== [] ? $labels[0] : 'contratos'));
+        }
 
         return [
             'id' => $id,
+            'nome' => $nome,
             'valor_dia' => (string) $row['valor_dia'],
             'tipo' => (string) $row['tipo'],
             'vigencia_inicio' => (string) $row['vigencia_inicio'],
@@ -282,8 +320,53 @@ final class VrService
             'todos_contratos' => $todos,
             'ativo' => !empty($row['ativo']),
             'contrato_ids' => $contratoIds,
-            'contratos_label' => $todos ? 'Todos' : ($labels !== [] ? implode(', ', $labels) : '—'),
+            'contratos_label' => $alocacao,
         ];
+    }
+
+    private function ensureNomeColumn(): void
+    {
+        static $done = false;
+        if ($done) {
+            return;
+        }
+        $done = true;
+        try {
+            $cols = $this->db->query('SHOW COLUMNS FROM vr_config')->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            if (!in_array('nome', $cols, true)) {
+                $this->db->exec(
+                    "ALTER TABLE vr_config
+                     ADD COLUMN nome VARCHAR(120) NOT NULL DEFAULT '' AFTER id"
+                );
+            }
+            $this->db->exec(
+                "UPDATE vr_config
+                 SET nome = CASE
+                     WHEN todos_contratos = 1 THEN CONCAT('VR geral — R$ ', FORMAT(valor_dia, 2))
+                     ELSE CONCAT('VR contratos — R$ ', FORMAT(valor_dia, 2))
+                 END
+                 WHERE TRIM(COALESCE(nome, '')) = ''"
+            );
+        } catch (\Throwable) {
+            // Ambiente sem tabela ainda.
+        }
+    }
+
+    /**
+     * @param list<int> $contratoIds
+     */
+    private function normalizarNome(string $nome, bool $todos, array $contratoIds, float $valorDia): string
+    {
+        $nome = trim(preg_replace('/\s+/u', ' ', $nome) ?? $nome);
+        if ($nome !== '') {
+            return mb_substr($nome, 0, 120);
+        }
+        if ($todos) {
+            return 'VR geral — R$ ' . number_format($valorDia, 2, ',', '.');
+        }
+        $qtd = count(array_filter(array_map('intval', $contratoIds), static fn (int $i): bool => $i > 0));
+
+        return 'VR ' . $qtd . ' contrato(s) — R$ ' . number_format($valorDia, 2, ',', '.');
     }
 
     /**

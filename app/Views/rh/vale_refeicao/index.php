@@ -7,14 +7,11 @@ $contratos = $contratos ?? [];
 $cfgAtiva = $cfgAtiva ?? null;
 $editando = $editando ?? null;
 $visualizando = $visualizando ?? null;
-$calculo = $calculo ?? [];
-$dataInicio = $dataInicio ?? '';
-$dataFim = $dataFim ?? '';
-$erroCalc = $erroCalc ?? null;
 $flash = $flash ?? null;
 $error = $error ?? null;
 
 $isEdit = is_array($editando);
+$nomeForm = $isEdit ? (string) ($editando['nome'] ?? '') : '';
 $valorForm = $isEdit ? (string) $editando['valor_dia'] : '';
 $tipoForm = $isEdit ? (string) $editando['tipo'] : 'dias_trabalhados';
 $iniForm = $isEdit ? (string) $editando['vigencia_inicio'] : date('Y-m-d');
@@ -33,27 +30,34 @@ $fmtData = static function (?string $d): string {
 
 <?php if ($flash): ?><div class="alert alert-success"><?= View::e((string) $flash) ?></div><?php endif; ?>
 <?php if ($error): ?><div class="alert alert-danger"><?= View::e((string) $error) ?></div><?php endif; ?>
-<?php if ($erroCalc): ?><div class="alert alert-warning"><?= View::e((string) $erroCalc) ?></div><?php endif; ?>
 
 <section class="card">
     <div class="card-header">
         <div>
-            <h2 class="card-title"><?= $isEdit ? 'Editar configuração' : 'Configuração' ?></h2>
-            <p class="card-subtitle">VR = valor/dia × dias Remoto do relatório.</p>
+            <h2 class="card-title"><?= $isEdit ? 'Editar configuração' : 'Nova configuração' ?></h2>
+            <p class="card-subtitle">VR = valor/dia × dias Remoto do relatório. Pode haver várias regras (geral + contratos específicos).</p>
         </div>
-        <?php if ($cfgAtiva && !$isEdit): ?>
-            <p class="muted text-sm" style="margin:0;">
-                Atual: R$ <?= View::e(number_format((float) $cfgAtiva['valor_dia'], 2, ',', '.')) ?>
-                · fim de semana <?= !empty($cfgAtiva['tipo']) && $cfgAtiva['tipo'] === 'dias_uteis' ? 'não paga' : 'paga' ?>
-                · <?= View::e((string) ($cfgAtiva['contratos_label'] ?? 'Todos')) ?>
-            </p>
-        <?php endif; ?>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+            <?php if ($cfgAtiva && !$isEdit): ?>
+                <p class="muted text-sm" style="margin:0;">
+                    Vigente hoje: <strong><?= View::e((string) ($cfgAtiva['nome'] ?? '')) ?></strong>
+                    · R$ <?= View::e(number_format((float) $cfgAtiva['valor_dia'], 2, ',', '.')) ?>
+                </p>
+            <?php endif; ?>
+            <a class="btn btn-secondary btn-sm" href="/rh/vale-refeicao/relatorio">Gerar relatório</a>
+        </div>
     </div>
     <div class="card-body section-stack">
         <form method="post" action="/rh/vale-refeicao/config" class="form-grid cols-2" id="vrConfigForm">
             <?php if ($isEdit): ?>
                 <input type="hidden" name="id" value="<?= (int) $editando['id'] ?>">
             <?php endif; ?>
+            <div class="form-field" style="grid-column:1/-1;">
+                <label class="form-label">Nome da configuração</label>
+                <input class="form-control" name="nome" maxlength="120" required
+                       placeholder="Ex.: VR geral 2026 · VR contrato CKS"
+                       value="<?= View::e($nomeForm) ?>">
+            </div>
             <div class="form-field">
                 <label class="form-label">Valor por dia (R$)</label>
                 <input class="form-control" name="valor_dia" type="number" step="0.01" min="0.01" required
@@ -87,7 +91,7 @@ $fmtData = static function (?string $d): string {
                         </label>
                     <?php endforeach; ?>
                 </div>
-                <p class="muted text-sm" style="margin:.4rem 0 0;">Clique nos chips para selecionar os contratos cobertos pela vigência.</p>
+                <p class="muted text-sm" style="margin:.4rem 0 0;">Desmarque “Todos” e selecione contratos para uma regra específica. A regra específica tem prioridade sobre a geral.</p>
             </div>
             <div class="form-field">
                 <label class="form-label">Início</label>
@@ -104,12 +108,25 @@ $fmtData = static function (?string $d): string {
                 <?php endif; ?>
             </div>
         </form>
+    </div>
+</section>
 
-        <?php if ($configs !== []): ?>
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Configurações cadastradas</h2>
+            <p class="card-subtitle"><?= count($configs) ?> regra(s) — geral e específicas aparecem juntas.</p>
+        </div>
+    </div>
+    <div class="card-body">
+        <?php if ($configs === []): ?>
+            <p class="muted">Nenhuma configuração ainda. Cadastre a primeira acima.</p>
+        <?php else: ?>
             <div class="table-wrap">
                 <table class="table">
                     <thead>
                     <tr>
+                        <th>Nome</th>
                         <th>Valor</th>
                         <th>Fim de semana</th>
                         <th>Alocação</th>
@@ -122,6 +139,7 @@ $fmtData = static function (?string $d): string {
                     <tbody>
                     <?php foreach ($configs as $c): ?>
                         <tr>
+                            <td><strong><?= View::e((string) ($c['nome'] ?? '')) ?></strong></td>
                             <td>R$ <?= View::e(number_format((float) $c['valor_dia'], 2, ',', '.')) ?></td>
                             <td><?= (string) $c['tipo'] === 'dias_uteis' ? 'Não paga' : 'Paga' ?></td>
                             <td><?= View::e((string) $c['contratos_label']) ?></td>
@@ -149,83 +167,15 @@ $fmtData = static function (?string $d): string {
     </div>
 </section>
 
-<section class="card">
-    <div class="card-header">
-        <div>
-            <h2 class="card-title">Cálculo do período</h2>
-            <p class="card-subtitle">Mesmo intervalo do cartão de ponto.</p>
-        </div>
-        <?php if ($calculo !== []): ?>
-            <a class="btn btn-secondary btn-sm"
-               href="/rh/vale-refeicao/exportar?<?= View::e(http_build_query(['data_inicio' => $dataInicio, 'data_fim' => $dataFim])) ?>">Exportar CSV</a>
-        <?php endif; ?>
-    </div>
-    <form method="get" class="card-body ponto-filtros" style="padding-top:0;">
-        <div class="form-field">
-            <label class="form-label">Início</label>
-            <input class="form-control" type="date" name="data_inicio" value="<?= View::e($dataInicio) ?>" required>
-        </div>
-        <div class="form-field">
-            <label class="form-label">Fim</label>
-            <input class="form-control" type="date" name="data_fim" value="<?= View::e($dataFim) ?>" required>
-        </div>
-        <div class="form-field ponto-filtros-actions">
-            <button class="btn btn-secondary" type="submit">Calcular</button>
-        </div>
-    </form>
-    <div class="card-body" style="padding-top:0;">
-        <?php if ($calculo === []): ?>
-            <p class="muted">Sem dados neste período.</p>
-        <?php else: ?>
-            <div class="table-wrap">
-                <table class="table">
-                    <thead>
-                    <tr>
-                        <th>Colaborador</th>
-                        <th>Relatório</th>
-                        <th>Dias Remoto</th>
-                        <th>Valor/dia</th>
-                        <th>Total VR</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <?php
-                    $soma = 0.0;
-                    foreach ($calculo as $row):
-                        $soma += (float) $row['valor_vr'];
-                        ?>
-                        <tr>
-                            <td>
-                                <strong><?= View::e((string) $row['nome']) ?></strong><br>
-                                <span class="muted text-sm"><?= View::e((string) $row['matricula']) ?></span>
-                            </td>
-                            <td><?= View::e((string) $row['status']) ?></td>
-                            <td><?= (int) $row['dias_remoto'] ?></td>
-                            <td>R$ <?= View::e(number_format((float) $row['valor_dia'], 2, ',', '.')) ?></td>
-                            <td><strong>R$ <?= View::e(number_format((float) $row['valor_vr'], 2, ',', '.')) ?></strong></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                    <tfoot>
-                    <tr>
-                        <td colspan="4"><strong>Total</strong></td>
-                        <td><strong>R$ <?= View::e(number_format($soma, 2, ',', '.')) ?></strong></td>
-                    </tr>
-                    </tfoot>
-                </table>
-            </div>
-        <?php endif; ?>
-    </div>
-</section>
-
 <?php if (is_array($visualizando)): ?>
     <div class="modal-backdrop is-open" id="vrVerModal" role="dialog" aria-modal="true">
         <div class="modal">
             <div class="modal-header">
-                <h3 class="card-title">Configuração #<?= (int) $visualizando['id'] ?></h3>
+                <h3 class="card-title"><?= View::e((string) ($visualizando['nome'] ?? ('Configuração #' . (int) $visualizando['id']))) ?></h3>
                 <a class="btn btn-ghost btn-sm" href="/rh/vale-refeicao">Fechar</a>
             </div>
             <div class="modal-body section-stack">
+                <p><strong>Nome:</strong> <?= View::e((string) ($visualizando['nome'] ?? '')) ?></p>
                 <p><strong>Valor/dia:</strong> R$ <?= View::e(number_format((float) $visualizando['valor_dia'], 2, ',', '.')) ?></p>
                 <p><strong>Fim de semana Remoto:</strong> <?= (string) $visualizando['tipo'] === 'dias_uteis' ? 'Não paga' : 'Paga' ?></p>
                 <p><strong>Alocação:</strong> <?= View::e((string) $visualizando['contratos_label']) ?></p>
@@ -248,14 +198,12 @@ $fmtData = static function (?string $d): string {
   if (!todos || !box) return;
   const sync = () => {
     const off = todos.checked;
-    box.style.opacity = off ? '0.5' : '1';
-    box.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
-      chk.disabled = off;
-      if (off) chk.checked = false;
+    box.querySelectorAll('input[type="checkbox"]').forEach((el) => {
+      el.disabled = off;
+      if (off) el.checked = false;
     });
   };
   todos.addEventListener('change', sync);
   sync();
 })();
 </script>
-
