@@ -1007,7 +1007,7 @@ foreach ($loteBotoes as $b) {
             'status' => (string) ($i['status'] ?? ''),
             'message' => (string) ($i['message'] ?? ''),
         ];
-    }, $relatorioEnvios), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    }, $relatorioEnvios), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
     let reportFilter = 'todos';
 
     const statusLabelReport = (st) => {

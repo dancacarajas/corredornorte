@@ -118,6 +118,12 @@ final class EmailTemplateService
                 'trigger' => 'Após troca de senha (perfil ou reset)',
                 'vars' => ['nome', 'portal_url', 'cta_bloco', 'link_fallback'],
             ],
+            'auth.portal_otp' => [
+                'label' => 'Código OTP — Portal do Colaborador',
+                'group' => 'Conta / Autenticação',
+                'trigger' => 'Login do portal HE (CPF + código por e-mail)',
+                'vars' => ['nome', 'otp', 'validade'],
+            ],
         ];
     }
 
@@ -338,17 +344,29 @@ HTML,
             'auth.boas_vindas' => [
                 'assunto' => 'Bem-vindo(a) ao Arcadis RH',
                 'titulo' => 'Sua conta foi criada',
-                'texto' => "Oi {{nome}},\n\nSua conta no Arcadis RH foi criada.\nE-mail de acesso: {{email}}{{senha_temp_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'texto' => "Oi {{nome}},\n\nSua conta no Arcadis RH foi criada.\nE-mail de acesso: {{email}}\nDefina sua senha pelo link seguro (válido por tempo limitado).{{portal_txt}}\nArcadis RH — Corredor Norte",
                 'corpo_html' => <<<'HTML'
 <p>Oi <strong>{{nome}}</strong>,</p>
-<p>Sua conta no <strong>Arcadis RH</strong> foi criada e já está pronta para uso.</p>
+<p>Sua conta no <strong>Arcadis RH</strong> foi criada.</p>
 <p><strong>E-mail de acesso:</strong> {{email}}</p>
-{{senha_temp_linha}}
-<p>Use o botão abaixo para entrar no sistema.</p>
+<p>Por segurança, <strong>não enviamos senha por e-mail</strong>. Use o botão abaixo para definir sua senha (link de uso único).</p>
 {{cta_bloco}}
 {{link_fallback}}
 HTML,
                 'rodape' => $rodapePadrao . ' Guarde suas credenciais com segurança.',
+            ],
+            'auth.portal_otp' => [
+                'assunto' => 'Código de acesso — Portal do Colaborador',
+                'titulo' => 'Seu código de acesso',
+                'texto' => "Oi {{nome}},\n\nSeu código de acesso ao Portal do Colaborador é: {{otp}}\nVálido por {{validade}}.\nSe você não solicitou, ignore este e-mail.\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Seu código de acesso ao <strong>Portal do Colaborador</strong> é:</p>
+<p style="font-size:28px;font-weight:800;letter-spacing:0.2em;font-family:Consolas,monospace;text-align:center;margin:24px 0;">{{otp}}</p>
+<p>Válido por <strong>{{validade}}</strong>. Não compartilhe este código.</p>
+<p>Se você não solicitou o acesso, ignore este e-mail.</p>
+HTML,
+                'rodape' => $rodapePadrao . ' Login com verificação em duas etapas.',
             ],
             'auth.senha_alterada' => [
                 'assunto' => 'Sua senha foi alterada — Arcadis RH',
@@ -543,6 +561,11 @@ HTML,
                 'portalUrl' => '#preview-login',
                 'cta_label' => 'ENTRAR',
             ],
+            'auth.portal_otp' => [
+                'nome' => 'Colaborador',
+                'otp' => '123456',
+                'validade' => '10 minutos',
+            ],
             default => [],
         };
     }
@@ -589,7 +612,8 @@ HTML,
             $nome = trim((string) ($vars['nome'] ?? 'Usuário'));
             $email = trim((string) ($vars['email'] ?? ''));
             $validade = trim((string) ($vars['validade'] ?? '1 hora'));
-            $senhaTemp = trim((string) ($vars['senha_temp'] ?? ''));
+            $otp = trim((string) ($vars['otp'] ?? ''));
+            $senhaTemp = ''; // nunca enviar senha em claro
             $portalUrl = trim((string) ($vars['portalUrl'] ?? $vars['portal_url'] ?? ''));
             $ctaLabel = trim((string) ($vars['cta_label'] ?? 'ABRA AGORA'));
             if ($ctaLabel === '') {
@@ -608,16 +632,15 @@ HTML,
             return [
                 'nome' => $nome,
                 'email' => $email,
+                'otp' => $otp,
                 'validade' => $validade !== '' ? $validade : '1 hora',
                 'senha_temp' => $senhaTemp,
                 'portal_url' => $portalUrl,
                 'cta_bloco' => $cta,
                 'link_fallback' => $fallback,
                 'portal_txt' => $portalTxt,
-                'senha_temp_linha' => $senhaTemp !== ''
-                    ? '<p style="margin-top:12px;"><strong>Senha temporária:</strong> <span style="font-family:Consolas,monospace;font-weight:700;">' . $e($senhaTemp) . '</span></p><p>Altere-a no primeiro acesso em <em>Meu perfil</em>.</p>'
-                    : '',
-                'senha_temp_txt' => $senhaTemp !== '' ? "\nSenha temporária: {$senhaTemp}\nAltere-a no primeiro acesso em Meu perfil.\n" : '',
+                'senha_temp_linha' => '',
+                'senha_temp_txt' => '',
             ];
         }
 

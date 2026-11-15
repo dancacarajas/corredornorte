@@ -119,11 +119,13 @@ final class Installer
         $this->migrateContaUsuario($pdo);
         $messages[] = 'Migração: conta de usuário (perfil, avatar, reset)';
 
-        $adminPassword = 'admin123';
+        $adminPassword = bin2hex(random_bytes(8)) . 'A1';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
-        $stmt = $pdo->prepare('UPDATE usuarios SET senha_hash = :h WHERE email = :e');
+        $stmt = $pdo->prepare(
+            'UPDATE usuarios SET senha_hash = :h, password_changed_at = NULL WHERE email = :e'
+        );
         $stmt->execute(['h' => $hash, 'e' => 'admin@arcadis.local']);
-        $messages[] = 'Usuário admin preparado';
+        $messages[] = 'Usuário admin preparado (senha aleatória — anote agora)';
 
         $this->ensureDirectories();
         $this->writeDatabaseLocal($host, $port, $database, $username, $password);

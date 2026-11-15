@@ -67,6 +67,11 @@ final class HePortalAuth
     public static function logout(): void
     {
         self::start();
-        unset($_SESSION['he_portal']);
+        unset($_SESSION['he_portal'], $_SESSION['he_otp']);
+        // Não destrói a sessão inteira (pode coexistir com admin no mesmo browser),
+        // mas regenera o ID para invalidar fixação.
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
     }
 }

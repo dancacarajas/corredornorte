@@ -71,7 +71,8 @@ final class ContaController
                 (int) Auth::id(),
                 (string) ($_POST['nome'] ?? ''),
                 (string) ($_POST['email'] ?? ''),
-                (string) ($_POST['telefone'] ?? '')
+                (string) ($_POST['telefone'] ?? ''),
+                (string) ($_POST['senha_atual'] ?? '')
             );
             Auth::refreshSessionProfile();
             header('Location: /conta?ok=perfil');

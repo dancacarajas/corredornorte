@@ -87,6 +87,11 @@ $inicial = mb_strtoupper(mb_substr((string) ($usuario['nome'] ?? 'U'), 0, 1));
                         : '—'
                 ) ?>">
             </div>
+            <div class="form-field" style="grid-column:1/-1;">
+                <label class="form-label">Senha atual (obrigatória só se alterar o e-mail)</label>
+                <input class="form-control" type="password" name="senha_atual" autocomplete="current-password"
+                       placeholder="Deixe em branco se não mudar o e-mail">
+            </div>
             <div class="stack-row" style="grid-column:1/-1;">
                 <button class="btn btn-primary" type="submit">Salvar dados</button>
             </div>

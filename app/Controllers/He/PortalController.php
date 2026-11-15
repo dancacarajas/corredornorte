@@ -30,47 +30,115 @@ final class PortalController
         View::render('he/login', [
             'pageTitle' => 'Portal do Colaborador',
             'error' => null,
+            'ok' => null,
             'cpf' => '',
+            'otpPending' => null,
         ], null);
     }
 
     public function login(): void
     {
         HePortalAuth::start();
-        $agora = time();
-        $janela = array_values(array_filter(
-            (array) ($_SESSION['_he_login_fails'] ?? []),
-            static fn($t): bool => is_int($t) && ($agora - $t) < 300
-        ));
-        if (count($janela) >= 10) {
-            $_SESSION['_he_login_fails'] = $janela;
+        $ip = $this->clientIp();
+        $pdo = null;
+        try {
+            $pdo = Database::connection();
+        } catch (Throwable) {
+            $pdo = null;
+        }
+
+        // Etapa 2: validar OTP
+        $challenge = trim((string) ($_POST['otp_challenge'] ?? ''));
+        $otp = trim((string) ($_POST['otp'] ?? ''));
+        if ($challenge !== '' && $otp !== '') {
+            if (!$pdo instanceof \PDO) {
+                View::render('he/login', [
+                    'pageTitle' => 'Portal do Colaborador',
+                    'error' => 'Serviço temporariamente indisponível.',
+                    'cpf' => '',
+                    'otpPending' => null,
+                ], null);
+                return;
+            }
+            $loginSvc = new \App\Services\HePortalLoginService($pdo);
+            $colab = $loginSvc->validarOtp($challenge, $otp);
+            if ($colab === null) {
+                $cpfSess = (string) (($_SESSION['he_otp']['cpf'] ?? '') ?: '');
+                if ($cpfSess !== '') {
+                    $loginSvc->registrarFalha($cpfSess, $ip);
+                }
+                $pending = $_SESSION['he_otp'] ?? null;
+                View::render('he/login', [
+                    'pageTitle' => 'Portal do Colaborador',
+                    'error' => 'Código inválido ou expirado. Solicite um novo.',
+                    'cpf' => $cpfSess,
+                    'otpPending' => is_array($pending) ? [
+                        'challenge' => (string) ($pending['challenge'] ?? ''),
+                        'mascara' => (new \App\Services\HePortalLoginService($pdo))
+                            ->mascararEmail((string) ($pending['email'] ?? '')),
+                    ] : null,
+                ], null);
+                return;
+            }
+            $loginSvc->registrarSucesso((string) $colab['cpf'], $ip);
+            HePortalAuth::attempt($colab);
+            header('Location: /he');
+            exit;
+        }
+
+        // Etapa 1: CPF → envia OTP
+        $cpf = preg_replace('/\D+/', '', (string) ($_POST['cpf'] ?? '')) ?: '';
+        if (!$pdo instanceof \PDO) {
             View::render('he/login', [
                 'pageTitle' => 'Portal do Colaborador',
-                'error' => 'Muitas tentativas em sequência. Aguarde alguns minutos e tente novamente.',
-                'cpf' => '',
+                'error' => 'Serviço temporariamente indisponível.',
+                'cpf' => $cpf,
+                'otpPending' => null,
             ], null);
             return;
         }
 
-        $cpf = preg_replace('/\D+/', '', (string) ($_POST['cpf'] ?? '')) ?: '';
-        $svc = new HeAutorizacaoService();
-        $colab = $svc->buscarColaboradorPorCpf($cpf);
+        $loginSvc = new \App\Services\HePortalLoginService($pdo);
+        if ($loginSvc->bloqueado($cpf, $ip)) {
+            View::render('he/login', [
+                'pageTitle' => 'Portal do Colaborador',
+                'error' => 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
+                'cpf' => $cpf,
+                'otpPending' => null,
+            ], null);
+            return;
+        }
 
-        if ($colab === null || (string) $colab['status'] !== 'ativo') {
-            $janela[] = $agora;
-            $_SESSION['_he_login_fails'] = $janela;
+        $colab = $loginSvc->buscarColaboradorAtivoPorCpf($cpf);
+        if ($colab === null) {
+            $loginSvc->registrarFalha($cpf !== '' ? $cpf : '00000000000', $ip);
             View::render('he/login', [
                 'pageTitle' => 'Portal do Colaborador',
                 'error' => 'CPF não encontrado ou colaborador inativo.',
                 'cpf' => $cpf,
+                'otpPending' => null,
             ], null);
             return;
         }
 
-        unset($_SESSION['_he_login_fails']);
-        HePortalAuth::attempt($colab);
-        header('Location: /he');
-        exit;
+        try {
+            $otpInfo = $loginSvc->iniciarOtp($colab);
+            View::render('he/login', [
+                'pageTitle' => 'Portal do Colaborador',
+                'error' => null,
+                'ok' => 'Enviamos um código de 6 dígitos para ' . $otpInfo['mascara'] . '.',
+                'cpf' => $cpf,
+                'otpPending' => $otpInfo,
+            ], null);
+        } catch (RuntimeException $e) {
+            $loginSvc->registrarFalha($cpf, $ip);
+            View::render('he/login', [
+                'pageTitle' => 'Portal do Colaborador',
+                'error' => $e->getMessage(),
+                'cpf' => $cpf,
+                'otpPending' => null,
+            ], null);
+        }
     }
 
     public function logout(): void
@@ -78,6 +146,12 @@ final class PortalController
         HePortalAuth::logout();
         header('Location: /he/login');
         exit;
+    }
+
+    private function clientIp(): string
+    {
+        $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+        return strlen($ip) > 45 ? substr($ip, 0, 45) : $ip;
     }
 
     public function overview(): void

@@ -24,6 +24,7 @@ use App\Controllers\Rh\MedicaoController;
 use App\Controllers\Rh\ValeRefeicaoController;
 use App\Helpers\Auth;
 use App\Helpers\Csrf;
+use App\Helpers\HePortalAuth;
 use App\Helpers\Router;
 use App\Helpers\View;
 
@@ -48,6 +49,13 @@ ini_set('log_errors', '1');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
 header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+header("Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline'");
+if ((($config['env'] ?? '') === 'production')
+    || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')) {
+    header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+}
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $scriptName = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
@@ -150,6 +158,13 @@ $router->get('/he/folhas/{id}/pdf', [$hePortal, 'folhaPdf']);
 $router->post('/he/folhas/{id}/assinar', [$hePortal, 'folhaAssinar']);
 $router->get('/he/ordens', [$hePortal, 'ordensJson']);
 
+// Instalador bloqueado após instalação (evita reabrir com senha previsível).
+if ($installed && str_starts_with($normalizedPath, '/install')) {
+    http_response_code(404);
+    echo 'Not Found';
+    exit;
+}
+
 $public = ['/login', '/he/login', '/esqueci-senha'];
 $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/assets')
@@ -165,6 +180,9 @@ $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/install');
 if (!$isPublic) {
     Auth::requireLogin();
+} elseif (str_starts_with($path, '/he') && !in_array($normalizedPath, ['/he/login'], true)) {
+    // Gate central do portal HE (evita endpoint novo sem requireLogin).
+    HePortalAuth::requireLogin();
 
     $requireAny = static function (string ...$perms): void {
         if (!Auth::canAny(...$perms)) {

@@ -83,7 +83,7 @@ $okMsgs = [
             <div class="form-field" style="display:flex;align-items:flex-end;">
                 <label class="text-sm" style="display:flex;gap:.5rem;align-items:center;">
                     <input type="checkbox" name="enviar_boas_vindas" value="1" checked>
-                    Enviar e-mail de boas-vindas com acesso
+                    Enviar e-mail com link para definir a senha (sem enviar senha em claro)
                 </label>
             </div>
         <?php endif; ?>

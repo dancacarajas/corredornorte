@@ -5,7 +5,7 @@ RewriteEngine On
 RewriteBase /
 
 # Protege pastas sensíveis caso o document root esteja acima de public/
-RewriteRule ^(storage|config|vendor|app|database|scripts)/ - [F,L]
+RewriteRule ^(storage|config|vendor|app|database|scripts|tmp|output)/ - [F,L]
 
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

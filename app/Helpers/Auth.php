@@ -16,11 +16,19 @@ final class Auth
     {
         if (session_status() !== PHP_SESSION_ACTIVE) {
             $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-                || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+                || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+                || ((string) ($_SERVER['SERVER_PORT'] ?? '') === '443');
+            $appCfg = [];
+            try {
+                $appCfg = require dirname(__DIR__, 2) . '/config/app.php';
+            } catch (Throwable) {
+                $appCfg = [];
+            }
+            $forceSecure = (($appCfg['env'] ?? '') === 'production') || $https;
             session_set_cookie_params([
                 'httponly' => true,
                 'samesite' => 'Lax',
-                'secure' => $https,
+                'secure' => $forceSecure,
             ]);
             session_start();
         }

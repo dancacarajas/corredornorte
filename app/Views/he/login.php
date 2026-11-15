@@ -4,7 +4,9 @@ use App\Helpers\Csrf;
 use App\Helpers\View;
 
 $error = $error ?? null;
+$ok = $ok ?? null;
 $cpf = $cpf ?? '';
+$otpPending = is_array($otpPending ?? null) ? $otpPending : null;
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -12,6 +14,7 @@ $cpf = $cpf ?? '';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portal do Colaborador · Arcadis</title>
+    <meta name="referrer" content="no-referrer">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
@@ -45,21 +48,44 @@ $cpf = $cpf ?? '';
         <img src="<?= View::asset('img/logo.png') ?>" alt="Arcadis">
     </div>
     <h1>Portal do Colaborador</h1>
-    <p>Informe o CPF para acessar seus relatórios de atividades.</p>
+    <p><?= $otpPending
+        ? 'Digite o código de 6 dígitos enviado ao seu e-mail.'
+        : 'Informe o CPF. Enviaremos um código de acesso ao e-mail cadastrado.' ?></p>
 
+    <?php if ($ok): ?>
+        <div class="alert alert-success" style="margin-bottom:1rem;"><?= View::e((string) $ok) ?></div>
+    <?php endif; ?>
     <?php if ($error): ?>
         <div class="alert alert-danger" style="margin-bottom:1rem;"><?= View::e($error) ?></div>
     <?php endif; ?>
 
-    <form method="post" action="/he/login" class="section-stack">
-        <?= Csrf::field() ?>
-        <div class="form-field">
-            <label class="form-label" for="cpf">CPF</label>
-            <input class="form-control" id="cpf" name="cpf" inputmode="numeric" autocomplete="username"
-                   placeholder="000.000.000-00" value="<?= View::e($cpf) ?>" required>
-        </div>
-        <button class="btn btn-primary" type="submit" style="width:100%;">Entrar</button>
-    </form>
+    <?php if ($otpPending): ?>
+        <form method="post" action="/he/login" class="section-stack">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="otp_challenge" value="<?= View::e((string) ($otpPending['challenge'] ?? '')) ?>">
+            <div class="form-field">
+                <label class="form-label" for="otp">Código de acesso</label>
+                <input class="form-control" id="otp" name="otp" inputmode="numeric" autocomplete="one-time-code"
+                       placeholder="000000" maxlength="6" pattern="[0-9]{6}" required autofocus>
+            </div>
+            <button class="btn btn-primary" type="submit" style="width:100%;">Confirmar código</button>
+        </form>
+        <form method="post" action="/he/login" style="margin-top:.85rem;">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="cpf" value="<?= View::e($cpf) ?>">
+            <button class="btn btn-ghost btn-sm" type="submit" style="width:100%;">Reenviar código</button>
+        </form>
+    <?php else: ?>
+        <form method="post" action="/he/login" class="section-stack">
+            <?= Csrf::field() ?>
+            <div class="form-field">
+                <label class="form-label" for="cpf">CPF</label>
+                <input class="form-control" id="cpf" name="cpf" inputmode="numeric" autocomplete="username"
+                       placeholder="000.000.000-00" value="<?= View::e($cpf) ?>" required autofocus>
+            </div>
+            <button class="btn btn-primary" type="submit" style="width:100%;">Receber código</button>
+        </form>
+    <?php endif; ?>
 </div>
 </body>
 </html>

@@ -62,7 +62,10 @@ final class UploadGuard
             }
         }
 
-        if ($mime !== '' && !in_array($mime, $allowedMimes, true)) {
+        if ($mime === '') {
+            throw new RuntimeException('Não foi possível validar o tipo do arquivo.');
+        }
+        if (!in_array($mime, $allowedMimes, true)) {
             throw new RuntimeException('Tipo MIME de arquivo não permitido.');
         }
 

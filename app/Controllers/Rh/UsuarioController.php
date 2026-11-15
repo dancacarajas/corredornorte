@@ -141,7 +141,7 @@ final class UsuarioController
             if ($id === null) {
                 $novoId = $svc->criar($data, Auth::id());
                 if ($enviarBoasVindas) {
-                    (new ContaService($pdo))->enviarBoasVindas($novoId, $data['senha'] !== '' ? $data['senha'] : null);
+                    (new ContaService($pdo))->enviarBoasVindas($novoId);
                 }
                 header('Location: /rh/usuarios?ok=criado');
             } else {

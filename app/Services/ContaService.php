@@ -161,8 +161,13 @@ final class ContaService
     /**
      * @return array{ok:bool,mensagem:string}
      */
-    public function atualizarPerfil(int $usuarioId, string $nome, string $email, ?string $telefone): array
-    {
+    public function atualizarPerfil(
+        int $usuarioId,
+        string $nome,
+        string $email,
+        ?string $telefone,
+        ?string $senhaAtual = null
+    ): array {
         $nome = trim($nome);
         $email = strtolower(trim($email));
         $telefone = $telefone !== null ? trim($telefone) : null;
@@ -178,6 +183,20 @@ final class ContaService
         }
         if ($telefone !== null && mb_strlen($telefone) > 32) {
             throw new RuntimeException('Telefone muito longo.');
+        }
+
+        $stAtual = $this->db->prepare('SELECT email, senha_hash FROM usuarios WHERE id = :id LIMIT 1');
+        $stAtual->execute(['id' => $usuarioId]);
+        $atual = $stAtual->fetch(PDO::FETCH_ASSOC);
+        if ($atual === false) {
+            throw new RuntimeException('Usuário não encontrado.');
+        }
+        $emailAtual = strtolower((string) $atual['email']);
+        if ($email !== $emailAtual) {
+            if ($senhaAtual === null || $senhaAtual === ''
+                || !password_verify($senhaAtual, (string) $atual['senha_hash'])) {
+                throw new RuntimeException('Informe a senha atual para alterar o e-mail.');
+            }
         }
 
         $st = $this->db->prepare('SELECT id FROM usuarios WHERE email = :e AND id <> :id LIMIT 1');
@@ -318,6 +337,32 @@ final class ContaService
         }
     }
 
+    public function resetRateLimited(string $email, string $ip): bool
+    {
+        $email = strtolower(trim($email));
+        $chaveEmail = 'reset:' . $email;
+        $chaveIp = 'reset-ip:' . $ip;
+        try {
+            $secs = 3600;
+            $st = $this->db->prepare(
+                "SELECT COUNT(*) FROM login_attempts
+                 WHERE sucesso = 0 AND email = :e
+                   AND created_at >= (NOW() - INTERVAL {$secs} SECOND)"
+            );
+            $st->execute(['e' => $chaveEmail]);
+            if ((int) $st->fetchColumn() >= 3) {
+                return true;
+            }
+            $st->execute(['e' => $chaveIp]);
+            if ((int) $st->fetchColumn() >= 10) {
+                return true;
+            }
+        } catch (Throwable) {
+        }
+
+        return false;
+    }
+
     /**
      * Sempre retorna mensagem genérica (anti-enumeration).
      */
@@ -325,8 +370,21 @@ final class ContaService
     {
         $msg = 'Se o e-mail estiver cadastrado, enviaremos um link para redefinir a senha.';
         $email = strtolower(trim($email));
+        $ip = $ip ?? '0.0.0.0';
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return $msg;
+        }
+        if ($this->resetRateLimited($email, $ip)) {
+            return 'Muitas solicitações. Aguarde cerca de 1 hora e tente novamente.';
+        }
+        try {
+            $this->db->prepare(
+                'INSERT INTO login_attempts (email, ip, sucesso) VALUES (:e, :ip, 0)'
+            )->execute(['e' => 'reset:' . $email, 'ip' => $ip]);
+            $this->db->prepare(
+                'INSERT INTO login_attempts (email, ip, sucesso) VALUES (:e, :ip, 0)'
+            )->execute(['e' => 'reset-ip:' . $ip, 'ip' => $ip]);
+        } catch (Throwable) {
         }
 
         $st = $this->db->prepare(
@@ -454,14 +512,29 @@ final class ContaService
         if ($user === null) {
             return;
         }
-        $loginUrl = AppUrl::base() . '/login';
+        // Nunca envia senha em claro: gera link de redefinição de uso único.
+        unset($senhaTemporaria);
+        $this->db->prepare(
+            'UPDATE password_reset_tokens SET used_at = NOW()
+             WHERE usuario_id = :id AND used_at IS NULL'
+        )->execute(['id' => $usuarioId]);
+        $token = bin2hex(random_bytes(32));
+        $ttl = (int) self::RESET_TTL_SECONDS;
+        $this->db->prepare(
+            "INSERT INTO password_reset_tokens (usuario_id, token_hash, expires_at, request_ip)
+             VALUES (:u, :h, DATE_ADD(NOW(), INTERVAL {$ttl} SECOND), NULL)"
+        )->execute([
+            'u' => $usuarioId,
+            'h' => hash('sha256', $token),
+        ]);
+        $resetUrl = AppUrl::base() . '/redefinir-senha/' . $token;
         try {
             $tpl = EmailTemplateService::render('auth.boas_vindas', [
                 'nome' => (string) $user['nome'],
                 'email' => (string) $user['email'],
-                'portalUrl' => $loginUrl,
-                'cta_label' => 'ACESSAR O SISTEMA',
-                'senha_temp' => $senhaTemporaria ?? '',
+                'portalUrl' => $resetUrl,
+                'cta_label' => 'DEFINIR MINHA SENHA',
+                'senha_temp' => '',
             ], $this->db);
             (new MailService())->send(
                 (string) $user['email'],
