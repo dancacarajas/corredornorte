@@ -262,6 +262,11 @@ final class PontoController
         ]);
     }
 
+    public function acaoLote(): void
+    {
+        $this->loteStatus();
+    }
+
     public function loteStatus(): void
     {
         $pdo = Db::tryConnection();
@@ -281,8 +286,11 @@ final class PontoController
         }
 
         try {
-            $novoStatus = (string) ($_POST['status'] ?? '');
-            if (!in_array($novoStatus, ['em_tratamento', 'conferido', 'fechado'], true)) {
+            $acao = trim((string) ($_POST['acao'] ?? ''));
+            $novoStatus = trim((string) ($_POST['status'] ?? ''));
+            $isPreencherPrevistos = ($acao === 'preencher_previstos' || $novoStatus === 'preencher_previstos');
+
+            if (!$isPreencherPrevistos && !in_array($novoStatus, ['em_tratamento', 'conferido', 'fechado'], true)) {
                 throw new RuntimeException('Status de lote inválido.');
             }
             $ids = array_values(array_unique(array_map('intval', (array) ($_POST['espelho_ids'] ?? []))));
@@ -297,25 +305,56 @@ final class PontoController
             $motor = new MotorPontoService($pdo);
             $justificativa = trim((string) ($_POST['justificativa'] ?? '')) ?: null;
             $afetados = 0;
+            $avisosLote = [];
 
             foreach ($ids as $espelhoId) {
                 $st = $pdo->prepare(
-                    'SELECT e.id FROM ponto_espelhos e
+                    'SELECT e.id, c.nome FROM ponto_espelhos e
                      INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+                     INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
                      WHERE e.id = :id
                        AND pp.data_inicio = :ini
                        AND pp.data_fim = :fim'
                 );
                 $st->execute(['id' => $espelhoId, 'ini' => $dataInicio, 'fim' => $dataFim]);
-                $idEspelho = (int) $st->fetchColumn();
+                $rowEspelho = $st->fetch(PDO::FETCH_ASSOC);
+                $idEspelho = (int) ($rowEspelho['id'] ?? 0);
                 if ($idEspelho <= 0) {
                     continue;
                 }
-                $motor->alterarStatus($idEspelho, $novoStatus, $justificativa, Auth::id());
-                $afetados++;
+                $nomeColab = trim((string) ($rowEspelho['nome'] ?? ''));
+
+                try {
+                    if ($isPreencherPrevistos) {
+                        $pdo->beginTransaction();
+                        try {
+                            $this->preencherPrevistosDoEspelho($pdo, $idEspelho, $dataInicio, $dataFim);
+                            $pdo->commit();
+                            $afetados++;
+                        } catch (Throwable $errPrev) {
+                            if ($pdo->inTransaction()) {
+                                $pdo->rollBack();
+                            }
+                            throw $errPrev;
+                        }
+                    } else {
+                        $motor->alterarStatus($idEspelho, $novoStatus, $justificativa, Auth::id());
+                        $afetados++;
+                    }
+                } catch (Throwable $e) {
+                    $avisosLote[] = ($nomeColab !== '' ? $nomeColab . ': ' : '') . $e->getMessage();
+                }
             }
 
-            header('Location: ' . $redirect . '&ok_lote=' . $afetados . '&status_lote=' . rawurlencode($novoStatus));
+            $statusLabel = $isPreencherPrevistos ? 'previstos preenchidos' : $novoStatus;
+            $location = $redirect;
+            if ($afetados > 0) {
+                $location .= '&ok_lote=' . $afetados . '&status_lote=' . rawurlencode($statusLabel);
+            }
+            if ($avisosLote !== []) {
+                $location .= '&erro=' . rawurlencode(implode(' | ', array_slice($avisosLote, 0, 5)));
+            }
+            header('Location: ' . $location);
         } catch (Throwable $e) {
             header('Location: ' . $redirect . '&erro=' . rawurlencode($e->getMessage()));
         }
@@ -1466,97 +1505,142 @@ final class PontoController
         }
         try {
             $pdo->beginTransaction();
-            $st = $pdo->prepare('SELECT status FROM ponto_espelhos WHERE id = ? FOR UPDATE');
-            $st->execute([$espelhoId]);
-            $status = $st->fetchColumn();
-            if ($status === false) {
-                throw new RuntimeException('Espelho não encontrado.');
-            }
-            if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
-                throw new RuntimeException('Reabra o período para preencher os horários previstos.');
-            }
-
             $ini = trim((string) ($_POST['data_inicio'] ?? ''));
             $fim = trim((string) ($_POST['data_fim'] ?? ''));
-            $filtroData = preg_match('/^\d{4}-\d{2}-\d{2}$/D', $ini) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $fim);
-
-            $sqlDias = "SELECT id, previsto_entrada, previsto_intervalo_inicio, previsto_intervalo_fim, previsto_saida
-                        FROM ponto_dias
-                        WHERE espelho_id = :id
-                          AND tipo_dia = 'trabalho'
-                          AND ent1 IS NULL AND sai1 IS NULL AND ent2 IS NULL AND sai2 IS NULL"
-                . ($filtroData ? ' AND data BETWEEN :ini AND :fim' : '')
-                . ' ORDER BY data ASC';
-            $qDias = $pdo->prepare($sqlDias);
-            $params = ['id' => $espelhoId];
-            if ($filtroData) {
-                $params['ini'] = $ini;
-                $params['fim'] = $fim;
-            }
-            $qDias->execute($params);
-            $pendentes = $qDias->fetchAll() ?: [];
-
-            if ($pendentes !== []) {
-                $diaIds = array_map(static fn(array $r): int => (int) $r['id'], $pendentes);
-                $in = implode(',', $diaIds);
-                $marcacoes = [];
-                foreach ($pdo->query(
-                    "SELECT ponto_dia_id, sequencia, horario, origem
-                     FROM ponto_marcacoes
-                     WHERE ponto_dia_id IN ({$in}) AND origem IN ('gerado','previsto')"
-                ) as $mRow) {
-                    $marcacoes[(int) $mRow['ponto_dia_id']][(string) $mRow['origem']][(int) $mRow['sequencia']] = substr((string) $mRow['horario'], 0, 5);
-                }
-
-                $calc = new CalculoPontoService($pdo);
-                $aplicados = 0;
-                $metaDia = $pdo->prepare('SELECT data FROM ponto_dias WHERE id = :id');
-                foreach ($pendentes as $dia) {
-                    $did = (int) $dia['id'];
-                    $metaDia->execute(['id' => $did]);
-                    $dataDia = (string) ($metaDia->fetchColumn() ?: '');
-                    // Não preenche presença em dia coberto por justificativa que abona falta.
-                    if ($calc->justificativaAbonoDoDia($espelhoId, $dataDia) !== null) {
-                        continue;
-                    }
-                    $map = [];
-                    foreach ($marcacoes[$did]['gerado'] ?? [] as $seq => $hora) {
-                        $slot = $seq >= 5 ? $seq - 4 : $seq;
-                        $map[$slot] = $hora;
-                    }
-                    if ($map === []) {
-                        foreach ($marcacoes[$did]['previsto'] ?? [] as $seq => $hora) {
-                            $map[$seq] = $hora;
-                        }
-                    }
-                    $e1 = $map[1] ?? (!empty($dia['previsto_entrada']) ? substr((string) $dia['previsto_entrada'], 0, 5) : null);
-                    $s1 = $map[2] ?? (!empty($dia['previsto_intervalo_inicio']) ? substr((string) $dia['previsto_intervalo_inicio'], 0, 5) : null);
-                    $e2 = $map[3] ?? (!empty($dia['previsto_intervalo_fim']) ? substr((string) $dia['previsto_intervalo_fim'], 0, 5) : null);
-                    $s2 = $map[4] ?? (!empty($dia['previsto_saida']) ? substr((string) $dia['previsto_saida'], 0, 5) : null);
-                    if (!$e1 && !$s2) {
-                        continue;
-                    }
-                    $calc->salvarBatidas($did, [
-                        'ent1' => $e1,
-                        'sai1' => $s1,
-                        'ent2' => $e2,
-                        'sai2' => $s2,
-                    ], 'gerado', false);
-                    $aplicados++;
-                }
-                if ($aplicados > 0) {
-                    $calc->atualizarTotaisEspelho($espelhoId);
-                    $pdo->prepare("UPDATE ponto_espelhos SET status='em_tratamento' WHERE id=:id AND status='em_aberto'")
-                        ->execute(['id' => $espelhoId]);
-                }
-            }
-
+            $this->preencherPrevistosDoEspelho($pdo, $espelhoId, $ini, $fim);
             $pdo->commit();
             $this->redirectEspelho($espelhoId, 'previsto-aplicado');
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /** Preenche previstos de um espelho (uso interno e lote da Medição). */
+    public function preencherPrevistosDoEspelho(PDO $pdo, int $espelhoId, string $ini = '', string $fim = ''): int
+    {
+        $st = $pdo->prepare('SELECT status FROM ponto_espelhos WHERE id = ? FOR UPDATE');
+        $st->execute([$espelhoId]);
+        $status = $st->fetchColumn();
+        if ($status === false) {
+            throw new RuntimeException('Espelho não encontrado.');
+        }
+        if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
+            throw new RuntimeException('Reabra o período para preencher os horários previstos.');
+        }
+
+        $filtroData = preg_match('/^\d{4}-\d{2}-\d{2}$/D', $ini) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $fim);
+
+        $sqlDias = "SELECT id, previsto_entrada, previsto_intervalo_inicio, previsto_intervalo_fim, previsto_saida
+                    FROM ponto_dias
+                    WHERE espelho_id = :id
+                      AND tipo_dia = 'trabalho'
+                      AND ent1 IS NULL AND sai1 IS NULL AND ent2 IS NULL AND sai2 IS NULL"
+            . ($filtroData ? ' AND data BETWEEN :ini AND :fim' : '')
+            . ' ORDER BY data ASC';
+        $qDias = $pdo->prepare($sqlDias);
+        $params = ['id' => $espelhoId];
+        if ($filtroData) {
+            $params['ini'] = $ini;
+            $params['fim'] = $fim;
+        }
+        $qDias->execute($params);
+        $pendentes = $qDias->fetchAll() ?: [];
+
+        $calc = new CalculoPontoService($pdo);
+        $aplicados = 0;
+
+        if ($pendentes !== []) {
+            $diaIds = array_map(static fn(array $r): int => (int) $r['id'], $pendentes);
+            $in = implode(',', $diaIds);
+            $marcacoes = [];
+            foreach ($pdo->query(
+                "SELECT ponto_dia_id, sequencia, horario, origem
+                 FROM ponto_marcacoes
+                 WHERE ponto_dia_id IN ({$in}) AND origem IN ('gerado','previsto')"
+            ) as $mRow) {
+                $marcacoes[(int) $mRow['ponto_dia_id']][(string) $mRow['origem']][(int) $mRow['sequencia']] = substr((string) $mRow['horario'], 0, 5);
+            }
+
+            $metaDia = $pdo->prepare('SELECT data FROM ponto_dias WHERE id = :id');
+            foreach ($pendentes as $dia) {
+                $did = (int) $dia['id'];
+                $metaDia->execute(['id' => $did]);
+                $dataDia = (string) ($metaDia->fetchColumn() ?: '');
+                // Não preenche presença em dia coberto por justificativa que abona falta.
+                if ($calc->justificativaAbonoDoDia($espelhoId, $dataDia) !== null) {
+                    continue;
+                }
+                $map = [];
+                foreach ($marcacoes[$did]['gerado'] ?? [] as $seq => $hora) {
+                    $slot = $seq >= 5 ? $seq - 4 : $seq;
+                    $map[$slot] = $hora;
+                }
+                if ($map === []) {
+                    foreach ($marcacoes[$did]['previsto'] ?? [] as $seq => $hora) {
+                        $map[$seq] = $hora;
+                    }
+                }
+                $e1 = $map[1] ?? (!empty($dia['previsto_entrada']) ? substr((string) $dia['previsto_entrada'], 0, 5) : null);
+                $s1 = $map[2] ?? (!empty($dia['previsto_intervalo_inicio']) ? substr((string) $dia['previsto_intervalo_inicio'], 0, 5) : null);
+                $e2 = $map[3] ?? (!empty($dia['previsto_intervalo_fim']) ? substr((string) $dia['previsto_intervalo_fim'], 0, 5) : null);
+                $s2 = $map[4] ?? (!empty($dia['previsto_saida']) ? substr((string) $dia['previsto_saida'], 0, 5) : null);
+                if (!$e1 && !$s2) {
+                    continue;
+                }
+                $calc->salvarBatidas($did, [
+                    'ent1' => $e1,
+                    'sai1' => $s1,
+                    'ent2' => $e2,
+                    'sai2' => $s2,
+                ], 'gerado', false);
+                $aplicados++;
+            }
+        }
+
+        $calc->recalcularEspelho($espelhoId);
+        if ($aplicados > 0) {
+            $pdo->prepare("UPDATE ponto_espelhos SET status='em_tratamento' WHERE id=:id AND status='em_aberto'")
+                ->execute(['id' => $espelhoId]);
+        }
+
+        return $aplicados;
+    }
+
+    /**
+     * Aplica em lote todas as HEs declaradas no Relatório de Atividades deste espelho.
+     */
+    public function heClienteAplicarTodas(string $id = '0'): void
+    {
+        Auth::requirePermission('ponto.editar');
+        Csrf::requireValid();
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        if (!$pdo instanceof PDO || $espelhoId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $heService = new \App\Services\HeClienteService($pdo);
+            $uid = (int) (Auth::id() ?? 0);
+            $n = 0;
+            if (method_exists($heService, 'aplicarTodasDoEspelho')) {
+                $n = (int) $heService->aplicarTodasDoEspelho($espelhoId, $uid);
+            } else {
+                foreach ($heService->listarDeclaracoesDoEspelho($espelhoId) as $decl) {
+                    if (($decl['he_status'] ?? '') === 'declarada') {
+                        $heService->aplicarDoRaDia((int) $decl['ra_dia_id'], $uid);
+                        $n++;
+                    }
+                }
+            }
+            if ($n <= 0) {
+                throw new RuntimeException('Nenhuma HE declarada pendente para aplicar neste período.');
+            }
+            $this->redirectEspelho($espelhoId, 'he-todas-aplicadas');
+        } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
         }
     }
@@ -1576,6 +1660,67 @@ final class PontoController
             $obs = trim((string) ($_POST['resolucao_obs'] ?? ''));
             (new \App\Services\AssinaturaEletronicaService($pdo))->resolverDivergencia($espelhoId, Auth::id(), $obs);
             $this->redirectEspelho($espelhoId, 'divergencia-resolvida');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /**
+     * Resolve a divergência, confere e fecha o espelho, emite novo PDF + Link e envia por e-mail em um clique.
+     */
+    public function resolverDivergenciaEReenviar(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        if (!$pdo instanceof PDO || $espelhoId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $obs = trim((string) ($_POST['resolucao_obs'] ?? ''));
+            $uid = Auth::id();
+
+            // 1. Resolve a divergência
+            $assinaturaService = new \App\Services\AssinaturaEletronicaService($pdo);
+            $assinaturaService->resolverDivergencia($espelhoId, $uid, $obs);
+
+            // 2. Confere e fecha o espelho
+            $motor = new MotorPontoService($pdo);
+            $just = $obs !== '' ? $obs : 'Divergência resolvida e folha reenviada pelo RH';
+            $motor->alterarStatus($espelhoId, 'conferido', $just, $uid);
+            $motor->alterarStatus($espelhoId, 'fechado', $just, $uid);
+
+            // 3. Emite novo PDF + Link
+            $folhaService = new \App\Services\FolhaPontoService($pdo);
+            $ini = trim((string) ($_POST['data_inicio'] ?? ''));
+            $fim = trim((string) ($_POST['data_fim'] ?? ''));
+            $pdf = $folhaService->gerarPdf($espelhoId, $uid, $ini !== '' ? $ini : null, $fim !== '' ? $fim : null);
+            $docId = (int) ($pdf['documento_id'] ?? 0);
+            if ($docId > 0 && empty($pdf['portal_token']) && empty($pdf['portal_url'])) {
+                try {
+                    $assinaturaService->gerarLinkPortal($docId, $uid, $espelhoId);
+                } catch (Throwable) {
+                }
+            }
+
+            // 4. Envia o e-mail com o novo link ao colaborador
+            if (method_exists($folhaService, 'enviarPorEmail')) {
+                $ref = new \ReflectionMethod($folhaService, 'enviarPorEmail');
+                $firstParam = $ref->getParameters()[0] ?? null;
+                $firstName = $firstParam ? $firstParam->getName() : '';
+                if (str_contains(strtolower($firstName), 'espelho')) {
+                    $resEmail = $folhaService->enviarPorEmail($espelhoId);
+                } else {
+                    $resEmail = $folhaService->enviarPorEmail($docId, null, $espelhoId);
+                }
+            } else {
+                $resEmail = $folhaService->enviarDocumento($docId, null, $espelhoId);
+            }
+            if (is_array($resEmail) && isset($resEmail['ok']) && !$resEmail['ok']) {
+                throw new RuntimeException((string) ($resEmail['erro'] ?? 'Falha ao enviar o e-mail com a nova folha.'));
+            }
+
+            $this->redirectEspelho($espelhoId, 'divergencia-reenviada');
         } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
         }

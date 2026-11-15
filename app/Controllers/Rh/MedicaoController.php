@@ -28,7 +28,7 @@ final class MedicaoController
         $dataInicio = (string) ($_GET['data_inicio'] ?? '');
         $dataFim = (string) ($_GET['data_fim'] ?? '');
         $filtro = (string) ($_GET['filtro'] ?? '');
-        $filtrosValidos = ['conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas', 'dossie'];
+        $filtrosValidos = ['preencher_previstos', 'conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas', 'dossie'];
         if (!in_array($filtro, $filtrosValidos, true)) {
             $filtro = '';
         }
@@ -90,6 +90,24 @@ final class MedicaoController
         unset($_SESSION['medicao_flash'], $_SESSION['medicao_error'], $_SESSION['medicao_errors_list']);
     }
 
+    public function preencherPrevistosLote(): void
+    {
+        $this->rodarLote(static function (PDO $pdo, array $row, string $ini, string $fim): string {
+            $status = (string) ($row['espelho_status'] ?? '');
+            if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
+                return 'já fechado — reabra para preencher previstos';
+            }
+            $pend = (int) ($row['batidas_pendentes'] ?? 0);
+            if ($pend <= 0) {
+                return 'já sem dias pendentes de batida';
+            }
+            $n = (new PontoController())->preencherPrevistosDoEspelho($pdo, (int) $row['espelho_id'], $ini, $fim);
+            return $n > 0
+                ? ('previstos preenchidos em ' . $n . ' dia(s)')
+                : 'nenhum dia pendente aplicável';
+        }, 'Horários previstos preenchidos em lote.');
+    }
+
     public function conferirLote(): void
     {
         $this->rodarLote(static function (PDO $pdo, array $row): string {
@@ -99,6 +117,11 @@ final class MedicaoController
             }
             if (!empty($row['he_pendente'])) {
                 throw new RuntimeException('Há HE declarada pendente de aplicação.');
+            }
+            if ((int) ($row['batidas_pendentes'] ?? 0) > 0) {
+                throw new RuntimeException(
+                    'Há ' . (int) $row['batidas_pendentes'] . ' dia(s) sem batidas. Use Preencher previstos ou justifique antes de conferir.'
+                );
             }
             $motor = new MotorPontoService($pdo);
             if (in_array($status, ['em_aberto'], true)) {
@@ -124,6 +147,11 @@ final class MedicaoController
             if (!empty($row['he_pendente'])) {
                 throw new RuntimeException('Há HE declarada pendente de aplicação.');
             }
+            if ((int) ($row['batidas_pendentes'] ?? 0) > 0) {
+                throw new RuntimeException(
+                    'Há ' . (int) $row['batidas_pendentes'] . ' dia(s) sem batidas. Use Preencher previstos ou justifique antes de fechar.'
+                );
+            }
             if (!in_array($status, ['conferido'], true)) {
                 throw new RuntimeException('Confera o período antes de fechar (status atual: ' . $status . ').');
             }
@@ -141,7 +169,7 @@ final class MedicaoController
     {
         $this->rodarLote(static function (PDO $pdo, array $row, string $ini, string $fim): string {
             if (!empty($row['etapas']['pdf'])) {
-                return 'PDF já existe';
+                return 'PDF e link já existem';
             }
             if (!empty($row['he_pendente'])) {
                 throw new RuntimeException('HE pendente — trate antes de gerar PDF.');
@@ -150,24 +178,26 @@ final class MedicaoController
             if (!in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
                 throw new RuntimeException('Feche o período antes de gerar o PDF (status: ' . $status . ').');
             }
-            (new FolhaPontoService($pdo))->gerarPdf((int) $row['espelho_id'], Auth::id(), $ini, $fim);
-            return 'PDF gerado';
-        }, 'PDFs gerados em lote.');
+            $docIdExistente = (int) ($row['documento_id'] ?? 0);
+            if ($docIdExistente > 0 && empty($row['portal_token'])) {
+                (new AssinaturaEletronicaService($pdo))->gerarLinkPortal($docIdExistente, Auth::id(), (int) $row['espelho_id']);
+                return 'link gerado para PDF existente';
+            }
+            $pdf = (new FolhaPontoService($pdo))->gerarPdf((int) $row['espelho_id'], Auth::id(), $ini, $fim);
+            $docId = (int) ($pdf['documento_id'] ?? 0);
+            if ($docId > 0 && empty($pdf['portal_token']) && empty($pdf['portal_url'])) {
+                try {
+                    (new AssinaturaEletronicaService($pdo))->gerarLinkPortal($docId, Auth::id(), (int) $row['espelho_id']);
+                } catch (Throwable) {
+                }
+            }
+            return 'PDF + link gerados';
+        }, 'PDFs e links de assinatura gerados em lote.');
     }
 
     public function linkLote(): void
     {
-        $this->rodarLote(static function (PDO $pdo, array $row): string {
-            $docId = (int) ($row['documento_id'] ?? 0);
-            if ($docId <= 0) {
-                throw new RuntimeException('Gere o PDF antes do link.');
-            }
-            if (!empty($row['etapas']['link'])) {
-                return 'link já existe';
-            }
-            (new AssinaturaEletronicaService($pdo))->gerarLinkPortal($docId, Auth::id(), (int) $row['espelho_id']);
-            return 'link gerado';
-        }, 'Links de assinatura gerados em lote.');
+        $this->gerarPdfLote();
     }
 
     public function emailLote(): void
@@ -177,7 +207,7 @@ final class MedicaoController
         $this->rodarLote(static function (PDO $pdo, array $row): string {
             $docId = (int) ($row['documento_id'] ?? 0);
             if ($docId <= 0) {
-                throw new RuntimeException('Gere o PDF antes de enviar.');
+                throw new RuntimeException('Gere o PDF e o link antes de enviar (etapa 4).');
             }
             if (empty($row['email_corp'])) {
                 throw new RuntimeException('Sem e-mail corporativo.');
@@ -185,9 +215,8 @@ final class MedicaoController
             if (!empty($row['etapas']['email'])) {
                 return 'já enviado';
             }
-            // Jornada: etapa 5 (link) antes da 6 (e-mail) — sem link não há ação para o colaborador.
-            if (empty($row['etapas']['link'])) {
-                throw new RuntimeException('Gere o link de assinatura antes de enviar o e-mail (etapa 5).');
+            if (empty($row['etapas']['pdf'])) {
+                throw new RuntimeException('Gere o PDF e o link de assinatura antes de enviar o e-mail (etapa 4).');
             }
             $result = (new FolhaPontoService($pdo))->enviarDocumento($docId, null, (int) $row['espelho_id']);
             if (empty($result['ok'])) {
@@ -269,7 +298,7 @@ final class MedicaoController
             || strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
 
         $qsParams = ['data_inicio' => $ini, 'data_fim' => $fim];
-        if (in_array($filtro, ['conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas'], true)) {
+        if (in_array($filtro, ['preencher_previstos', 'conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas'], true)) {
             $qsParams['filtro'] = $filtro;
         }
         $qs = http_build_query($qsParams);

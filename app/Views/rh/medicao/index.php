@@ -23,6 +23,9 @@ $prontoDossie = !empty($resumo['pronto_dossie']);
 $proximaAcao = $resumo['proxima_acao'] ?? null;
 $elegiveis = is_array($resumo['elegiveis'] ?? null) ? $resumo['elegiveis'] : [];
 $filtro = (string) ($filtro ?? '');
+if ($filtro === 'link') {
+    $filtro = 'pdf';
+}
 $statusPonto = (string) ($statusPonto ?? '');
 $subfiltro = (string) ($subfiltro ?? '');
 if ($filtro !== 'assinaturas' || !in_array($statusPonto, ['enviado', 'assinado'], true)) {
@@ -33,8 +36,7 @@ $qs = http_build_query($qsBase);
 $acaoHeroMap = [
     'conferir' => ['label' => 'Conferir pontos', 'filtro' => 'conferir', 'verbo' => 'Conferir'],
     'fechar' => ['label' => 'Fechar pontos', 'filtro' => 'fechar', 'verbo' => 'Fechar'],
-    'pdf' => ['label' => 'Gerar PDFs', 'filtro' => 'pdf', 'verbo' => 'Gerar PDFs'],
-    'link' => ['label' => 'Gerar links de assinatura', 'filtro' => 'link', 'verbo' => 'Gerar links'],
+    'pdf' => ['label' => 'Gerar PDFs e links', 'filtro' => 'pdf', 'verbo' => 'Gerar PDFs e links'],
     'email' => ['label' => 'Enviar e-mails', 'filtro' => 'email', 'verbo' => 'Enviar e-mails'],
 ];
 $proximaHero = is_string($proximaAcao) ? ($acaoHeroMap[$proximaAcao] ?? null) : null;
@@ -43,11 +45,11 @@ $proximaQtd = ($proximaHero !== null) ? (int) ($elegiveis[$proximaAcao] ?? 0) : 
 $pendenteNaEtapa = static function (array $c, string $filtro): bool {
     $et = $c['etapas'] ?? [];
     return match ($filtro) {
+        'preencher_previstos' => (int) ($c['batidas_pendentes'] ?? 0) > 0 && empty($et['fechado']),
         'conferir' => empty($et['tratado']),
         'fechar' => !empty($et['tratado']) && empty($et['fechado']),
-        'pdf' => !empty($et['fechado']) && empty($et['pdf']),
-        'link' => !empty($et['pdf']) && empty($et['link']),
-        'email' => !empty($et['link']) && empty($et['email']),
+        'pdf', 'link' => !empty($et['fechado']) && empty($et['pdf']),
+        'email' => !empty($et['pdf']) && empty($et['email']),
         'assinaturas' => !empty($et['email']) && empty($et['assinaturas']),
         default => true,
     };
@@ -62,7 +64,7 @@ $alvosReenvioEmail = array_values(array_filter(
     static function (array $c): bool {
         $et = $c['etapas'] ?? [];
         return empty($c['concluido'])
-            && !empty($et['link'])
+            && !empty($et['pdf'])
             && !empty($et['email'])
             && empty($et['assinaturas'])
             && !empty($c['email_corp'])
@@ -79,23 +81,23 @@ if ($filtro !== '' && !$modoDossie) {
         $colaboradores,
         static fn(array $c): bool => $pendenteNaEtapa($c, $filtro)
     ));
-    // Etapa "Gerar links" zerada: consulta quem já tem link (abrir / copiar).
-    if ($filtro === 'link' && $colaboradoresFiltrados === []) {
+    // Etapa 4 "PDF e link gerados" zerada: consulta quem já tem link (abrir / copiar / WhatsApp).
+    if ($filtro === 'pdf' && $colaboradoresFiltrados === []) {
         $comLink = array_values(array_filter(
             $colaboradores,
-            static fn(array $c): bool => !empty($c['portal_url']) || !empty($c['etapas']['link'])
+            static fn(array $c): bool => !empty($c['portal_url']) || !empty($c['etapas']['pdf'])
         ));
         if ($comLink !== []) {
             $colaboradoresFiltrados = $comLink;
             $modoConsultaLinks = true;
         }
     }
-    // Etapa "Enviar e-mails" zerada: consulta quem já recebeu (reenvio).
+    // Etapa 5 "Enviar e-mails" zerada: consulta quem já recebeu (reenvio).
     if ($filtro === 'email' && $colaboradoresFiltrados === [] && $alvosReenvioEmail !== [] && $subfiltro !== 'email_falha') {
         $colaboradoresFiltrados = $alvosReenvioEmail;
         $modoConsultaEmail = true;
     }
-    // Etapa 7: subfiltro por status do ponto (enviado | assinado).
+    // Etapa 6: subfiltro por status do ponto (enviado | assinado).
     if ($filtro === 'assinaturas' && $statusPonto !== '') {
         $colaboradoresFiltrados = array_values(array_filter(
             $colaboradoresFiltrados,
@@ -122,7 +124,7 @@ if ($subfiltro === 'he_bloqueante') {
     ));
 }
 
-$mostraZap = in_array($filtro, ['link', 'email', 'assinaturas'], true);
+$mostraZap = in_array($filtro, ['pdf', 'email', 'assinaturas'], true);
 $renderMedicaoZap = static function (array $c, string $filtroAtual, string $periodoAtual): void {
     $portalZap = trim((string) ($c['portal_url'] ?? ''));
     $telZap = $c['telefone'] ?? null;
@@ -205,6 +207,7 @@ $qtdAssinaturasTodos = $contagemStatusAssinaturas['enviado']
     + $contagemStatusAssinaturas['outros'];
 
 $pendentesFiltro = [
+    'preencher_previstos' => 0,
     'conferir' => 0,
     'fechar' => 0,
     'pdf' => 0,
@@ -398,9 +401,9 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
             ?>
             <li class="medicao-step <?= $dossieEstado ?>">
                 <a class="medicao-step-link" href="<?= View::e($urlFiltro($dossieSel ? '' : 'dossie')) ?>">
-                    <span class="medicao-step-num">8</span>
+                    <span class="medicao-step-num">7</span>
                     <div>
-                        <strong>8. Baixar dossiê</strong>
+                        <strong>7. Baixar dossiê</strong>
                         <p>ZIP com pastas por colaborador (ponto + RA)</p>
                         <div class="progress <?= $prontoDossie ? 'is-success' : '' ?>"><span style="width:<?= $prontoDossie ? 100 : 0 ?>%"></span></div>
                         <small><?= $prontoDossie ? '1/1 disponível' : '0/1 · libera com 100%' ?></small>
@@ -416,41 +419,42 @@ $elegiveis = is_array($resumo['elegiveis'] ?? null) ? $resumo['elegiveis'] : [];
 $proximaAcao = $resumo['proxima_acao'] ?? null;
 $loteBotoes = [
     [
+        'acao' => 'preencher_previstos',
+        'route' => '/rh/medicao/lote/preencher-previstos',
+        'label' => '1b. Preencher previstos',
+        'confirm' => 'Preencher horários previstos nos elegíveis com dias sem batida?',
+    ],
+    [
         'acao' => 'conferir',
         'route' => '/rh/medicao/lote/conferir',
         'label' => '2. Conferir pontos',
-        'confirm' => 'Conferir os elegíveis desta etapa (sem HE pendente)?',
+        'confirm' => 'Conferir os elegíveis desta etapa (sem HE pendente e sem dias em branco)?',
     ],
     [
         'acao' => 'fechar',
         'route' => '/rh/medicao/lote/fechar',
         'label' => '3. Fechar pontos',
-        'confirm' => 'Fechar os elegíveis já conferidos?',
+        'confirm' => 'Fechar os elegíveis já conferidos (sem dias em branco)?',
     ],
     [
         'acao' => 'pdf',
         'route' => '/rh/medicao/lote/pdf',
-        'label' => '4. Gerar PDFs',
-        'confirm' => 'Gerar PDF dos elegíveis já fechados?',
-    ],
-    [
-        'acao' => 'link',
-        'route' => '/rh/medicao/lote/link',
-        'label' => '5. Gerar links',
-        'confirm' => 'Gerar links dos elegíveis com PDF?',
+        'label' => '4. Gerar PDFs e links',
+        'confirm' => 'Gerar PDF e link de assinatura dos elegíveis já fechados?',
     ],
     [
         'acao' => 'email',
         'route' => '/rh/medicao/lote/email',
-        'label' => '6. Enviar e-mails',
-        'confirm' => 'Enviar e-mail só de quem já tem link de assinatura (etapa 5)?',
+        'label' => '5. Enviar e-mails',
+        'confirm' => 'Enviar e-mail só de quem já tem PDF e link de assinatura (etapa 4)?',
     ],
 ];
 $rotulosAcao = [
+    'preencher_previstos' => 'Preencher previstos',
     'conferir' => 'Conferir pontos',
     'fechar' => 'Fechar pontos',
-    'pdf' => 'Gerar PDFs',
-    'link' => 'Gerar links',
+    'pdf' => 'Gerar PDFs e links',
+    'link' => 'Gerar PDFs e links',
     'email' => 'Enviar e-mails',
     'assinaturas' => 'Assinaturas',
     'dossie' => 'Baixar dossiê',
@@ -513,19 +517,19 @@ foreach ($loteBotoes as $b) {
         <a class="btn <?= $filtro === 'assinaturas' ? 'btn-primary is-filter-on' : 'btn-ghost' ?>"
            href="<?= View::e($urlFiltro($filtro === 'assinaturas' ? '' : 'assinaturas')) ?>"
            title="Colaboradores aguardando assinatura de ponto e RA">
-            7. Assinaturas
+            6. Assinaturas
             <span class="medicao-lote-count"><?= (int) $pendentesFiltro['assinaturas'] ?></span>
         </a>
         <?php if ($prontoDossie): ?>
             <a class="btn <?= $filtro === 'dossie' ? 'btn-primary is-filter-on' : 'btn-primary' ?>"
                href="<?= View::e($dossieUrl) ?>"
                title="Download ZIP do dossiê completo">
-                8. Baixar dossiê
+                7. Baixar dossiê
             </a>
         <?php else: ?>
             <button class="btn btn-ghost" type="button" disabled
                     title="Disponível somente quando todos os colaboradores estiverem 100%">
-                8. Baixar dossiê
+                7. Baixar dossiê
                 <span class="medicao-lote-count"><?= $concluidos ?>/<?= $total ?></span>
             </button>
         <?php endif; ?>
@@ -588,7 +592,7 @@ foreach ($loteBotoes as $b) {
                     <ul class="medicao-report-list" id="medicaoReportList"></ul>
                     <p class="muted text-sm medicao-report-empty" id="medicaoReportEmpty" hidden>Nenhum item neste filtro.</p>
                     <p class="muted text-sm" id="medicaoReportHint" hidden>
-                        Falhas de envio <strong>não avançam</strong> para a etapa 7 — o colaborador permanece na etapa 6.
+                        Falhas de envio <strong>não avançam</strong> para a etapa 6 — o colaborador permanece na etapa 5.
                     </p>
                 </div>
                 <ul class="batch-errors-list" id="medicaoBatchErrors" hidden></ul>
@@ -606,9 +610,9 @@ foreach ($loteBotoes as $b) {
         <div class="card-body" style="padding-top:0;">
             <p class="muted text-sm" style="margin:0;">Dossiê indisponível — <?= $concluidos ?>/<?= $total ?> concluídos. Finalize as assinaturas restantes.</p>
         </div>
-    <?php elseif ($filtro === 'link' && $qtdFiltro === 0): ?>
+    <?php elseif ($filtro === 'pdf' && $qtdFiltro === 0 && $modoConsultaLinks): ?>
         <div class="card-body" style="padding-top:0;">
-            <p class="muted text-sm" style="margin:0;">Nenhum link pendente — abaixo estão os links já gerados (abrir / copiar).</p>
+            <p class="muted text-sm" style="margin:0;">Todos os PDFs e links já foram gerados — abaixo estão os links do portal (abrir / copiar / WhatsApp).</p>
         </div>
     <?php elseif ($filtro === 'email' && $qtdFiltro === 0 && $modoConsultaEmail): ?>
         <div class="card-body" style="padding-top:0;">
@@ -795,8 +799,9 @@ foreach ($loteBotoes as $b) {
                         $pontoAssinado = $stEsp === 'assinado' || $folhaSt === 'assinado';
                         $raAssinado = $raDocSt === 'assinado';
                         $elegivelAtual = match ($filtro) {
-                            'conferir' => empty($etapas['tratado']) && empty($c['he_pendente']),
-                            'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']),
+                            'preencher_previstos' => (int) ($c['batidas_pendentes'] ?? 0) > 0 && empty($etapas['fechado']),
+                            'conferir' => empty($etapas['tratado']) && empty($c['he_pendente']) && (int) ($c['batidas_pendentes'] ?? 0) === 0,
+                            'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']) && empty($c['he_pendente']) && (int) ($c['batidas_pendentes'] ?? 0) === 0,
                             'pdf' => !empty($etapas['fechado']) && empty($etapas['pdf']),
                             'link' => !empty($etapas['pdf']) && empty($etapas['link']),
                             'email' => $modoConsultaEmail
@@ -852,9 +857,12 @@ foreach ($loteBotoes as $b) {
                                     <?php if (!empty($c['he_pendente'])): ?>
                                         <div class="muted text-sm">HE pendente</div>
                                     <?php endif; ?>
+                                    <?php if ((int) ($c['batidas_pendentes'] ?? 0) > 0): ?>
+                                        <div class="muted text-sm" style="color:#B45309;"><?= (int) $c['batidas_pendentes'] ?> dia(s) sem batida</div>
+                                    <?php endif; ?>
                                     <?php if ($filtro === 'email' && empty($etapas['email']) && ($c['email_ultimo_status'] ?? '') === 'falha'): ?>
                                         <div class="medicao-email-fail" title="<?= View::e((string) ($c['email_ultimo_erro'] ?? 'Falha no envio')) ?>">
-                                            Falha no envio — permanece na etapa 6
+                                            Falha no envio — permanece na etapa 5
                                         </div>
                                     <?php endif; ?>
                                 </td>

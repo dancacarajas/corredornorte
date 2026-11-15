@@ -394,6 +394,7 @@ $router->post('/rh/vale-refeicao/config/{id}/excluir', [$vrRh, 'excluirConfig'])
 $medicao = MedicaoController::class;
 $router->get('/rh/medicao', [$medicao, 'index']);
 $router->get('/rh/medicao/dossie', [$medicao, 'dossie']);
+$router->post('/rh/medicao/lote/preencher-previstos', [$medicao, 'preencherPrevistosLote']);
 $router->post('/rh/medicao/lote/conferir', [$medicao, 'conferirLote']);
 $router->post('/rh/medicao/lote/fechar', [$medicao, 'fecharLote']);
 $router->post('/rh/medicao/lote/pdf', [$medicao, 'gerarPdfLote']);

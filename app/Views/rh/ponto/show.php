@@ -73,9 +73,11 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         <?php
         echo match ((string) $flash) {
             'he-aplicada' => 'HE aplicada no cartão de ponto.',
+            'he-todas-aplicadas' => 'Todas as HEs declaradas do período foram aplicadas no cartão de ponto.',
             'he-divergente' => 'HE marcada como divergente (não aplicada).',
             'previsto-aplicado' => 'Horários previstos aplicados nos dias úteis pendentes.',
             'divergencia-resolvida' => 'Divergência concluída! O espelho voltou para tratamento.',
+            'divergencia-reenviada' => 'Divergência concluída, ponto fechado e nova folha enviada por e-mail ao colaborador.',
             'justificativa' => 'Justificativa salva. O ponto do período foi recalculado.',
             'justificativa-removida' => 'Justificativa removida. O ponto do período foi recalculado.',
             default => 'Atualizado com sucesso.',
@@ -111,7 +113,9 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         <input class="form-control" type="text" name="resolucao_obs" maxlength="500"
                placeholder="Observação da correção para o histórico (opcional)"
                style="flex:1;min-width:220px;background:#fff;">
-        <button class="btn btn-primary btn-sm" type="submit">Concluir divergência e liberar</button>
+        <button class="btn btn-secondary btn-sm" type="submit">Concluir divergência e liberar</button>
+        <button class="btn btn-primary btn-sm" type="submit"
+                formaction="/rh/ponto/<?= (int) $espelhoAcaoId ?>/resolver-divergencia-reenviar">Concluir, fechar ponto e reenviar folha por e-mail</button>
     </form>
 </section>
 <?php endif; ?>
@@ -379,13 +383,34 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
         <div class="box"><span>Jornada / Escala</span><strong><?= View::e(($espelho['jornada_codigo'] ?? '—').' · '.($espelho['escala_codigo'] ?? '')) ?></strong></div>
     </div>
 
-    <?php if ($heDeclaracoes !== []): ?>
+    <?php if ($heDeclaracoes !== []):
+        $temHeDeclarada = false;
+        foreach ($heDeclaracoes as $declCheck) {
+            if (($declCheck['he_status'] ?? '') === 'declarada') {
+                $temHeDeclarada = true;
+                break;
+            }
+        }
+    ?>
     <div class="ponto-tab-panel" data-ponto-panel="he" hidden>
-        <div class="card-header">
+        <div class="card-header" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.75rem;">
             <div>
                 <h2 class="card-title">HE Cliente (Relatório de Atividades)</h2>
                 <p class="card-subtitle">Confira no SharePoint e aplique no cartão, ou marque divergência.</p>
             </div>
+            <?php if ($temHeDeclarada && empty($periodoBloqueado)): ?>
+                <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/he-cliente/aplicar-todas" style="display:inline;">
+                    <input type="hidden" name="_csrf" value="<?= View::e(Csrf::token()) ?>">
+                    <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+                    <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+                    <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+                    <button class="btn btn-primary btn-sm" type="submit"
+                            data-confirm-title="Aplicar todas as HEs declaradas?"
+                            data-confirm="Todas as horas extras com status declarada neste período serão aplicadas no cartão de ponto."
+                            data-confirm-ok="Aplicar todas"
+                            data-confirm-tone="brand">✓ Aplicar todas as HEs declaradas deste período</button>
+                </form>
+            <?php endif; ?>
         </div>
         <div class="card-body table-wrap">
             <table class="table">

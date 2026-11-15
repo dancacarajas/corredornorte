@@ -272,11 +272,13 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
                     <input type="checkbox" id="pontoSelectAll"> Selecionar todos
                 </label>
                 <div class="ponto-lote-actions">
+                    <button class="btn btn-secondary btn-sm" type="submit" name="acao" value="preencher_previstos" data-lote-action="preencher_previstos" data-status-value="preencher_previstos">Preencher previstos</button>
                     <button class="btn btn-secondary btn-sm" type="submit" data-lote-action="conferido" data-status-value="conferido">Conferir selecionados</button>
                     <button class="btn btn-primary btn-sm" type="submit" data-lote-action="fechado" data-status-value="fechado">Fechar selecionados</button>
                     <button class="btn btn-ghost btn-sm" type="submit" data-lote-action="reabrir" data-status-value="em_tratamento">Reabrir tratamento</button>
                 </div>
                 <input type="hidden" name="status" id="pontoLoteStatus" value="conferido">
+                <input type="hidden" name="acao" id="pontoLoteAcao" value="">
                 <input type="hidden" name="justificativa" id="pontoLoteJustificativa" value="">
             </div>
 
@@ -450,6 +452,7 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
   const all = document.getElementById('pontoSelectAll');
   const checks = () => Array.from(document.querySelectorAll('.ponto-check'));
   const statusInput = document.getElementById('pontoLoteStatus');
+  const acaoInput = document.getElementById('pontoLoteAcao');
   const justInput = document.getElementById('pontoLoteJustificativa');
   const reabrirModal = document.getElementById('pontoReabrirModal');
   const reabrirMotivo = document.getElementById('pontoReabrirMotivo');
@@ -480,6 +483,7 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
         return;
       }
       if (statusInput) statusInput.value = statusValue;
+      if (acaoInput) acaoInput.value = action === 'preencher_previstos' ? 'preencher_previstos' : '';
       if (action === 'fechado') {
         ev.preventDefault();
         const targetForm = btn.closest('form');

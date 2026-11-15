@@ -100,7 +100,45 @@ final class HeClienteService
         return $out;
     }
 
-    public function aplicarDoRaDia(int $raDiaId, int $usuarioId): void
+    public function aplicarTodasDoEspelho(int $espelhoId, ?int $usuarioId = null): int
+    {
+        if (!$this->temColunasRaHe()) {
+            return 0;
+        }
+        $st = $this->db->prepare(
+            "SELECT d.id, d.he_hora_inicio, d.he_hora_fim
+             FROM ponto_espelhos e
+             INNER JOIN ra_relatorios r
+                ON (r.espelho_id = e.id OR (r.colaborador_id = e.colaborador_id AND r.periodo_id = e.periodo_id))
+             INNER JOIN ra_dias d ON d.relatorio_id = r.id
+             WHERE e.id = :e
+               AND d.he_hora_inicio IS NOT NULL
+               AND d.he_hora_fim IS NOT NULL
+               AND d.he_status = 'declarada'
+             ORDER BY d.data, d.id"
+        );
+        $st->execute(['e' => $espelhoId]);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $count = 0;
+        $seen = [];
+        foreach ($rows as $d) {
+            $id = (int) $d['id'];
+            if (isset($seen[$id])) {
+                continue;
+            }
+            $seen[$id] = true;
+            $ini = $this->normHora((string) ($d['he_hora_inicio'] ?? ''));
+            $fim = $this->normHora((string) ($d['he_hora_fim'] ?? ''));
+            if ($ini === null || $fim === null || $this->diffMinutos($ini, $fim) <= 0) {
+                continue;
+            }
+            $this->aplicarDoRaDia($id, $usuarioId);
+            $count++;
+        }
+        return $count;
+    }
+
+    public function aplicarDoRaDia(int $raDiaId, ?int $usuarioId = null): void
     {
         if (!$this->temColunasRaHe()) {
             throw new RuntimeException('Migração de HE Cliente pendente.');
@@ -154,18 +192,25 @@ final class HeClienteService
                  updated_at = NOW()
              WHERE id = :id"
         )->execute([
-            'u' => $usuarioId > 0 ? $usuarioId : null,
+            'u' => ($usuarioId !== null && $usuarioId > 0) ? $usuarioId : null,
             'dia' => $resultado['ponto_dia_id'],
             'sai2' => $resultado['sai2_anterior'],
             'id' => $raDiaId,
         ]);
     }
 
-    public function marcarDivergente(int $raDiaId, int $usuarioId): void
+    public function marcarDivergente(int $raDiaId, ?int $usuarioId = null): void
     {
         if (!$this->temColunasRaHe()) {
             throw new RuntimeException('Migração de HE Cliente pendente.');
         }
+        $stRel = $this->db->prepare('SELECT relatorio_id FROM ra_dias WHERE id = :id LIMIT 1');
+        $stRel->execute(['id' => $raDiaId]);
+        $relatorioId = (int) $stRel->fetchColumn();
+        if ($relatorioId <= 0) {
+            throw new RuntimeException('Dia do relatório não encontrado.');
+        }
+
         $st = $this->db->prepare(
             "UPDATE ra_dias
              SET he_status = 'divergente',
@@ -175,12 +220,22 @@ final class HeClienteService
              WHERE id = :id AND he_status IN ('declarada','divergente')"
         );
         $st->execute([
-            'u' => $usuarioId > 0 ? $usuarioId : null,
+            'u' => ($usuarioId !== null && $usuarioId > 0) ? $usuarioId : null,
             'id' => $raDiaId,
         ]);
         if ($st->rowCount() < 1) {
             throw new RuntimeException('Não foi possível marcar divergência neste dia.');
         }
+
+        if ($this->tableExists('ra_documentos')) {
+            $this->db->prepare(
+                "UPDATE ra_documentos SET status = 'invalidado' WHERE relatorio_id = :rid AND status <> 'invalidado'"
+            )->execute(['rid' => $relatorioId]);
+        }
+
+        $this->db->prepare(
+            "UPDATE ra_relatorios SET status = 'rascunho', enviado_em = NULL, aprovado_em = NULL, updated_at = NOW() WHERE id = :rid"
+        )->execute(['rid' => $relatorioId]);
     }
 
     /**
@@ -212,13 +267,25 @@ final class HeClienteService
             throw new RuntimeException('HE: a hora final deve ser após a inicial.');
         }
 
-        $ultima = $diaPonto !== null ? $this->ultimaBatidaPonto($diaPonto) : null;
-        if ($ultima !== null && $this->toMin($ini) < $this->toMin($ultima . ':00')) {
-            $rotuloData = $dataRef ?? (string) ($diaPonto['data'] ?? '');
-            $prefixo = $rotuloData !== '' ? 'Em ' . date('d/m', strtotime($rotuloData) ?: time()) . ': ' : '';
-            throw new RuntimeException(
-                $prefixo . 'HE início deve ser a partir da última batida do ponto (' . $ultima . ').'
-            );
+        $ent1 = $diaPonto !== null ? $this->horaCurta($diaPonto['ponto_ent1'] ?? $diaPonto['ent1'] ?? null) : null;
+        $sai2 = $diaPonto !== null ? $this->sai2BasePonto($diaPonto) : null;
+        if ($sai2 !== null) {
+            $iniMin = $this->toMin($ini);
+            $fimMin = $this->toMin($fim);
+            $sai2Min = $this->toMin($sai2 . ':00');
+            $ent1Min = $ent1 !== null ? $this->toMin($ent1 . ':00') : null;
+            $aposExpediente = $iniMin >= $sai2Min;
+            $antesExpediente = $ent1Min !== null && $fimMin <= $ent1Min;
+            if (!$aposExpediente && !$antesExpediente) {
+                $rotuloData = $dataRef ?? (string) ($diaPonto['data'] ?? '');
+                $prefixo = $rotuloData !== '' ? 'Em ' . date('d/m', strtotime($rotuloData) ?: time()) . ': ' : '';
+                $faixaMsg = $ent1 !== null
+                    ? ('até a entrada (' . $ent1 . ') ou a partir da saída (' . $sai2 . ').')
+                    : ('a partir da saída do ponto (' . $sai2 . ').');
+                throw new RuntimeException(
+                    $prefixo . 'HE deve ocorrer ' . $faixaMsg
+                );
+            }
         }
 
         if ($statusAtual === 'aplicada') {
@@ -236,17 +303,37 @@ final class HeClienteService
     }
 
     /**
+     * Retorna a batida sai2 base do cartão (desconsiderando HE já aplicada naquele dia, quando houver he_sai2_anterior).
+     *
+     * @param array<string,mixed> $dia
+     */
+    private function sai2BasePonto(array $dia): ?string
+    {
+        if ((string) ($dia['he_status'] ?? '') === 'aplicada' && !empty($dia['he_sai2_anterior'])) {
+            $ant = $this->horaCurta($dia['he_sai2_anterior']);
+            if ($ant !== null) {
+                return $ant;
+            }
+        }
+        return $this->horaCurta($dia['ponto_sai2'] ?? $dia['sai2'] ?? null);
+    }
+
+    /**
      * Última marcação do cartão (ordem ent1 → sai1 → ent2 → sai2).
      * @param array<string,mixed> $dia
      */
     public function ultimaBatidaPonto(array $dia): ?string
     {
         $ultima = null;
-        foreach (['ponto_ent1', 'ponto_sai1', 'ponto_ent2', 'ponto_sai2'] as $campo) {
+        foreach (['ponto_ent1', 'ponto_sai1', 'ponto_ent2'] as $campo) {
             $hora = $this->horaCurta($dia[$campo] ?? null);
             if ($hora !== null) {
                 $ultima = $hora;
             }
+        }
+        $s2 = $this->sai2BasePonto($dia);
+        if ($s2 !== null) {
+            $ultima = $s2;
         }
         return $ultima;
     }
@@ -261,7 +348,7 @@ final class HeClienteService
         $e1 = $this->horaCurta($dia['ponto_ent1'] ?? null);
         $s1 = $this->horaCurta($dia['ponto_sai1'] ?? null);
         $e2 = $this->horaCurta($dia['ponto_ent2'] ?? null);
-        $s2 = $this->horaCurta($dia['ponto_sai2'] ?? null);
+        $s2 = $this->sai2BasePonto($dia);
         if ($e1 !== null || $s1 !== null) {
             $pares[] = ($e1 ?? '—') . ' → ' . ($s1 ?? '—');
         }

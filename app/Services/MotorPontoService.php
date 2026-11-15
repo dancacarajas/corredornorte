@@ -618,11 +618,45 @@ final class MotorPontoService
         }
     }
 
-    private function aplicarStatus(int $espelhoId, string $novoStatus, ?string $justificativa, ?int $usuarioId): void
+    private function aplicarStatus(int $espelhoId, string $novoStatus, ?string $justificativa = null, ?int $usuarioId = null): void
     {
         $permitidos = ['em_aberto','em_tratamento','conferido','fechado','enviado'];
         if (!in_array($novoStatus, $permitidos, true)) {
             throw new RuntimeException('Status inválido.');
+        }
+
+        if (in_array($novoStatus, ['conferido', 'fechado'], true)) {
+            $justColCond = $this->hasColumn('ponto_dias', 'justificativa_tipo')
+                ? "AND (d.justificativa_tipo IS NULL OR d.justificativa_tipo = '')"
+                : '';
+            $justTableCond = $this->tableExists('ponto_justificativas')
+                ? 'AND NOT EXISTS (
+                       SELECT 1 FROM ponto_justificativas j
+                       WHERE j.espelho_id = d.espelho_id
+                         AND d.data BETWEEN j.data_inicio AND j.data_fim
+                   )'
+                : '';
+            $stPend = $this->db->prepare(
+                "SELECT COUNT(*)
+                 FROM ponto_dias d
+                 WHERE d.espelho_id = :id
+                   AND d.tipo_dia = 'trabalho'
+                   AND COALESCE(d.dia_falta, 0) = 0
+                   {$justColCond}
+                   {$justTableCond}
+                   AND (
+                       d.ent1 IS NULL
+                       OR d.sai1 IS NULL
+                       OR (d.ent2 IS NOT NULL AND d.sai2 IS NULL)
+                       OR (d.ent2 IS NULL AND d.sai2 IS NOT NULL)
+                   )"
+            );
+            $stPend->execute(['id' => $espelhoId]);
+            if ((int) $stPend->fetchColumn() > 0) {
+                throw new \InvalidArgumentException(
+                    'Este cartão possui dias úteis sem batidas preenchidas e sem justificativa. Preencha os previstos ou justifique os dias pendentes antes de conferir/fechar.'
+                );
+            }
         }
 
         $stmt = $this->db->prepare('SELECT status, versao FROM ponto_espelhos WHERE id = :id FOR UPDATE');
@@ -632,23 +666,42 @@ final class MotorPontoService
             throw new RuntimeException('Espelho não encontrado.');
         }
         $atual = (string) $row['status'];
-        $fechados = ['fechado', 'enviado', 'assinado'];
+        $fechados = ['fechado', 'enviado', 'assinado', 'em_divergencia'];
         $reabrindo = in_array($atual, $fechados, true) && !in_array($novoStatus, $fechados, true);
 
-        if ($reabrindo && ($justificativa === null || trim($justificativa) === '')) {
+        if ($reabrindo && $atual !== 'em_divergencia' && ($justificativa === null || trim($justificativa) === '')) {
             throw new RuntimeException('Reabertura exige justificativa.');
         }
 
         $novaVersao = (int) $row['versao'];
-        if ($reabrindo) {
-            $novaVersao++;
-            // Invalida PDFs anteriores (gerado/enviado/assinado)
-            $this->db->prepare(
-                "UPDATE documentos d
-                 LEFT JOIN documentos_espelhos v ON v.documento_id = d.id AND v.espelho_id = ?
-                 SET d.status = 'invalidado'
-                 WHERE (d.espelho_id = ? OR v.espelho_id IS NOT NULL) AND d.status IN ('gerado','enviado','assinado')"
-            )->execute([$espelhoId, $espelhoId]);
+        if ($reabrindo || in_array($novoStatus, ['em_aberto', 'em_tratamento', 'conferido', 'fechado'], true) || $atual === 'em_divergencia') {
+            if ($reabrindo) {
+                $novaVersao++;
+            }
+            $this->invalidarDocumentosDoEspelho($espelhoId);
+        }
+
+        $divIdsParaResolver = [];
+        if (($atual === 'em_divergencia' || in_array($novoStatus, ['conferido', 'fechado'], true)) && $this->tableExists('ponto_divergencias')) {
+            $stDiv = $this->db->prepare(
+                "SELECT id FROM ponto_divergencias WHERE espelho_id = :eid AND status IN ('aberta', 'em_analise')"
+            );
+            $stDiv->execute(['eid' => $espelhoId]);
+            $divIdsParaResolver = array_map('intval', $stDiv->fetchAll(PDO::FETCH_COLUMN) ?: []);
+            if ($divIdsParaResolver !== []) {
+                $obsDiv = ($justificativa !== null && trim($justificativa) !== '')
+                    ? trim($justificativa)
+                    : 'Resolvida automaticamente na conferência/tratamento do ponto.';
+                $this->db->prepare(
+                    "UPDATE ponto_divergencias
+                     SET status = 'resolvida', resolucao_obs = :obs, resolvido_por = :u, resolvido_em = NOW()
+                     WHERE espelho_id = :eid AND status IN ('aberta', 'em_analise')"
+                )->execute([
+                    'obs' => mb_substr($obsDiv, 0, 1000),
+                    'u' => $usuarioId,
+                    'eid' => $espelhoId,
+                ]);
+            }
         }
 
         // Evita mix de collation (utf8mb4_general_ci vs unicode_ci) ao comparar
@@ -684,13 +737,58 @@ final class MotorPontoService
         ]);
 
         if ($reabrindo) {
+            $motivoReabertura = ($justificativa !== null && trim($justificativa) !== '')
+                ? trim($justificativa)
+                : 'Ajuste de divergência';
             $this->db->prepare(
                 'INSERT INTO ponto_ajustes (espelho_id, motivo, usuario_id) VALUES (:e, :m, :u)'
             )->execute([
                 'e' => $espelhoId,
-                'm' => 'Reabertura: ' . $justificativa,
+                'm' => 'Reabertura: ' . $motivoReabertura,
                 'u' => $usuarioId,
             ]);
+        }
+
+        foreach ($divIdsParaResolver as $divId) {
+            AlertasService::resolverEvento('divergencia:' . $divId);
+        }
+    }
+
+    private function invalidarDocumentosDoEspelho(int $espelhoId): void
+    {
+        $this->db->prepare(
+            "UPDATE documentos d
+             LEFT JOIN documentos_espelhos v ON v.documento_id = d.id AND v.espelho_id = ?
+             SET d.status = 'invalidado'
+             WHERE (d.espelho_id = ? OR v.espelho_id IS NOT NULL) AND d.status IN ('gerado','enviado','assinado')"
+        )->execute([$espelhoId, $espelhoId]);
+    }
+
+    private function tableExists(string $table): bool
+    {
+        try {
+            $st = $this->db->prepare(
+                'SELECT 1 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t LIMIT 1'
+            );
+            $st->execute(['t' => $table]);
+            return (bool) $st->fetchColumn();
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function hasColumn(string $table, string $column): bool
+    {
+        try {
+            $st = $this->db->prepare(
+                'SELECT 1 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c LIMIT 1'
+            );
+            $st->execute(['t' => $table, 'c' => $column]);
+            return (bool) $st->fetchColumn();
+        } catch (Throwable) {
+            return false;
         }
     }
 

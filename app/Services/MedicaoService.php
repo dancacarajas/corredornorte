@@ -19,10 +19,9 @@ final class MedicaoService
         ['key' => 'gerado', 'label' => '1. Cartão gerado', 'hint' => 'Espelho do período criado', 'acao' => 'Gerar cartão de ponto'],
         ['key' => 'tratado', 'label' => '2. Ponto conferido', 'hint' => 'Conferir período com HE tratada', 'acao' => 'Conferir período'],
         ['key' => 'fechado', 'label' => '3. Ponto fechado', 'hint' => 'Fechar tratativa do espelho', 'acao' => 'Fechar período'],
-        ['key' => 'pdf', 'label' => '4. PDF gerado', 'hint' => 'Emitir folha de ponto', 'acao' => 'Gerar PDF'],
-        ['key' => 'link', 'label' => '5. Link de assinatura', 'hint' => 'Portal pronto para o colaborador', 'acao' => 'Gerar link'],
-        ['key' => 'email', 'label' => '6. E-mail enviado', 'hint' => 'Enviar folha ao colaborador', 'acao' => 'Enviar e-mail'],
-        ['key' => 'assinaturas', 'label' => '7. Assinaturas', 'hint' => 'Ponto e RA assinados pelo colaborador', 'acao' => 'Aguardar assinaturas'],
+        ['key' => 'pdf', 'label' => '4. PDF e link gerados', 'hint' => 'Folha emitida com link do portal', 'acao' => 'Gerar PDF e link'],
+        ['key' => 'email', 'label' => '5. E-mail enviado', 'hint' => 'Enviar folha ao colaborador', 'acao' => 'Enviar e-mail'],
+        ['key' => 'assinaturas', 'label' => '6. Assinaturas', 'hint' => 'Ponto e RA assinados pelo colaborador', 'acao' => 'Aguardar assinaturas'],
     ];
 
     public function __construct(?PDO $db = null)
@@ -85,6 +84,7 @@ final class MedicaoService
         ];
         // Quem pode avançar em cada ação de lote (ordem da jornada).
         $elegiveis = [
+            'preencher_previstos' => 0,
             'conferir' => 0,
             'fechar' => 0,
             'pdf' => 0,
@@ -106,11 +106,15 @@ final class MedicaoService
 
             $et = $row['etapas'];
             $heBloqueia = !empty($row['he_pendente']);
-            if (empty($et['tratado']) && !$heBloqueia) {
+            $batidasBloqueia = !empty($row['batidas_pendentes']);
+            if (empty($et['tratado']) && !$heBloqueia && !$batidasBloqueia) {
                 $elegiveis['conferir']++;
             }
-            if (!empty($et['tratado']) && empty($et['fechado']) && !$heBloqueia) {
+            if (!empty($et['tratado']) && empty($et['fechado']) && !$heBloqueia && !$batidasBloqueia) {
                 $elegiveis['fechar']++;
+            }
+            if ($batidasBloqueia && empty($et['fechado'])) {
+                $elegiveis['preencher_previstos']++;
             }
             if (!empty($et['fechado']) && empty($et['pdf'])) {
                 $elegiveis['pdf']++;
@@ -118,7 +122,7 @@ final class MedicaoService
             if (!empty($et['pdf']) && empty($et['link'])) {
                 $elegiveis['link']++;
             }
-            if (!empty($et['link']) && empty($et['email']) && !empty($row['email_corp'])) {
+            if (!empty($et['pdf']) && empty($et['email']) && !empty($row['email_corp'])) {
                 $elegiveis['email']++;
             }
         }
@@ -127,7 +131,7 @@ final class MedicaoService
         $pctGeral = $total > 0 ? (int) round($somaPct / $total) : 0;
 
         // Próxima ação do período = primeiro gargalo da jornada com alguém elegível.
-        $ordemAcao = ['conferir', 'fechar', 'pdf', 'link', 'email'];
+        $ordemAcao = ['conferir', 'fechar', 'pdf', 'email'];
         $proximaAcao = null;
         foreach ($ordemAcao as $acao) {
             if ($elegiveis[$acao] > 0) {
@@ -178,7 +182,9 @@ final class MedicaoService
         $raJoin = $hasRaDocs
             ? "LEFT JOIN ra_documentos rad ON rad.id = (
                 SELECT rd.id FROM ra_documentos rd
-                WHERE rd.relatorio_id = r.id AND rd.status <> 'invalidado'
+                WHERE rd.relatorio_id = r.id
+                  AND rd.status <> 'invalidado'
+                  AND r.status IN ('enviado', 'aprovado')
                 ORDER BY rd.id DESC LIMIT 1
              )"
             : "";
@@ -209,6 +215,7 @@ final class MedicaoService
         $raw = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $hePendentes = $this->mapHePendentesPorEspelho(array_column($raw, 'espelho_id'));
+        $batidasPendentes = $this->mapBatidasPendentesPorEspelho(array_column($raw, 'espelho_id'));
         $docIds = array_filter(array_column($raw, 'documento_id'));
         $emailsOk = $this->mapEmailsOkPorDocumento($docIds);
         $emailsUltimo = $this->mapEmailsUltimoPorDocumento($docIds);
@@ -218,27 +225,43 @@ final class MedicaoService
             $espelhoId = (int) $row['espelho_id'];
             $statusEsp = (string) $row['espelho_status'];
             $folhaStatus = (string) ($row['folha_status'] ?? '');
-            $raDocStatus = (string) ($row['ra_doc_status'] ?? '');
+            $raStatus = $row['ra_status'] !== null ? (string) $row['ra_status'] : '';
+            $raValido = in_array($raStatus, ['enviado', 'aprovado'], true);
+            $raDocStatus = $raValido ? (string) ($row['ra_doc_status'] ?? '') : '';
+            $raAssinadaPath = ($raValido && $raDocStatus === 'assinado' && $row['ra_assinada_path'] !== null)
+                ? (string) $row['ra_assinada_path']
+                : null;
             $docId = isset($row['documento_id']) ? (int) $row['documento_id'] : 0;
             $emailOk = !empty($emailsOk[$docId]) || $folhaStatus === 'assinado';
             $emailUltimo = $emailsUltimo[$docId] ?? null;
 
             // Fluxo real do ponto: em_aberto → em_tratamento → conferido → fechado → enviado → assinado
             // Etapa 2 só conta após "Conferir período" (ou status posterior).
-            // em_tratamento NÃO é tratado/conferido.
-            // E-mail só avança com status=enviado em emails_envios — falha permanece na etapa 6.
+            // Etapa 4 unifica emissão do PDF + geração do link do portal.
+            // Se o espelho estiver em_divergencia, em_tratamento, em_aberto ou conferido, PDF/link/e-mail anteriores não contam.
+            $fechadoOk = in_array($statusEsp, ['fechado', 'enviado', 'assinado'], true)
+                && empty($hePendentes[$espelhoId]);
+            $temPdfELink = $fechadoOk && (
+                (in_array($folhaStatus, ['gerado', 'enviado', 'assinado'], true) && !empty($row['portal_token']))
+                || $folhaStatus === 'assinado'
+            );
             $etapas = [
                 'gerado' => true,
                 'tratado' => in_array($statusEsp, ['conferido', 'fechado', 'enviado', 'assinado'], true)
                     && empty($hePendentes[$espelhoId]),
-                'fechado' => in_array($statusEsp, ['fechado', 'enviado', 'assinado'], true),
-                'pdf' => in_array($folhaStatus, ['gerado', 'enviado', 'assinado'], true),
-                'link' => !empty($row['portal_token']) || $folhaStatus === 'assinado',
-                'email' => $emailOk,
-                'assinaturas' => $folhaStatus === 'assinado' && $raDocStatus === 'assinado',
+                'fechado' => $fechadoOk,
+                'pdf' => $temPdfELink,
+                'link' => $temPdfELink,
+                'email' => $temPdfELink && $emailOk,
+                'assinaturas' => $temPdfELink && $folhaStatus === 'assinado' && $raValido && $raDocStatus === 'assinado',
             ];
 
-            $feitos = count(array_filter($etapas));
+            $feitos = 0;
+            foreach (self::ETAPAS as $etDef) {
+                if (!empty($etapas[$etDef['key']])) {
+                    $feitos++;
+                }
+            }
             $totalEtapas = count(self::ETAPAS);
             $percentual = (int) round(($feitos / $totalEtapas) * 100);
 
@@ -258,13 +281,16 @@ final class MedicaoService
                 'relatorio_id' => isset($row['relatorio_id']) ? (int) $row['relatorio_id'] : null,
                 'documento_id' => $docId > 0 ? $docId : null,
                 'folha_status' => $folhaStatus !== '' ? $folhaStatus : null,
-                'ra_status' => $row['ra_status'] !== null ? (string) $row['ra_status'] : null,
+                'ra_status' => $raStatus !== '' ? $raStatus : null,
                 'ra_doc_status' => $raDocStatus !== '' ? $raDocStatus : null,
-                'folha_assinada_path' => $row['folha_assinada_path'] !== null ? (string) $row['folha_assinada_path'] : null,
-                'ra_assinada_path' => $row['ra_assinada_path'] !== null ? (string) $row['ra_assinada_path'] : null,
+                'folha_assinada_path' => ($fechadoOk && $folhaStatus === 'assinado' && $row['folha_assinada_path'] !== null)
+                    ? (string) $row['folha_assinada_path']
+                    : null,
+                'ra_assinada_path' => $raAssinadaPath,
                 'portal_token' => $token !== '' ? $token : null,
                 'portal_url' => $portalUrl,
                 'he_pendente' => !empty($hePendentes[$espelhoId]),
+                'batidas_pendentes' => (int) ($batidasPendentes[$espelhoId] ?? 0),
                 'email_ok' => $emailOk,
                 'email_ultimo_status' => is_array($emailUltimo) ? (string) ($emailUltimo['status'] ?? '') : null,
                 'email_ultimo_erro' => is_array($emailUltimo) ? ($emailUltimo['erro'] ?? null) : null,
@@ -285,6 +311,46 @@ final class MedicaoService
      * @param list<int|string> $espelhoIds
      * @return array<int,true>
      */
+    /**
+     * Dias úteis sem batidas (e sem justificativa) — bloqueiam conferir/fechar.
+     *
+     * @param list<int|string> $espelhoIds
+     * @return array<int,int>
+     */
+    private function mapBatidasPendentesPorEspelho(array $espelhoIds): array
+    {
+        $ids = array_values(array_filter(array_map('intval', $espelhoIds)));
+        if ($ids === []) {
+            return [];
+        }
+        $in = implode(',', $ids);
+        $justTable = $this->tableExists('ponto_justificativas')
+            ? 'AND NOT EXISTS (
+                   SELECT 1 FROM ponto_justificativas j
+                   WHERE j.espelho_id = d.espelho_id
+                     AND d.data BETWEEN j.data_inicio AND j.data_fim
+               )'
+            : '';
+        $sql = "SELECT d.espelho_id, COUNT(*) AS qtd
+                FROM ponto_dias d
+                WHERE d.espelho_id IN ({$in})
+                  AND d.tipo_dia = 'trabalho'
+                  AND COALESCE(d.dia_falta, 0) = 0
+                  {$justTable}
+                  AND (
+                      d.ent1 IS NULL
+                      OR d.sai1 IS NULL
+                      OR (d.ent2 IS NOT NULL AND d.sai2 IS NULL)
+                      OR (d.ent2 IS NULL AND d.sai2 IS NOT NULL)
+                  )
+                GROUP BY d.espelho_id";
+        $map = [];
+        foreach ($this->db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $map[(int) $row['espelho_id']] = (int) $row['qtd'];
+        }
+        return $map;
+    }
+
     private function mapHePendentesPorEspelho(array $espelhoIds): array
     {
         $ids = array_values(array_filter(array_map('intval', $espelhoIds)));
