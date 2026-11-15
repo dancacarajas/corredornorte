@@ -18,7 +18,7 @@ $inGroup = static function (array $keys) use ($activeMenu): bool {
 $orgKeys = ['empresas', 'contratos', 'centros', 'os', 'localidades'];
 $escalasKeys = ['jornadas', 'escalas', 'feriados'];
 $pessoasKeys = ['lotacoes', 'cargos', 'funcoes', 'gestores-arcadis', 'gestores-cliente', 'supervisores'];
-$medicaoKeys = ['ponto', 'folha', 'medicao', 'ra', 'justificativa-tipos'];
+$medicaoKeys = ['ponto', 'medicao', 'ra', 'justificativa-tipos'];
 $vrKeys = ['vr-config', 'vr-relatorio'];
 
 $showRh = $can(
@@ -26,7 +26,7 @@ $showRh = $can(
     'medicao.ver', 'ra.ver', 'vr.ver', 'vr.editar'
 );
 $showOrg = $can('cadastros.ver', 'cadastros.editar');
-$showPonto = $can('ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver');
+$showPonto = $can('ponto.ver', 'medicao.ver', 'ra.ver');
 $showVr = $can('vr.ver', 'vr.editar');
 $showSistema = $can('usuarios.gerenciar', 'perfis.gerenciar', 'email.gerenciar', 'importacoes.gerenciar', 'alertas.gerenciar');
 
@@ -66,14 +66,6 @@ SVG;
                         <?php if ($alertasBadge > 0): ?>
                             <span class="nav-badge"><?= $alertasBadge > 99 ? '99+' : $alertasBadge ?></span>
                         <?php endif; ?>
-                    </a>
-                </li>
-                <?php endif; ?>
-                <?php if ($can('dashboard.ver')): ?>
-                <li>
-                    <a class="nav-link<?= $isActive('mapa-sistema') ?>" href="/ui/mapa-sistema">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8.2 6h7.6M6 8.2v7.6M18 8.2v7.6M8.2 18h7.6"/></svg>
-                        Mapa do sistema
                     </a>
                 </li>
                 <?php endif; ?>
@@ -154,9 +146,6 @@ SVG;
                         <?php if ($can('ponto.ver', 'ponto.editar')): ?>
                         <li><a class="nav-sublink<?= $isActive('ponto') ?>" href="/rh/ponto">Gestão de Ponto</a></li>
                         <li><a class="nav-sublink<?= $isActive('justificativa-tipos') ?>" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a></li>
-                        <?php endif; ?>
-                        <?php if ($can('folha.ver', 'folha.enviar')): ?>
-                        <li><a class="nav-sublink<?= $isActive('folha') ?>" href="/rh/folha">Folha de Ponto</a></li>
                         <?php endif; ?>
                         <?php if ($can('medicao.ver', 'medicao.editar', 'ponto.ver')): ?>
                         <li><a class="nav-sublink<?= $isActive('medicao') ?>" href="/rh/medicao">Medição</a></li>

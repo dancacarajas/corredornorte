@@ -22,56 +22,15 @@ final class FolhaController
 {
     public function index(): void
     {
-        $pdo = Db::tryConnection();
-        $q = trim((string) ($_GET['q'] ?? ''));
-        $status = trim((string) ($_GET['status'] ?? ''));
-        $dataInicio = trim((string) ($_GET['data_inicio'] ?? ''));
-        $dataFim = trim((string) ($_GET['data_fim'] ?? ''));
-        $docs = [];
-        if ($pdo instanceof PDO) {
-            $where = ['1=1'];
-            $params = [];
-            if ($q !== '') {
-                $where[] = '(c.nome LIKE :q_nome OR c.matricula LIKE :q_mat)';
-                $like = '%' . $q . '%';
-                $params['q_nome'] = $like;
-                $params['q_mat'] = $like;
-            }
-            if ($status !== '' && in_array($status, ['gerado', 'enviado', 'assinado', 'invalidado'], true)) {
-                $where[] = 'd.status = :st';
-                $params['st'] = $status;
-            }
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataInicio) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $dataFim)) {
-                $where[] = 'pp.data_inicio >= :ini AND pp.data_fim <= :fim';
-                $params['ini'] = $dataInicio;
-                $params['fim'] = $dataFim;
-            }
-            $st = $pdo->prepare(
-                'SELECT d.*, c.nome, c.matricula, e.status AS espelho_status,
-                        pp.data_inicio AS periodo_cartao_inicio, pp.data_fim AS periodo_cartao_fim,
-                        YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes
-                 FROM documentos d
-                 INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
-                 INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
-                 INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
-                 WHERE ' . implode(' AND ', $where) . '
-                 ORDER BY d.id DESC LIMIT 200'
-            );
-            $st->execute($params);
-            $docs = $st->fetchAll();
-        }
-
-        View::render('rh/folha/index', [
-            'pageTitle' => 'Folha de Ponto',
-            'pageSubtitle' => 'PDF, envio e controle de assinatura',
-            'activeMenu' => 'folha',
-            'dbOk' => $pdo instanceof PDO,
-            'docs' => $docs,
-            'q' => $q,
-            'status' => $status,
-            'dataInicio' => $dataInicio,
-            'dataFim' => $dataFim,
-        ]);
+        // Listagem /rh/folha duplicava Medição/Ponto com menos recursos — redireciona.
+        $params = array_filter([
+            'data_inicio' => $_GET['data_inicio'] ?? null,
+            'data_fim' => $_GET['data_fim'] ?? null,
+            'q' => $_GET['q'] ?? null,
+        ], static fn($v) => is_string($v) && $v !== '');
+        $qs = $params !== [] ? ('?' . http_build_query($params)) : '';
+        header('Location: /rh/medicao' . $qs, true, 302);
+        exit;
     }
 
     public function show(string $id = '0'): void
@@ -154,16 +113,12 @@ final class FolhaController
         ?>
         <a class="btn btn-secondary btn-sm" href="/rh/ponto/<?= $espelhoId ?>?<?= View::e($periodoQuery) ?>">Voltar ao ponto</a>
         <form method="post" action="/rh/folha/<?= $espelhoId ?>/gerar?<?= View::e($periodoQuery) ?>" style="display:inline;">
-            <button class="btn btn-primary btn-sm" type="submit">Gerar PDF</button>
+            <button class="btn btn-primary btn-sm" type="submit">Gerar PDF e link</button>
         </form>
-        <?php if ($docAtivo !== null): ?>
+        <?php if ($docAtivo !== null && !empty($docAtivo['portal_token'])): ?>
             <form method="post" action="/rh/folha/<?= $espelhoId ?>/enviar?<?= View::e($periodoQuery) ?>" style="display:inline;">
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
-                <button class="btn btn-secondary btn-sm" type="submit">Enviar PDF</button>
-            </form>
-            <form method="post" action="/rh/folha/<?= $espelhoId ?>/link-assinatura?<?= View::e($periodoQuery) ?>" style="display:inline;">
-                <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
-                <button class="btn btn-secondary btn-sm" type="submit">Gerar link assinatura</button>
+                <button class="btn btn-secondary btn-sm" type="submit">Enviar e-mail com link</button>
             </form>
         <?php endif; ?>
         <?php
@@ -218,8 +173,11 @@ final class FolhaController
                 }
             }
 
-            $service->gerarPdf($espelhoId, Auth::id(), $inicio, $fim);
-            $this->redirecionarFolha($espelhoId, ['ok' => 'pdf']);
+            $pdf = $service->gerarPdf($espelhoId, Auth::id(), $inicio, $fim);
+            if (!empty($pdf['portal_url'])) {
+                $_SESSION['folha_link_rh'] = [$espelhoId => $pdf['portal_url']];
+            }
+            $this->redirecionarFolha($espelhoId, ['ok' => 'pdf_link']);
         } catch (Throwable $e) {
             $this->redirecionarFolha($espelhoId, ['erro' => $e->getMessage()]);
         }
@@ -393,20 +351,35 @@ final class FolhaController
                 error_log('Falha ao atualizar o modelo da folha ' . (int) $doc['id'] . ': ' . $erro->getMessage());
             }
         }
-        $resumoEspelho = ($doc !== null && $assinatura !== null)
+        $dadosPortal = [];
+        if ($doc !== null && $assinatura !== null && method_exists($assinatura, 'portalDadosPorToken')) {
+            try {
+                $loaded = $assinatura->portalDadosPorToken($token);
+                if (is_array($loaded)) {
+                    $dadosPortal = $loaded;
+                }
+            } catch (Throwable) {
+                $dadosPortal = [];
+            }
+        }
+        $resumoEspelho = $dadosPortal['resumo_espelho'] ?? (($doc !== null && $assinatura !== null)
             ? $assinatura->carregarResumoEspelho($doc)
             : [
                 'espelho_status' => 'enviado',
                 'totais' => ['trab_min' => 0, 'he50_min' => 0, 'he100_min' => 0, 'falta_min' => 0, 'adn_min' => 0, 'dias' => 0],
                 'dias' => [],
                 'divergencias' => [],
-            ];
+            ]);
+        if (!isset($dadosPortal['ra_resumo']) && isset($resumoEspelho['ra_resumo'])) {
+            $dadosPortal['ra_resumo'] = $resumoEspelho['ra_resumo'];
+        }
         $mensagem = $_SESSION['folha_mensagem'][$token] ?? [];
         unset($_SESSION['folha_mensagem'][$token]);
         $_SESSION['folha_csrf'] ??= bin2hex(random_bytes(32));
 
         View::render('rh/folha/portal_assinatura', [
             'documento' => $doc,
+            'dados' => $dadosPortal,
             'resumoEspelho' => $resumoEspelho,
             'modeloAnterior' => $doc !== null && $doc['status'] !== 'assinado'
                 && (int) $doc['layout_pdf'] !== FolhaPontoService::LAYOUT_PDF_ATUAL,

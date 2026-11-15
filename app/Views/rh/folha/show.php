@@ -44,7 +44,12 @@ $fmtMin = static function (int $min): string {
 
 <?php if (!empty($flash) && $flash !== 'link_assinatura'): ?>
     <div class="alert alert-success">
-        <?= $flash === 'lembrete' ? 'Lembrete de assinatura enviado.' : ($flash === 'email' ? 'E-mail da folha enviado.' : 'Operação concluída.') ?>
+        <?= match ((string) $flash) {
+            'lembrete' => 'Lembrete de assinatura enviado.',
+            'email' => 'E-mail da folha enviado.',
+            'pdf_link', 'pdf' => 'PDF gerado e link de assinatura pronto.',
+            default => 'Operação concluída.',
+        } ?>
     </div>
 <?php endif; ?>
 <?php if (!empty($error)): ?><div class="alert alert-danger"><?= View::e((string) $error) ?></div><?php endif; ?>
@@ -126,12 +131,12 @@ $fmtMin = static function (int $min): string {
     <div class="card-header">
         <div>
             <h2 class="card-title">Ações da folha</h2>
-            <p class="card-subtitle">Gere o PDF e depois envie ou compartilhe o link de assinatura</p>
+            <p class="card-subtitle">Emitir o PDF já cria o link de assinatura no mesmo clique</p>
         </div>
     </div>
     <div class="card-body" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
         <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/gerar?<?= View::e($periodoQuery) ?>">
-            <button class="btn btn-primary" type="submit">Gerar PDF</button>
+            <button class="btn btn-primary" type="submit">Gerar PDF e link</button>
         </form>
         <?php if ($docAtivo !== null): ?>
             <?php if (!empty($docAtivo['portal_token'])): ?>
@@ -139,22 +144,21 @@ $fmtMin = static function (int $min): string {
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
                 <button class="btn btn-secondary" type="submit">Enviar e-mail com link</button>
             </form>
-            <?php else: ?>
-            <button class="btn btn-secondary" type="button" disabled title="Gere o link de assinatura antes (etapa 5)">Enviar e-mail com link</button>
-            <?php endif; ?>
-            <?php if (($docAtivo['status'] ?? '') === 'enviado' && !empty($docAtivo['portal_token'])): ?>
+            <?php if (($docAtivo['status'] ?? '') === 'enviado'): ?>
             <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/lembrar?<?= View::e($periodoQuery) ?>">
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
                 <button class="btn btn-secondary" type="submit">Enviar lembrete</button>
             </form>
             <?php endif; ?>
+            <?php else: ?>
             <form method="post" action="/rh/folha/<?= $espelhoIdAtual ?>/link-assinatura?<?= View::e($periodoQuery) ?>">
                 <input type="hidden" name="documento_id" value="<?= (int) $docAtivo['id'] ?>">
-                <button class="btn btn-secondary" type="submit">Gerar link de assinatura</button>
+                <button class="btn btn-secondary" type="submit" title="Recuperação: PDF antigo sem token">Recuperar link de assinatura</button>
             </form>
+            <?php endif; ?>
             <a class="btn btn-ghost" href="/rh/folha/documento/<?= (int) $docAtivo['id'] ?>" target="_blank" rel="noopener noreferrer">Abrir PDF</a>
         <?php else: ?>
-            <span class="text-sm muted">Depois de gerar o PDF, os botões de envio e link de assinatura aparecem aqui.</span>
+            <span class="text-sm muted">Ainda sem PDF. Use <strong>Gerar PDF e link</strong> para emitir e liberar o portal.</span>
         <?php endif; ?>
     </div>
 </section>
@@ -167,7 +171,7 @@ $fmtMin = static function (int $min): string {
         </div>
     </div>
     <?php if ($documentos === []): ?>
-        <div class="empty-state"><p>Nenhum PDF gerado ainda. Clique em <strong>Gerar PDF</strong> acima.</p></div>
+        <div class="empty-state"><p>Nenhum PDF gerado ainda. Clique em <strong>Gerar PDF e link</strong> acima.</p></div>
     <?php else: ?>
         <div class="table-wrap">
             <table class="table">

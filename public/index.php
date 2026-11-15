@@ -372,6 +372,8 @@ $router->post('/rh/ponto/{id}/he-cliente/aplicar-todas', [$ponto, 'heClienteApli
 $router->post('/rh/ponto/{id}/apontar-previsto', [$ponto, 'apontarPrevisto']);
 $router->post('/rh/ponto/{id}/resolver-divergencia', [$ponto, 'resolverDivergencia']);
 $router->post('/rh/ponto/{id}/resolver-divergencia-reenviar', [$ponto, 'resolverDivergenciaEReenviar']);
+$router->post('/rh/ponto/{id}/folha/gerar', [$ponto, 'gerarFolhaPdf']);
+$router->post('/rh/ponto/{id}/folha/enviar', [$ponto, 'enviarFolhaEmail']);
 
 $raRh = RelatorioAtividadesController::class;
 $router->get('/rh/relatorios-atividades', [$raRh, 'index']);

@@ -936,8 +936,7 @@ final class PontoController
         $topbarActions = ''
             . '<a class="btn btn-secondary btn-sm" href="/rh/ponto?' . $qsSeguro . '">Voltar ao filtro</a>'
             . $acaoJustificativa
-            . '<a class="btn btn-secondary btn-sm" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a>'
-            . '<a class="btn btn-primary btn-sm" href="/rh/folha/' . $espelhoId . '?' . $qsSeguro . '">Folha / Enviar PDF</a>';
+            . '<a class="btn btn-secondary btn-sm" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a>';
 
         $divergenciasAbertas = [];
         try {
@@ -951,6 +950,23 @@ final class PontoController
             $divergenciasAbertas = $divStmt->fetchAll() ?: [];
         } catch (Throwable) {
             $divergenciasAbertas = [];
+        }
+
+        $docFolha = null;
+        $portalUrlFolha = null;
+        try {
+            $docStmt = $pdo->prepare(
+                "SELECT d.* FROM documentos d
+                 WHERE d.espelho_id = :id AND d.tipo = 'folha_ponto' AND d.status IN ('gerado','enviado','assinado')
+                 ORDER BY d.id DESC LIMIT 1"
+            );
+            $docStmt->execute(['id' => $espelhoId]);
+            $docFolha = $docStmt->fetch() ?: null;
+            if (is_array($docFolha) && !empty($docFolha['portal_token'])) {
+                $portalUrlFolha = \App\Helpers\AppUrl::base() . '/assinar/' . $docFolha['portal_token'];
+            }
+        } catch (Throwable) {
+            $docFolha = null;
         }
 
         View::render('rh/ponto/show', [
@@ -968,6 +984,8 @@ final class PontoController
             'heAutorizadas' => $heAutorizadas,
             'heDeclaracoes' => $heDeclaracoes,
             'divergenciasAbertas' => $divergenciasAbertas,
+            'docFolha' => $docFolha,
+            'portalUrlFolha' => $portalUrlFolha,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'tiposJustificativa' => $tipos,
@@ -1690,37 +1708,82 @@ final class PontoController
             $motor->alterarStatus($espelhoId, 'conferido', $just, $uid);
             $motor->alterarStatus($espelhoId, 'fechado', $just, $uid);
 
-            // 3. Emite novo PDF + Link
+            // 3. Emite novo PDF + Link (mesmo ato)
             $folhaService = new \App\Services\FolhaPontoService($pdo);
             $ini = trim((string) ($_POST['data_inicio'] ?? ''));
             $fim = trim((string) ($_POST['data_fim'] ?? ''));
             $pdf = $folhaService->gerarPdf($espelhoId, $uid, $ini !== '' ? $ini : null, $fim !== '' ? $fim : null);
             $docId = (int) ($pdf['documento_id'] ?? 0);
-            if ($docId > 0 && empty($pdf['portal_token']) && empty($pdf['portal_url'])) {
-                try {
-                    $assinaturaService->gerarLinkPortal($docId, $uid, $espelhoId);
-                } catch (Throwable) {
-                }
+            if ($docId <= 0 || empty($pdf['portal_token'])) {
+                throw new RuntimeException('PDF emitido sem link de assinatura. Tente novamente.');
             }
 
             // 4. Envia o e-mail com o novo link ao colaborador
-            if (method_exists($folhaService, 'enviarPorEmail')) {
-                $ref = new \ReflectionMethod($folhaService, 'enviarPorEmail');
-                $firstParam = $ref->getParameters()[0] ?? null;
-                $firstName = $firstParam ? $firstParam->getName() : '';
-                if (str_contains(strtolower($firstName), 'espelho')) {
-                    $resEmail = $folhaService->enviarPorEmail($espelhoId);
-                } else {
-                    $resEmail = $folhaService->enviarPorEmail($docId, null, $espelhoId);
-                }
-            } else {
-                $resEmail = $folhaService->enviarDocumento($docId, null, $espelhoId);
-            }
+            $resEmail = $folhaService->enviarDocumento($docId, null, $espelhoId);
             if (is_array($resEmail) && isset($resEmail['ok']) && !$resEmail['ok']) {
                 throw new RuntimeException((string) ($resEmail['erro'] ?? 'Falha ao enviar o e-mail com a nova folha.'));
             }
 
             $this->redirectEspelho($espelhoId, 'divergencia-reenviada');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /** Emite PDF + link de assinatura sem sair do cartão de ponto. */
+    public function gerarFolhaPdf(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        if (!$pdo instanceof PDO || $espelhoId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $motor = new MotorPontoService($pdo);
+            $st = $pdo->prepare('SELECT status FROM ponto_espelhos WHERE id = ?');
+            $st->execute([$espelhoId]);
+            $status = (string) ($st->fetchColumn() ?: '');
+            $just = 'Fechamento para emissão da folha no ponto';
+            if (in_array($status, ['em_aberto', 'em_tratamento'], true)) {
+                $motor->alterarStatus($espelhoId, 'conferido', $just, Auth::id());
+                $motor->alterarStatus($espelhoId, 'fechado', $just, Auth::id());
+            } elseif ($status === 'conferido') {
+                $motor->alterarStatus($espelhoId, 'fechado', $just, Auth::id());
+            }
+            $ini = trim((string) ($_POST['data_inicio'] ?? ''));
+            $fim = trim((string) ($_POST['data_fim'] ?? ''));
+            $pdf = (new \App\Services\FolhaPontoService($pdo))->gerarPdf(
+                $espelhoId,
+                Auth::id(),
+                $ini !== '' ? $ini : null,
+                $fim !== '' ? $fim : null
+            );
+            if (empty($pdf['portal_token'])) {
+                throw new RuntimeException('PDF gerado sem link de assinatura.');
+            }
+            $this->redirectEspelho($espelhoId, 'folha-pdf-link');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /** Envia e-mail com link da folha ativa, permanecendo no cartão. */
+    public function enviarFolhaEmail(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $docId = (int) ($_POST['documento_id'] ?? 0);
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $docId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $res = (new \App\Services\FolhaPontoService($pdo))->enviarDocumento($docId, null, $espelhoId);
+            if (!($res['ok'] ?? false)) {
+                throw new RuntimeException((string) ($res['erro'] ?? 'Falha no envio'));
+            }
+            $this->redirectEspelho($espelhoId, 'folha-email');
         } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
         }

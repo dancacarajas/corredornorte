@@ -78,6 +78,8 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
             'previsto-aplicado' => 'Horários previstos aplicados nos dias úteis pendentes.',
             'divergencia-resolvida' => 'Divergência concluída! O espelho voltou para tratamento.',
             'divergencia-reenviada' => 'Divergência concluída, ponto fechado e nova folha enviada por e-mail ao colaborador.',
+            'folha-pdf-link' => 'PDF gerado e link de assinatura pronto neste cartão.',
+            'folha-email' => 'E-mail com link de assinatura enviado ao colaborador.',
             'justificativa' => 'Justificativa salva. O ponto do período foi recalculado.',
             'justificativa-removida' => 'Justificativa removida. O ponto do período foi recalculado.',
             default => 'Atualizado com sucesso.',
@@ -87,12 +89,17 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
 <?php endif; ?>
 <?php if (!empty($error)): ?><div class="alert alert-danger"><?= View::e((string)$error) ?></div><?php endif; ?>
 
+<?php
+$docFolha = $docFolha ?? null;
+$portalUrlFolha = $portalUrlFolha ?? null;
+?>
+
 <?php if (!empty($divergenciasAbertas) || $statusPeriodo === 'em_divergencia'): ?>
 <section class="ponto-div-banner" aria-label="Divergência apontada pelo colaborador">
     <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:.75rem;">
         <div>
             <strong style="color:#991B1B;">Divergência apontada pelo colaborador — assinatura pausada</strong>
-            <p class="text-sm" style="margin:.25rem 0 0;color:#7F1D1D;">Ajuste as batidas ou justificativas abaixo e conclua o tratamento para liberar o cartão para fechamento e nova assinatura.</p>
+            <p class="text-sm" style="margin:.25rem 0 0;color:#7F1D1D;">Ajuste as batidas ou justificativas abaixo e use o botão único para concluir, regerar o PDF e reenviar.</p>
         </div>
     </div>
     <?php if (!empty($divergenciasAbertas)): ?>
@@ -115,10 +122,49 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
                style="flex:1;min-width:220px;background:#fff;">
         <button class="btn btn-secondary btn-sm" type="submit">Concluir divergência e liberar</button>
         <button class="btn btn-primary btn-sm" type="submit"
-                formaction="/rh/ponto/<?= (int) $espelhoAcaoId ?>/resolver-divergencia-reenviar">Concluir, fechar ponto e reenviar folha por e-mail</button>
+                formaction="/rh/ponto/<?= (int) $espelhoAcaoId ?>/resolver-divergencia-reenviar"
+                data-confirm-title="Concluir divergência, regerar PDF e reenviar?"
+                data-confirm="Fecha o ponto, gera PDF+link e envia o e-mail ao colaborador em um único passo."
+                data-confirm-ok="Concluir e reenviar">Concluir divergência, regerar PDF e reenviar ao colaborador</button>
     </form>
 </section>
 <?php endif; ?>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Folha / PDF / assinatura</h2>
+            <p class="card-subtitle">Emita e envie sem sair deste cartão — o link nasce junto com o PDF</p>
+        </div>
+    </div>
+    <div class="card-body" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
+        <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/folha/gerar" style="display:inline;">
+            <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+            <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+            <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+            <button class="btn btn-primary btn-sm" type="submit"
+                    data-confirm-title="Gerar PDF e link?"
+                    data-confirm="Fecha o período se necessário, gera o PDF e cria o token de assinatura no mesmo clique."
+                    data-confirm-ok="Gerar PDF e link">Gerar PDF e link</button>
+        </form>
+        <?php if (is_array($docFolha) && !empty($docFolha['portal_token'])): ?>
+            <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/folha/enviar" style="display:inline;">
+                <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+                <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+                <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+                <input type="hidden" name="documento_id" value="<?= (int) $docFolha['id'] ?>">
+                <button class="btn btn-secondary btn-sm" type="submit">Enviar e-mail com link</button>
+            </form>
+            <a class="btn btn-ghost btn-sm" href="/rh/folha/documento/<?= (int) $docFolha['id'] ?>" target="_blank" rel="noopener noreferrer">Abrir PDF</a>
+            <?php if (!empty($portalUrlFolha)): ?>
+                <button class="btn btn-ghost btn-sm" type="button"
+                        onclick="window.copyTextWithToast && window.copyTextWithToast(<?= json_encode($portalUrlFolha, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP) ?>, 'Link copiado!')">Copiar link</button>
+            <?php endif; ?>
+        <?php else: ?>
+            <span class="text-sm muted">Ainda sem PDF ativo neste cartão.</span>
+        <?php endif; ?>
+    </div>
+</section>
 
 <section class="card">
     <div class="card-body">

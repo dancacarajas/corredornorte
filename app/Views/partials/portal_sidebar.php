@@ -18,15 +18,9 @@ $isActive = static fn(string $key): string => $activeMenu === $key ? ' is-active
             <div class="nav-section-title">Portal</div>
             <ul class="nav-list">
                 <li>
-                    <a class="nav-link<?= $isActive('overview') ?>" href="/he">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h7V4H4v9zm9 7h7V11h-7v9zM4 20h7v-5H4v5zm9-16v5h7V4h-7z"/></svg>
-                        Início
-                    </a>
-                </li>
-                <li>
-                    <a class="nav-link<?= $isActive('relatorios') ?>" href="/he/relatorios">
+                    <a class="nav-link<?= in_array($activeMenu, ['overview', 'relatorios'], true) ? ' is-active' : '' ?>" href="/he">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/></svg>
-                        Relatório de Atividades
+                        Meus Relatórios e Ponto
                     </a>
                 </li>
                 <li>

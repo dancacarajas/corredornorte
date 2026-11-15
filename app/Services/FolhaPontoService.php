@@ -22,9 +22,9 @@ final class FolhaPontoService
     }
 
     /**
-     * Gera PDF no padrão cartão-ponto e registra documento.
+     * Gera PDF no padrão cartão-ponto, registra documento e já cria o link de assinatura.
      *
-     * @return array{documento_id:int,path:string,codigo:string}
+     * @return array{documento_id:int,path:string,codigo:string,portal_token:?string,portal_url:?string}
      */
     public function gerarPdf(int $espelhoId, ?int $usuarioId = null, mixed $inicio = null, mixed $fim = null): array
     {
@@ -38,6 +38,8 @@ final class FolhaPontoService
 
         $rel = 'storage/uploads/folhas/' . $filename;
         $transacaoPropria = !$this->db->inTransaction();
+        $docId = 0;
+        $link = [];
         try {
             if ($transacaoPropria) {
                 $this->db->beginTransaction();
@@ -72,6 +74,10 @@ final class FolhaPontoService
             $payload = $this->montarPayload($dados, $codigo);
             $this->renderPdf($payload, $path);
 
+            $this->db->prepare(
+                "UPDATE documentos SET status = 'invalidado' WHERE espelho_id = :eid AND status IN ('gerado', 'enviado')"
+            )->execute(['eid' => $espelhoId]);
+
             $ins = $this->db->prepare(
                 "INSERT INTO documentos (tipo, espelho_id, codigo_verificacao, arquivo_path, status, layout_pdf, periodo_inicio, periodo_fim)
                  VALUES ('folha_ponto', :e, :c, :p, 'gerado', :layout, :inicio, :fim)"
@@ -95,6 +101,10 @@ final class FolhaPontoService
                 'm' => 'Geração cartão-ponto',
                 'u' => $usuarioId,
             ]);
+
+            // PDF sem token não serve ao fluxo de assinatura — falha aqui invalida a emissão.
+            $link = (new AssinaturaEletronicaService($this->db))->gerarLinkPortal($docId, $usuarioId, $espelhoId);
+
             if ($transacaoPropria) {
                 $this->db->commit();
             }
@@ -108,7 +118,16 @@ final class FolhaPontoService
             throw $e;
         }
 
-        return ['documento_id' => $docId, 'path' => $rel, 'codigo' => $codigo];
+        $portalUrl = (string) ($link['portal_url'] ?? '');
+        $portalToken = $portalUrl !== '' ? basename(parse_url($portalUrl, PHP_URL_PATH) ?: '') : null;
+
+        return [
+            'documento_id' => $docId,
+            'path' => $rel,
+            'codigo' => $codigo,
+            'portal_token' => $portalToken !== '' ? $portalToken : null,
+            'portal_url' => $portalUrl !== '' ? $portalUrl : null,
+        ];
     }
 
     /** Reemite uma via pendente obsoleta e conserva seu link, se houver. */
@@ -158,12 +177,12 @@ final class FolhaPontoService
             $token = $doc['portal_token'] ?: null;
             $arquivar = $this->db->prepare(
                 "UPDATE documentos SET status = 'invalidado', portal_token = NULL, substituido_por_id = ?
-                 WHERE id = ? AND status IN ('gerado', 'enviado')"
+                 WHERE id = ? AND status IN ('gerado', 'enviado', 'invalidado')"
             );
             $arquivar->execute([$nova['documento_id'], $documentoId]);
             $publicar = $this->db->prepare(
-                "UPDATE documentos SET status = ?, portal_token = ?, hash_md5 = ?, hash_sha1 = ?, hash_sha256 = ?
-                 WHERE id = ? AND layout_pdf = ? AND status = 'gerado'"
+                "UPDATE documentos SET status = ?, portal_token = COALESCE(?, portal_token), hash_md5 = ?, hash_sha1 = ?, hash_sha256 = ?
+                 WHERE id = ? AND layout_pdf = ? AND status IN ('gerado', 'enviado')"
             );
             $publicar->execute([
                 $doc['status'], $token, $hashes['md5'], $hashes['sha1'], $hashes['sha256'],
