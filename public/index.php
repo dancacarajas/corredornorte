@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Controllers\AuthController;
+use App\Controllers\ContaController;
 use App\Controllers\He\PortalController as HePortalController;
 use App\Controllers\He\RelatorioAssinaturaController;
 use App\Controllers\HomeController;
@@ -94,6 +95,20 @@ $perfisCtrl = PerfilController::class;
 $router->get('/login', [$auth, 'showLogin']);
 $router->post('/login', [$auth, 'login']);
 $router->post('/logout', [$auth, 'logout']);
+$router->get('/esqueci-senha', [$auth, 'showForgot']);
+$router->post('/esqueci-senha', [$auth, 'forgot']);
+$router->get('/redefinir-senha/{token}', [$auth, 'showReset']);
+$router->post('/redefinir-senha/{token}', [$auth, 'reset']);
+
+$conta = ContaController::class;
+$router->get('/conta', [$conta, 'perfil']);
+$router->post('/conta/perfil', [$conta, 'atualizarPerfil']);
+$router->post('/conta/senha', [$conta, 'alterarSenha']);
+$router->post('/conta/avatar', [$conta, 'uploadAvatar']);
+$router->post('/conta/avatar/remover', [$conta, 'removerAvatar']);
+$router->post('/conta/solicitar-reset', [$conta, 'solicitarReset']);
+$router->get('/conta/avatar', [$conta, 'avatar']);
+
 $router->get('/verificar/{codigo}', [$folha, 'verificar']);
 $router->get('/assinar/{token}', [$folha, 'portalAssinatura']);
 $router->get('/assinar/{token}/pdf', [$folha, 'portalPdf']);
@@ -135,7 +150,7 @@ $router->get('/he/folhas/{id}/pdf', [$hePortal, 'folhaPdf']);
 $router->post('/he/folhas/{id}/assinar', [$hePortal, 'folhaAssinar']);
 $router->get('/he/ordens', [$hePortal, 'ordensJson']);
 
-$public = ['/login', '/he/login'];
+$public = ['/login', '/he/login', '/esqueci-senha'];
 $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/assets')
     || str_starts_with($path, '/verificar/')
@@ -144,6 +159,7 @@ $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/verificar-relatorio/')
     || str_starts_with($path, '/s/')
     || str_starts_with($path, '/cron/')
+    || str_starts_with($normalizedPath, '/redefinir-senha/')
     || $normalizedPath === '/og/arcadis-folha.jpg'
     || str_starts_with($path, '/he')
     || str_starts_with($path, '/install');
@@ -287,6 +303,7 @@ $router->get('/rh/usuarios/novo', [$usuarios, 'createForm']);
 $router->post('/rh/usuarios', [$usuarios, 'store']);
 $router->get('/rh/usuarios/{id}/editar', [$usuarios, 'editForm']);
 $router->post('/rh/usuarios/{id}', [$usuarios, 'update']);
+$router->post('/rh/usuarios/{id}/enviar-reset', [$usuarios, 'enviarReset']);
 
 $router->get('/rh/perfis', [$perfisCtrl, 'index']);
 $router->get('/rh/perfis/novo', [$perfisCtrl, 'createForm']);

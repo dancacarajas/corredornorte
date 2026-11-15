@@ -16,7 +16,8 @@ final class UsuarioService
     /** @return list<array<string,mixed>> */
     public function listar(?string $busca = null): array
     {
-        $sql = 'SELECT u.id, u.nome, u.email, u.status, u.created_at, u.updated_at,
+        $sql = 'SELECT u.id, u.nome, u.email, u.status, u.telefone, u.avatar_path,
+                       u.last_login_at, u.password_changed_at, u.created_at, u.updated_at,
                        GROUP_CONCAT(p.nome ORDER BY p.nome SEPARATOR \', \') AS perfis,
                        GROUP_CONCAT(p.id ORDER BY p.nome) AS perfil_ids
                 FROM usuarios u
@@ -75,9 +76,7 @@ final class UsuarioService
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new RuntimeException('E-mail inválido.');
         }
-        if (strlen($senha) < 6) {
-            throw new RuntimeException('A senha deve ter pelo menos 6 caracteres.');
-        }
+        (new ContaService($this->db))->assertSenhaForte($senha);
         if ($perfilIds === []) {
             throw new RuntimeException('Selecione ao menos um perfil.');
         }
@@ -85,15 +84,22 @@ final class UsuarioService
             throw new RuntimeException('Já existe um usuário com este e-mail.');
         }
 
+        $telefone = isset($data['telefone']) ? trim((string) $data['telefone']) : null;
+        if ($telefone === '') {
+            $telefone = null;
+        }
+
         $this->db->beginTransaction();
         try {
             $this->db->prepare(
-                'INSERT INTO usuarios (nome, email, senha_hash, status) VALUES (:n, :e, :s, :st)'
+                'INSERT INTO usuarios (nome, email, senha_hash, status, telefone, password_changed_at)
+                 VALUES (:n, :e, :s, :st, :t, NOW())'
             )->execute([
                 'n' => $nome,
                 'e' => $email,
                 's' => password_hash($senha, PASSWORD_DEFAULT),
                 'st' => $status,
+                't' => $telefone,
             ]);
             $id = (int) $this->db->lastInsertId();
             $this->syncPerfis($id, $perfilIds);
@@ -137,8 +143,8 @@ final class UsuarioService
         if ($this->emailExiste($email, $id)) {
             throw new RuntimeException('Já existe um usuário com este e-mail.');
         }
-        if ($senha !== '' && strlen($senha) < 6) {
-            throw new RuntimeException('A nova senha deve ter pelo menos 6 caracteres.');
+        if ($senha !== '') {
+            (new ContaService($this->db))->assertSenhaForte($senha);
         }
 
         // Impede auto-desativação do admin logado sem outro admin — regra simples: não desativar a si mesmo
@@ -146,19 +152,29 @@ final class UsuarioService
             throw new RuntimeException('Você não pode desativar o próprio usuário.');
         }
 
+        $telefone = array_key_exists('telefone', $data)
+            ? trim((string) $data['telefone'])
+            : (string) ($atual['telefone'] ?? '');
+        if ($telefone === '') {
+            $telefone = null;
+        }
+
         $this->db->beginTransaction();
         try {
             if ($senha !== '') {
                 $this->db->prepare(
-                    'UPDATE usuarios SET nome = :n, email = :e, status = :st, senha_hash = :s WHERE id = :id'
+                    'UPDATE usuarios SET nome = :n, email = :e, status = :st, telefone = :t,
+                        senha_hash = :s, password_changed_at = NOW() WHERE id = :id'
                 )->execute([
-                    'n' => $nome, 'e' => $email, 'st' => $status,
+                    'n' => $nome, 'e' => $email, 'st' => $status, 't' => $telefone,
                     's' => password_hash($senha, PASSWORD_DEFAULT), 'id' => $id,
                 ]);
             } else {
                 $this->db->prepare(
-                    'UPDATE usuarios SET nome = :n, email = :e, status = :st WHERE id = :id'
-                )->execute(['n' => $nome, 'e' => $email, 'st' => $status, 'id' => $id]);
+                    'UPDATE usuarios SET nome = :n, email = :e, status = :st, telefone = :t WHERE id = :id'
+                )->execute([
+                    'n' => $nome, 'e' => $email, 'st' => $status, 't' => $telefone, 'id' => $id,
+                ]);
             }
             $this->syncPerfis($id, $perfilIds);
             $this->audit('usuarios', $id, 'atualizar', [

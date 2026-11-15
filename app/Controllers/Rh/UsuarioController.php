@@ -7,6 +7,7 @@ namespace App\Controllers\Rh;
 use App\Helpers\Auth;
 use App\Helpers\Db;
 use App\Helpers\View;
+use App\Services\ContaService;
 use App\Services\PerfilService;
 use App\Services\UsuarioService;
 use PDO;
@@ -21,6 +22,7 @@ final class UsuarioController
         $usuarios = [];
         $dbOk = $pdo instanceof PDO;
         if ($dbOk) {
+            (new ContaService($pdo))->ensureSchema();
             $usuarios = (new UsuarioService($pdo))->listar($_GET['q'] ?? null);
         }
 
@@ -55,6 +57,7 @@ final class UsuarioController
         $pdo = Db::tryConnection();
         $usuario = null;
         if ($pdo instanceof PDO) {
+            (new ContaService($pdo))->ensureSchema();
             $usuario = (new UsuarioService($pdo))->buscar((int) $id);
         }
         if ($usuario === null) {
@@ -94,6 +97,25 @@ final class UsuarioController
         $this->save((int) $id);
     }
 
+    public function enviarReset(string $id = ''): void
+    {
+        Auth::requirePermission('usuarios.gerenciar');
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            header('Location: /rh/usuarios?erro=' . rawurlencode('MySQL indisponível'));
+            exit;
+        }
+
+        try {
+            $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+            (new ContaService($pdo))->enviarResetParaUsuario((int) $id, $ip);
+            header('Location: /rh/usuarios/' . (int) $id . '/editar?ok=reset_enviado');
+        } catch (Throwable $e) {
+            header('Location: /rh/usuarios/' . (int) $id . '/editar?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
     private function save(?int $id): void
     {
         $pdo = Db::tryConnection();
@@ -102,25 +124,30 @@ final class UsuarioController
             exit;
         }
 
+        (new ContaService($pdo))->ensureSchema();
+
         $data = [
             'nome' => (string) ($_POST['nome'] ?? ''),
             'email' => (string) ($_POST['email'] ?? ''),
+            'telefone' => (string) ($_POST['telefone'] ?? ''),
             'senha' => (string) ($_POST['senha'] ?? ''),
             'status' => (string) ($_POST['status'] ?? 'ativo'),
             'perfil_ids' => array_map('intval', (array) ($_POST['perfil_ids'] ?? [])),
         ];
+        $enviarBoasVindas = !empty($_POST['enviar_boas_vindas']);
 
         try {
             $svc = new UsuarioService($pdo);
             if ($id === null) {
-                $svc->criar($data, Auth::id());
+                $novoId = $svc->criar($data, Auth::id());
+                if ($enviarBoasVindas) {
+                    (new ContaService($pdo))->enviarBoasVindas($novoId, $data['senha'] !== '' ? $data['senha'] : null);
+                }
                 header('Location: /rh/usuarios?ok=criado');
             } else {
                 $svc->atualizar($id, $data, Auth::id());
                 if (Auth::id() === $id) {
-                    Auth::refreshSessionAccess();
-                    $_SESSION['user']['name'] = trim($data['nome']);
-                    $_SESSION['user']['email'] = strtolower(trim($data['email']));
+                    Auth::refreshSessionProfile();
                 }
                 header('Location: /rh/usuarios?ok=atualizado');
             }
@@ -129,6 +156,7 @@ final class UsuarioController
             $usuario = $id ? (new UsuarioService($pdo))->buscar($id) : [
                 'nome' => $data['nome'],
                 'email' => $data['email'],
+                'telefone' => $data['telefone'],
                 'status' => $data['status'],
                 'perfis' => array_map(static fn (int $pid): array => ['id' => $pid], $data['perfil_ids']),
             ];

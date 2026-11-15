@@ -208,13 +208,26 @@ SVG;
 
     <div class="sidebar-footer">
         <div class="user-chip">
-            <div class="avatar" aria-hidden="true"><?= View::e(mb_substr((string) ($currentUser['name'] ?? 'U'), 0, 1)) ?></div>
-            <div>
-                <strong><?= View::e((string) ($currentUser['name'] ?? 'Usuário')) ?></strong>
-                <span><?= View::e((string) ($currentUser['role'] ?? 'RH')) ?></span>
-            </div>
+            <a class="user-chip-link" href="/conta" title="Meu perfil">
+                <?php
+                $avatarUrl = $currentUser['avatar_url'] ?? \App\Helpers\Auth::avatarUrl();
+                $inicial = mb_strtoupper(mb_substr((string) ($currentUser['name'] ?? 'U'), 0, 1));
+                ?>
+                <div class="avatar <?= $avatarUrl ? 'has-photo' : '' ?>" aria-hidden="true">
+                    <?php if ($avatarUrl): ?>
+                        <img src="<?= View::e((string) $avatarUrl) ?>" alt="">
+                    <?php else: ?>
+                        <?= View::e($inicial) ?>
+                    <?php endif; ?>
+                </div>
+                <div>
+                    <strong><?= View::e((string) ($currentUser['name'] ?? 'Usuário')) ?></strong>
+                    <span><?= View::e((string) ($currentUser['role'] ?? 'RH')) ?></span>
+                </div>
+            </a>
         </div>
-        <div style="padding:0 .45rem .35rem;">
+        <div style="padding:0 .45rem .35rem;display:grid;gap:.35rem;">
+            <a class="btn btn-secondary btn-sm" href="/conta" style="width:100%;">Meu perfil</a>
             <form method="post" action="/logout">
                 <?= \App\Helpers\Csrf::field() ?>
                 <button class="btn btn-ghost btn-sm" type="submit" style="width:100%;">Sair</button>

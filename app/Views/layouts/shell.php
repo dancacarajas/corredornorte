@@ -9,9 +9,13 @@ $pageSubtitle = $pageSubtitle ?? null;
 $activeMenu = $activeMenu ?? '';
 $authUser = \App\Helpers\Auth::user();
 $currentUser = $currentUser ?? ($authUser ? [
+    'id' => (int) ($authUser['id'] ?? 0),
     'name' => (string) $authUser['name'],
+    'email' => (string) ($authUser['email'] ?? ''),
     'role' => (string) ($authUser['role'] ?? 'RH Operacional'),
-] : ['name' => 'Administrador', 'role' => 'RH Operacional']);
+    'avatar' => (string) ($authUser['avatar'] ?? ''),
+    'avatar_url' => \App\Helpers\Auth::avatarUrl($authUser),
+] : ['id' => 0, 'name' => 'Administrador', 'email' => '', 'role' => 'RH Operacional', 'avatar' => '', 'avatar_url' => null]);
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -24,8 +28,9 @@ $currentUser = $currentUser ?? ($authUser ? [
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=p1-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=avatar-20261114">
     <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=nav-perfis-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/conta.css') ?>?v=conta-20261114">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
     <?php endforeach; ?>

@@ -579,6 +579,20 @@ body.ui-confirm-open {
   justify-content: center;
   font-weight: 740;
   font-size: var(--text-sm);
+  flex-shrink: 0;
+}
+
+.avatar.has-photo {
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.avatar.has-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .progress {

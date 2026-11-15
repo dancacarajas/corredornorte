@@ -11,6 +11,7 @@ use App\Helpers\View;
 $msgs = [
     'criado' => 'Usuário criado com sucesso.',
     'atualizado' => 'Usuário atualizado.',
+    'reset_enviado' => 'E-mail de redefinição enviado.',
 ];
 ?>
 
@@ -46,19 +47,44 @@ $msgs = [
             <table class="table">
                 <thead>
                 <tr>
+                    <th></th>
                     <th>Nome</th>
                     <th>E-mail</th>
                     <th>Perfis</th>
+                    <th>Último acesso</th>
                     <th>Status</th>
                     <th></th>
                 </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($usuarios as $u): ?>
+                    <?php
+                    $av = trim((string) ($u['avatar_path'] ?? ''));
+                    $avUrl = $av !== ''
+                        ? '/conta/avatar?id=' . (int) $u['id'] . '&v=' . substr(sha1($av), 0, 8)
+                        : null;
+                    $ini = mb_strtoupper(mb_substr((string) $u['nome'], 0, 1));
+                    ?>
                     <tr>
+                        <td style="width:44px;">
+                            <div class="avatar <?= $avUrl ? 'has-photo' : '' ?>" aria-hidden="true">
+                                <?php if ($avUrl): ?>
+                                    <img src="<?= View::e($avUrl) ?>" alt="">
+                                <?php else: ?>
+                                    <?= View::e($ini) ?>
+                                <?php endif; ?>
+                            </div>
+                        </td>
                         <td class="fw-700"><?= View::e((string) $u['nome']) ?></td>
                         <td><?= View::e((string) $u['email']) ?></td>
                         <td class="text-sm"><?= View::e((string) ($u['perfis'] ?: '—')) ?></td>
+                        <td class="text-sm muted">
+                            <?= View::e(
+                                !empty($u['last_login_at'])
+                                    ? date('d/m/Y H:i', strtotime((string) $u['last_login_at']))
+                                    : '—'
+                            ) ?>
+                        </td>
                         <td>
                             <span class="pill <?= ($u['status'] ?? '') === 'ativo' ? 'pill-success' : 'pill-neutral' ?>">
                                 <?= View::e((string) $u['status']) ?>

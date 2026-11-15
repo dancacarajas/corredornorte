@@ -49,6 +49,8 @@ final class Auth
             'id' => (int) $user['id'],
             'name' => (string) $user['nome'],
             'email' => (string) $user['email'],
+            'telefone' => (string) ($user['telefone'] ?? ''),
+            'avatar' => trim((string) ($user['avatar_path'] ?? '')),
             'role' => $acesso['role'],
             'perfis' => $acesso['perfis'],
             'permissoes' => $acesso['permissoes'],
@@ -75,6 +77,47 @@ final class Auth
             $_SESSION['user']['permissoes'] = $acesso['permissoes'];
         } catch (Throwable) {
         }
+    }
+
+    /**
+     * Recarrega nome/e-mail/telefone/avatar na sessão (após edição do perfil).
+     */
+    public static function refreshSessionProfile(): void
+    {
+        self::start();
+        $id = self::id();
+        if ($id === null) {
+            return;
+        }
+        try {
+            $pdo = Database::connection();
+            $st = $pdo->prepare(
+                'SELECT nome, email, telefone, avatar_path FROM usuarios WHERE id = :id LIMIT 1'
+            );
+            $st->execute(['id' => $id]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                return;
+            }
+            $_SESSION['user']['name'] = (string) $row['nome'];
+            $_SESSION['user']['email'] = (string) $row['email'];
+            $_SESSION['user']['telefone'] = (string) ($row['telefone'] ?? '');
+            $_SESSION['user']['avatar'] = trim((string) ($row['avatar_path'] ?? ''));
+            self::refreshSessionAccess();
+        } catch (Throwable) {
+        }
+    }
+
+    public static function avatarUrl(?array $user = null): ?string
+    {
+        $user ??= self::user();
+        $path = trim((string) ($user['avatar'] ?? ''));
+        if ($path === '') {
+            return null;
+        }
+        $id = (int) ($user['id'] ?? 0);
+
+        return '/conta/avatar?id=' . $id . '&v=' . substr(sha1($path), 0, 8);
     }
 
     /**
@@ -150,6 +193,21 @@ final class Auth
                 $_SESSION['user']['role'] = $acesso['role'];
                 $_SESSION['user']['perfis'] = $acesso['perfis'];
                 $_SESSION['user']['permissoes'] = $acesso['permissoes'];
+                if (!array_key_exists('avatar', $_SESSION['user'])) {
+                    $st2 = $pdo->prepare(
+                        'SELECT nome, email, telefone, avatar_path FROM usuarios WHERE id = :id LIMIT 1'
+                    );
+                    $st2->execute(['id' => (int) $_SESSION['user']['id']]);
+                    $row = $st2->fetch(PDO::FETCH_ASSOC);
+                    if ($row !== false) {
+                        $_SESSION['user']['name'] = (string) $row['nome'];
+                        $_SESSION['user']['email'] = (string) $row['email'];
+                        $_SESSION['user']['telefone'] = (string) ($row['telefone'] ?? '');
+                        $_SESSION['user']['avatar'] = trim((string) ($row['avatar_path'] ?? ''));
+                    } else {
+                        $_SESSION['user']['avatar'] = '';
+                    }
+                }
             } catch (Throwable) {
                 // Se DB estiver indisponível, mantém sessão atual sem derrubar o fallback
             }

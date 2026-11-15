@@ -100,6 +100,24 @@ final class EmailTemplateService
                 'trigger' => 'Botão “Testar envio” em Conta de e-mail',
                 'vars' => ['destinatario', 'conta_email', 'conta_linha'],
             ],
+            'auth.redefinir_senha' => [
+                'label' => 'Redefinição de senha',
+                'group' => 'Conta / Autenticação',
+                'trigger' => 'Esqueci minha senha ou reset enviado pelo admin',
+                'vars' => ['nome', 'portal_url', 'cta_bloco', 'link_fallback', 'validade'],
+            ],
+            'auth.boas_vindas' => [
+                'label' => 'Boas-vindas (novo usuário)',
+                'group' => 'Conta / Autenticação',
+                'trigger' => 'Criação de usuário com opção de enviar e-mail',
+                'vars' => ['nome', 'email', 'portal_url', 'cta_bloco', 'link_fallback', 'senha_temp', 'senha_temp_linha'],
+            ],
+            'auth.senha_alterada' => [
+                'label' => 'Senha alterada',
+                'group' => 'Conta / Autenticação',
+                'trigger' => 'Após troca de senha (perfil ou reset)',
+                'vars' => ['nome', 'portal_url', 'cta_bloco', 'link_fallback'],
+            ],
         ];
     }
 
@@ -303,6 +321,48 @@ HTML,
 HTML,
                 'rodape' => $rodapePadrao . ' Mensagem automática de diagnóstico.',
             ],
+            'auth.redefinir_senha' => [
+                'assunto' => 'Redefinição de senha — Arcadis RH',
+                'titulo' => 'Redefinir senha',
+                'texto' => "Oi {{nome}},\n\nRecebemos um pedido para redefinir a senha da sua conta no Arcadis RH.\nO link é válido por {{validade}}.{{portal_txt}}\nSe você não solicitou, ignore este e-mail.\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Recebemos um pedido para redefinir a senha da sua conta no <strong>Arcadis RH</strong>.</p>
+<p>O link abaixo é válido por <strong>{{validade}}</strong>. Depois disso, será necessário solicitar um novo.</p>
+{{cta_bloco}}
+{{link_fallback}}
+<p style="margin-top:20px;">Se você não solicitou esta alteração, ignore este e-mail — sua senha permanece a mesma.</p>
+HTML,
+                'rodape' => $rodapePadrao . ' Segurança da conta.',
+            ],
+            'auth.boas_vindas' => [
+                'assunto' => 'Bem-vindo(a) ao Arcadis RH',
+                'titulo' => 'Sua conta foi criada',
+                'texto' => "Oi {{nome}},\n\nSua conta no Arcadis RH foi criada.\nE-mail de acesso: {{email}}{{senha_temp_txt}}{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Sua conta no <strong>Arcadis RH</strong> foi criada e já está pronta para uso.</p>
+<p><strong>E-mail de acesso:</strong> {{email}}</p>
+{{senha_temp_linha}}
+<p>Use o botão abaixo para entrar no sistema.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Guarde suas credenciais com segurança.',
+            ],
+            'auth.senha_alterada' => [
+                'assunto' => 'Sua senha foi alterada — Arcadis RH',
+                'titulo' => 'Senha atualizada',
+                'texto' => "Oi {{nome}},\n\nA senha da sua conta no Arcadis RH foi alterada com sucesso.{{portal_txt}}\nSe não foi você, contate o RH imediatamente.\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>A senha da sua conta no <strong>Arcadis RH</strong> foi alterada com sucesso.</p>
+<p>Se você não reconhece esta alteração, contate o RH imediatamente e solicite um novo reset.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Aviso de segurança.',
+            ],
             default => throw new RuntimeException('Template desconhecido: ' . $key),
         };
     }
@@ -465,6 +525,24 @@ HTML,
                 'destinatario' => 'seu@email.com',
                 'contaEmail' => 'rh@empresa.com',
             ],
+            'auth.redefinir_senha' => [
+                'nome' => 'Administrador',
+                'portalUrl' => '#preview-reset',
+                'cta_label' => 'REDEFINIR SENHA',
+                'validade' => '1 hora',
+            ],
+            'auth.boas_vindas' => [
+                'nome' => 'Administrador',
+                'email' => 'admin@empresa.com',
+                'portalUrl' => '#preview-login',
+                'cta_label' => 'ACESSAR O SISTEMA',
+                'senha_temp' => 'Temporaria123',
+            ],
+            'auth.senha_alterada' => [
+                'nome' => 'Administrador',
+                'portalUrl' => '#preview-login',
+                'cta_label' => 'ENTRAR',
+            ],
             default => [],
         };
     }
@@ -506,6 +584,42 @@ HTML,
     private static function buildPlaceholderMap(string $key, array $vars): array
     {
         $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+
+        if (str_starts_with($key, 'auth.')) {
+            $nome = trim((string) ($vars['nome'] ?? 'Usuário'));
+            $email = trim((string) ($vars['email'] ?? ''));
+            $validade = trim((string) ($vars['validade'] ?? '1 hora'));
+            $senhaTemp = trim((string) ($vars['senha_temp'] ?? ''));
+            $portalUrl = trim((string) ($vars['portalUrl'] ?? $vars['portal_url'] ?? ''));
+            $ctaLabel = trim((string) ($vars['cta_label'] ?? 'ABRA AGORA'));
+            if ($ctaLabel === '') {
+                $ctaLabel = 'ABRA AGORA';
+            }
+
+            $cta = '';
+            $fallback = '';
+            $portalTxt = '';
+            if ($portalUrl !== '') {
+                $cta = self::ctaButtonHtml($portalUrl, $ctaLabel);
+                $fallback = self::ctaFallbackHtml($portalUrl);
+                $portalTxt = "\n\nAcesse:\n{$portalUrl}\n";
+            }
+
+            return [
+                'nome' => $nome,
+                'email' => $email,
+                'validade' => $validade !== '' ? $validade : '1 hora',
+                'senha_temp' => $senhaTemp,
+                'portal_url' => $portalUrl,
+                'cta_bloco' => $cta,
+                'link_fallback' => $fallback,
+                'portal_txt' => $portalTxt,
+                'senha_temp_linha' => $senhaTemp !== ''
+                    ? '<p style="margin-top:12px;"><strong>Senha temporária:</strong> <span style="font-family:Consolas,monospace;font-weight:700;">' . $e($senhaTemp) . '</span></p><p>Altere-a no primeiro acesso em <em>Meu perfil</em>.</p>'
+                    : '',
+                'senha_temp_txt' => $senhaTemp !== '' ? "\nSenha temporária: {$senhaTemp}\nAltere-a no primeiro acesso em Meu perfil.\n" : '',
+            ];
+        }
 
         if (str_starts_with($key, 'folha.') || str_starts_with($key, 'ra.')) {
             $nome = trim((string) ($vars['nome'] ?? 'Colaborador'));
@@ -640,7 +754,7 @@ HTML;
                     return '';
                 }
                 $val = (string) $map[$k];
-                if (in_array($k, ['cta_bloco', 'link_fallback', 'matricula_linha', 'codigo_linha', 'conta_linha', 'matricula_badge'], true)) {
+                if (in_array($k, ['cta_bloco', 'link_fallback', 'matricula_linha', 'codigo_linha', 'conta_linha', 'matricula_badge', 'senha_temp_linha'], true)) {
                     return $val;
                 }
                 if ($htmlContext) {

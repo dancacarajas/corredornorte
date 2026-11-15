@@ -116,6 +116,9 @@ final class Installer
         $this->migrateCobrancaAssinatura($pdo);
         $messages[] = 'Migração: cobrança automática de assinatura';
 
+        $this->migrateContaUsuario($pdo);
+        $messages[] = 'Migração: conta de usuário (perfil, avatar, reset)';
+
         $adminPassword = 'admin123';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
         $stmt = $pdo->prepare('UPDATE usuarios SET senha_hash = :h WHERE email = :e');
@@ -699,6 +702,56 @@ final class Installer
         }
     }
 
+    public function migrateContaUsuario(PDO $pdo): void
+    {
+        if (!$this->hasColumn($pdo, 'usuarios', 'telefone')) {
+            $pdo->exec('ALTER TABLE usuarios ADD COLUMN telefone VARCHAR(32) NULL');
+        }
+        if (!$this->hasColumn($pdo, 'usuarios', 'avatar_path')) {
+            $pdo->exec('ALTER TABLE usuarios ADD COLUMN avatar_path VARCHAR(255) NULL');
+        }
+        if (!$this->hasColumn($pdo, 'usuarios', 'last_login_at')) {
+            $pdo->exec('ALTER TABLE usuarios ADD COLUMN last_login_at DATETIME NULL');
+        }
+        if (!$this->hasColumn($pdo, 'usuarios', 'password_changed_at')) {
+            $pdo->exec('ALTER TABLE usuarios ADD COLUMN password_changed_at DATETIME NULL');
+        }
+
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                token_hash CHAR(64) NOT NULL,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME NULL,
+                request_ip VARCHAR(45) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uk_prt_token (token_hash),
+                KEY idx_prt_usuario (usuario_id),
+                KEY idx_prt_expires (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS login_attempts (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                email VARCHAR(190) NOT NULL,
+                ip VARCHAR(45) NOT NULL,
+                sucesso TINYINT(1) NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_login_email_created (email, created_at),
+                KEY idx_login_ip_created (ip, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        $avatars = $this->root . '/storage/uploads/avatars';
+        if (!is_dir($avatars)) {
+            @mkdir($avatars, 0755, true);
+        }
+    }
+
     public function migrateCobrancaAssinatura(PDO $pdo): void
     {
         $pdo->exec(
@@ -856,6 +909,7 @@ final class Installer
     {
         foreach ([
             'storage/uploads',
+            'storage/uploads/avatars',
             'storage/logs',
             'storage/assinaturas',
             'storage/tmp',
