@@ -1,5 +1,7 @@
 <?php
 
+use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\View;
 use App\Services\CalculoPontoService;
 
@@ -74,6 +76,8 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
             'he-divergente' => 'HE marcada como divergente (não aplicada).',
             'previsto-aplicado' => 'Horários previstos aplicados nos dias úteis pendentes.',
             'divergencia-resolvida' => 'Divergência concluída! O espelho voltou para tratamento.',
+            'justificativa' => 'Justificativa salva. O ponto do período foi recalculado.',
+            'justificativa-removida' => 'Justificativa removida. O ponto do período foi recalculado.',
             default => 'Atualizado com sucesso.',
         };
         ?>
@@ -440,17 +444,33 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
 
     <?php if ($justificativas !== []): ?>
     <div class="ponto-tab-panel" data-ponto-panel="just" hidden>
-        <div class="card-header"><div><h2 class="card-title">Justificativas lançadas</h2></div></div>
+        <div class="card-header">
+            <div>
+                <h2 class="card-title">Justificativas lançadas</h2>
+                <p class="card-subtitle">Tipos que abonam falta removem a falta dos dias cobertos no cartão.</p>
+            </div>
+        </div>
         <div class="table-wrap">
             <table class="table">
-                <thead><tr><th>Período</th><th>Tipo</th><th>Obs.</th><th>Anexo</th></tr></thead>
+                <thead><tr><th>Período</th><th>Tipo</th><th>Efeito</th><th>Obs.</th><th>Anexo</th><?php if (!$periodoBloqueado && Auth::can('ponto.editar')): ?><th></th><?php endif; ?></tr></thead>
                 <tbody>
                 <?php foreach ($justificativas as $j): ?>
                     <tr>
                         <td><?= View::e($j['data_inicio'].' → '.$j['data_fim']) ?></td>
                         <td><?= View::e((string)$j['tipo_nome']) ?></td>
+                        <td><?= !empty($j['abona_falta']) ? 'Abona falta' : 'Registro (não abona)' ?></td>
                         <td><?= View::e((string)($j['observacao'] ?? '')) ?></td>
                         <td><?= !empty($j['anexo_path']) ? '<a href="/rh/ponto/anexos/' . (int) $j['id'] . '" target="_blank" rel="noopener noreferrer">Arquivo</a>' : '—' ?></td>
+                        <?php if (!$periodoBloqueado && Auth::can('ponto.editar')): ?>
+                            <td>
+                                <form method="post"
+                                      action="/rh/ponto/<?= (int) $espelho['id'] ?>/justificativa/<?= (int) $j['id'] ?>/excluir"
+                                      onsubmit="return confirm('Remover esta justificativa? Dias abonados voltam a ser calculados (falta se sem batida).');">
+                                    <input type="hidden" name="_csrf" value="<?= View::e(Csrf::token()) ?>">
+                                    <button class="btn btn-ghost btn-sm" type="submit">Remover</button>
+                                </form>
+                            </td>
+                        <?php endif; ?>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -579,64 +599,37 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
 <div class="modal-backdrop" id="justModal">
     <div class="modal">
         <form id="justForm" method="post" action="/rh/ponto/<?= (int)$espelho['id'] ?>/justificativa" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf" value="<?= View::e(Csrf::token()) ?>">
             <div class="modal-header"><h3 class="card-title">Adicionar justificativa</h3><button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button></div>
-            <div class="modal-body form-grid cols-2">
+            <div class="modal-body">
                 <input type="hidden" name="ponto_dia_id" id="justDiaId" value="">
                 <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
                 <input type="hidden" name="retorno_data_inicio" value="<?= View::e($dataInicio) ?>">
                 <input type="hidden" name="retorno_data_fim" value="<?= View::e($dataFim) ?>">
-                <div class="form-field" style="grid-column:1/-1;">
-                    <label class="form-label">Tipo</label>
-                    <select class="form-control" name="tipo_id" required>
-                        <?php foreach ($tiposJustificativa as $t): ?>
-                            <option value="<?= (int)$t['id'] ?>"><?= View::e($t['nome']) ?><?= !empty($t['abona_falta']) ? ' (abona falta)' : '' ?></option>
-                        <?php endforeach; ?>
-                    </select>
+                <p class="text-sm muted" style="margin:0 0 .75rem;">Dia útil sem batida é falta. Se o tipo <strong>abona falta</strong>, esses dias passam a Justificado (sem desconto).</p>
+                <div class="form-grid cols-2">
+                    <div class="form-field" style="grid-column:1/-1;">
+                        <label class="form-label" for="justTipo">Tipo</label>
+                        <select class="form-control" name="tipo_id" id="justTipo" required>
+                            <?php if ($tiposJustificativa === []): ?>
+                                <option value="" disabled selected>Nenhum tipo ativo — cadastre em Tipos de justificativa</option>
+                            <?php else: ?>
+                                <option value="" disabled selected>Selecione o tipo</option>
+                                <?php foreach ($tiposJustificativa as $t): ?>
+                                    <option value="<?= (int)$t['id'] ?>"><?= View::e($t['nome']) ?><?= !empty($t['abona_falta']) ? ' (abona falta)' : '' ?></option>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </select>
+                    </div>
+                    <div class="form-field"><label class="form-label" for="justInicio">Início</label><input class="form-control" type="date" name="data_inicio" id="justInicio" required value="<?= View::e($dataInicio) ?>"></div>
+                    <div class="form-field"><label class="form-label" for="justFim">Fim</label><input class="form-control" type="date" name="data_fim" id="justFim" required value="<?= View::e($dataInicio) ?>"></div>
+                    <div class="form-field" style="grid-column:1/-1;"><label class="form-label">Observação</label><textarea class="form-control" name="observacao"></textarea></div>
+                    <div class="form-field" style="grid-column:1/-1;"><label class="form-label">Anexo</label><input class="form-control" type="file" name="anexo"></div>
                 </div>
-                <div class="form-field"><label class="form-label" for="justInicio">Início</label><input class="form-control" type="date" name="data_inicio" id="justInicio" required value="<?= View::e($dataInicio) ?>"></div>
-                <div class="form-field"><label class="form-label" for="justFim">Fim</label><input class="form-control" type="date" name="data_fim" id="justFim" required value="<?= View::e($dataInicio) ?>"></div>
-                <div class="form-field" style="grid-column:1/-1;"><label class="form-label">Observação</label><textarea class="form-control" name="observacao"></textarea></div>
-                <div class="form-field" style="grid-column:1/-1;"><label class="form-label">Anexo</label><input class="form-control" type="file" name="anexo"></div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" type="button" data-modal-close>Cancelar</button>
                 <button class="btn btn-primary" type="submit">Salvar</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<div class="modal-backdrop" id="tiposJustModal">
-    <div class="modal">
-        <form method="post" action="/rh/ponto/justificativa-tipos">
-            <input type="hidden" name="espelho_id" value="<?= (int)$espelho['id'] ?>">
-            <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
-            <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
-            <div class="modal-header"><h3 class="card-title">Tipos de justificativa</h3><button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button></div>
-            <div class="modal-body section-stack">
-                <div class="table-wrap">
-                    <table class="table">
-                        <thead><tr><th>Código</th><th>Nome</th><th>Abona</th></tr></thead>
-                        <tbody>
-                        <?php foreach ($tiposJustificativa as $t): ?>
-                            <tr>
-                                <td><?= View::e((string)$t['codigo']) ?></td>
-                                <td><?= View::e((string)$t['nome']) ?></td>
-                                <td><?= !empty($t['abona_falta']) ? 'Sim' : 'Não' ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-                <div class="form-grid cols-2">
-                    <div class="form-field"><label class="form-label">Código</label><input class="form-control" name="codigo" required></div>
-                    <div class="form-field"><label class="form-label">Nome</label><input class="form-control" name="nome" required></div>
-                    <div class="form-field"><label class="text-sm"><input type="checkbox" name="abona_falta" value="1"> Abona falta</label></div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" type="button" data-modal-close>Fechar</button>
-                <button class="btn btn-primary" type="submit">Adicionar tipo</button>
             </div>
         </form>
     </div>

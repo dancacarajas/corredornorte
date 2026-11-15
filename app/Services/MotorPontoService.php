@@ -122,6 +122,12 @@ final class MotorPontoService
             $this->recalcularTotais($espelhoId);
             $this->db->commit();
 
+            // Classifica faltas/justificativas mesmo sem horário britânico.
+            try {
+                (new CalculoPontoService($this->db))->recalcularEspelho($espelhoId);
+            } catch (Throwable) {
+            }
+
             // Reaplica HE aprovadas sobre as marcações geradas (também ocorre após o britânico).
             try {
                 (new HeAutorizacaoService($this->db))->reaplicarAprovadasNoEspelho($espelhoId);

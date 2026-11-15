@@ -16,6 +16,18 @@ $currentUser = $currentUser ?? ($authUser ? [
     'avatar' => (string) ($authUser['avatar'] ?? ''),
     'avatar_url' => \App\Helpers\Auth::avatarUrl($authUser),
 ] : ['id' => 0, 'name' => 'Administrador', 'email' => '', 'role' => 'RH Operacional', 'avatar' => '', 'avatar_url' => null]);
+
+$alertasBadge = (int) ($alertasBadge ?? 0);
+if ($alertasBadge === 0 && \App\Helpers\Auth::check() && \App\Helpers\Auth::canAny('alertas.ver', 'dashboard.ver')) {
+    try {
+        $pdoBadge = \App\Helpers\Db::tryConnection();
+        if ($pdoBadge instanceof PDO) {
+            $alertasBadge = (new \App\Services\AlertasService($pdoBadge))->contarNaoLidos((int) (\App\Helpers\Auth::id() ?? 0));
+        }
+    } catch (Throwable) {
+        $alertasBadge = 0;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -29,7 +41,7 @@ $currentUser = $currentUser ?? ($authUser ? [
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
     <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=avatar-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=nav-perfis-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=alertas-badge-20261115">
     <link rel="stylesheet" href="<?= View::asset('css/conta.css') ?>?v=conta-20261114">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
@@ -42,13 +54,29 @@ $currentUser = $currentUser ?? ($authUser ? [
         'app' => $app,
         'activeMenu' => $activeMenu,
         'currentUser' => $currentUser,
+        'alertasBadge' => $alertasBadge,
     ]); ?>
 
     <div class="main-area">
-        <?php View::partial('topbar', [
+        <?php
+        $topbarActionsFinal = $topbarActions ?? null;
+        if (\App\Helpers\Auth::canAny('alertas.ver', 'dashboard.ver') && ($activeMenu ?? '') !== 'alertas') {
+            ob_start();
+            ?>
+            <a class="topbar-alerta" href="/rh/alertas" title="Central de Alertas">
+                Alertas
+                <?php if ($alertasBadge > 0): ?>
+                    <span class="nav-badge"><?= $alertasBadge > 99 ? '99+' : (int) $alertasBadge ?></span>
+                <?php endif; ?>
+            </a>
+            <?php
+            $badgeHtml = ob_get_clean() ?: '';
+            $topbarActionsFinal = $badgeHtml . ($topbarActionsFinal ?? '');
+        }
+        View::partial('topbar', [
             'pageTitle' => $pageTitle,
             'pageSubtitle' => $pageSubtitle,
-            'topbarActions' => $topbarActions ?? null,
+            'topbarActions' => $topbarActionsFinal,
         ]); ?>
 
         <main class="content section-stack">

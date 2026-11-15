@@ -22,6 +22,8 @@ final class PerfilService
     {
         return [
             ['codigo' => 'dashboard.ver', 'nome' => 'Ver visão geral', 'grupo' => 'Principal', 'descricao' => 'Acesso à home / dashboard'],
+            ['codigo' => 'alertas.ver', 'nome' => 'Ver central de alertas', 'grupo' => 'Principal', 'descricao' => 'Inbox de bloqueios e atrasos do fechamento'],
+            ['codigo' => 'alertas.gerenciar', 'nome' => 'Configurar alertas', 'grupo' => 'Sistema', 'descricao' => 'Catálogo, destinatários, digest e operação em massa'],
 
             ['codigo' => 'efetivo.ver', 'nome' => 'Ver efetivo', 'grupo' => 'Efetivo', 'descricao' => 'Listar colaboradores e estrutura'],
             ['codigo' => 'efetivo.editar', 'nome' => 'Editar efetivo', 'grupo' => 'Efetivo', 'descricao' => 'Criar e editar colaboradores e lotações'],

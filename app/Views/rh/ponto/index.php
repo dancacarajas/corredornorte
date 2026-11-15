@@ -363,31 +363,6 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
     <?php endif; ?>
 </section>
 
-<div class="modal-backdrop" id="tiposJustModalIndex">
-    <div class="modal">
-        <form method="post" action="/rh/ponto/justificativa-tipos">
-            <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
-            <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
-            <div class="modal-header">
-                <h3 class="card-title">Tipos de justificativa</h3>
-                <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
-            </div>
-            <div class="modal-body section-stack">
-                <p class="muted text-sm">Cadastre tipos usados nas justificativas do cartão de ponto.</p>
-                <div class="form-grid cols-2">
-                    <div class="form-field"><label class="form-label">Código</label><input class="form-control" name="codigo" required></div>
-                    <div class="form-field"><label class="form-label">Nome</label><input class="form-control" name="nome" required></div>
-                    <div class="form-field"><label class="text-sm"><input type="checkbox" name="abona_falta" value="1"> Abona falta</label></div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" type="button" data-modal-close>Cancelar</button>
-                <button class="btn btn-primary" type="submit">Adicionar tipo</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <dialog class="modal" id="ponto-periodo-inexistente"
         data-auto-open="<?= $periodoInexistente ? '1' : '0' ?>"
         aria-labelledby="ponto-periodo-inexistente-titulo">

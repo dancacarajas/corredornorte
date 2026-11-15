@@ -437,6 +437,33 @@ final class FolhaPontoService
             'erro' => $erro,
         ]);
 
+        if (!$sucesso) {
+            $meta = $this->db->prepare(
+                'SELECT d.id AS documento_id, d.espelho_id, e.colaborador_id, c.nome
+                 FROM documentos d
+                 LEFT JOIN ponto_espelhos e ON e.id = d.espelho_id
+                 LEFT JOIN rh_colaboradores c ON c.id = e.colaborador_id
+                 WHERE d.id = :id LIMIT 1'
+            );
+            $meta->execute(['id' => $documentoId]);
+            $row = $meta->fetch(PDO::FETCH_ASSOC) ?: [];
+            $eid = (int) ($row['espelho_id'] ?? 0);
+            $cid = (int) ($row['colaborador_id'] ?? 0);
+            AlertasService::emitirEvento([
+                'chave' => 'email.falha:doc:' . $documentoId . ':t' . $tentativa,
+                'codigo' => 'email.falha',
+                'severidade' => 'alta',
+                'titulo' => 'Falha no envio da folha — ' . (string) ($row['nome'] ?? 'Colaborador'),
+                'detalhe' => $erro !== null && $erro !== '' ? $erro : ('Destinatário: ' . $destinatario),
+                'href' => '/rh/medicao?filtro=email&subfiltro=email_falha',
+                'colaborador_id' => $cid > 0 ? $cid : null,
+                'espelho_id' => $eid > 0 ? $eid : null,
+                'documento_id' => $documentoId,
+                'referencia_tipo' => 'emails_envios',
+                'referencia_id' => $documentoId,
+            ]);
+        }
+
         if ($sucesso) {
             $this->db->prepare("UPDATE documentos SET status = 'enviado' WHERE id = :id AND status = 'gerado'")
                 ->execute(['id' => $documentoId]);

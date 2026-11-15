@@ -96,6 +96,19 @@ final class HomeController
         ]);
     }
 
+    public function mapaSistema(): void
+    {
+        \App\Helpers\Auth::requirePermission('dashboard.ver');
+
+        View::render('ui/mapa_sistema', [
+            'pageTitle' => 'Mapa do sistema',
+            'pageSubtitle' => 'Como o Arcadis fecha a medição — tour interativo',
+            'activeMenu' => 'mapa-sistema',
+            'extraCss' => ['css/mapa-sistema.css?v=20261115f'],
+            'extraJs' => ['js/mapa-sistema.js?v=20261115f'],
+        ]);
+    }
+
     public function modulePlaceholder(): void
     {
         View::render('rh/placeholder', [

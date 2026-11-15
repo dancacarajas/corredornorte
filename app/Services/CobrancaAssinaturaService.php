@@ -329,6 +329,7 @@ final class CobrancaAssinaturaService
         $check = EmailDeliverability::validate($to);
         if (!$check['ok']) {
             $this->registrar($tipo, $documentoId, $periodoId, $nivel, $to, false, $check['erro']);
+            $this->emitirAlertaFalha($tipo, $documentoId, $periodoId, $nivel, $item, (string) $check['erro']);
 
             return $meta + ['status' => 'falha', 'erro' => $check['erro']];
         }
@@ -375,13 +376,60 @@ final class CobrancaAssinaturaService
                 }
             }
 
+            if ($ok) {
+                AlertasService::resolverEvento('cobranca.falha:' . $tipo . ':' . $documentoId . ':' . $nivel);
+            } else {
+                $this->emitirAlertaFalha($tipo, $documentoId, $periodoId, $nivel, $item, (string) $erro);
+            }
+
             return $meta + ['status' => $ok ? 'enviado' : 'falha', 'erro' => $erro];
         } catch (Throwable $e) {
             $erro = mb_substr($e->getMessage(), 0, 250);
             $this->registrar($tipo, $documentoId, $periodoId, $nivel, $to, false, $erro);
+            $this->emitirAlertaFalha($tipo, $documentoId, $periodoId, $nivel, $item, $erro);
 
             return $meta + ['status' => 'falha', 'erro' => $erro];
         }
+    }
+
+    /** @param array<string,mixed> $item */
+    private function emitirAlertaFalha(
+        string $tipo,
+        int $documentoId,
+        int $periodoId,
+        int $nivel,
+        array $item,
+        string $erro
+    ): void {
+        $nome = trim((string) ($item['nome'] ?? 'Colaborador'));
+        $pi = (string) ($item['data_inicio'] ?? '');
+        $pf = (string) ($item['data_fim'] ?? '');
+        $qs = $pi !== '' && $pf !== ''
+            ? ('?' . http_build_query(['data_inicio' => $pi, 'data_fim' => $pf, 'filtro' => 'assinaturas']))
+            : '?filtro=assinaturas';
+        $detalhe = 'Cobrança nível ' . $nivel . ' · ' . strtoupper($tipo);
+        if ($erro !== '') {
+            $detalhe .= ' — ' . $erro;
+        }
+        AlertasService::emitirEvento([
+            'chave' => 'cobranca.falha:' . $tipo . ':' . $documentoId . ':' . $nivel,
+            'codigo' => 'cobranca.falha',
+            'severidade' => $nivel >= 3 ? 'critica' : 'alta',
+            'titulo' => 'Falha na cobrança de assinatura — ' . ($nome !== '' ? $nome : 'Colaborador'),
+            'detalhe' => $detalhe,
+            'href' => '/rh/medicao' . $qs,
+            'periodo_inicio' => $pi !== '' ? $pi : null,
+            'periodo_fim' => $pf !== '' ? $pf : null,
+            'documento_id' => $tipo === 'folha' ? $documentoId : null,
+            'referencia_tipo' => 'cobranca_envios',
+            'referencia_id' => $periodoId,
+            'payload' => [
+                'tipo' => $tipo,
+                'nivel' => $nivel,
+                'documento_id' => $documentoId,
+                'periodo_id' => $periodoId,
+            ],
+        ]);
     }
 
     private function portalUrl(string $tipo, string $token): string

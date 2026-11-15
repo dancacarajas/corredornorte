@@ -6,6 +6,7 @@ namespace App\Controllers;
 
 use App\Helpers\CronSecret;
 use App\Helpers\Db;
+use App\Services\AlertasService;
 use App\Services\CobrancaAssinaturaService;
 
 /**
@@ -51,6 +52,29 @@ final class CronController
 
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($safe, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    public function alertasDigest(): void
+    {
+        $key = $this->extractKey();
+        if (!CronSecret::matches($key)) {
+            http_response_code(403);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'erro' => 'Chave de cron inválida.'], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $pdo = Db::tryConnection();
+        if ($pdo === null) {
+            http_response_code(503);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'erro' => 'Banco indisponível.'], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        $result = (new AlertasService($pdo))->executarDigest(null);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     private function extractKey(): string

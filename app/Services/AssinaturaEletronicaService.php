@@ -593,6 +593,7 @@ final class AssinaturaEletronicaService
                 substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45) ?: null,
                 substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255) ?: null,
             ]);
+            $divergenciaId = (int) $this->db->lastInsertId();
 
             $this->db->prepare(
                 "UPDATE ponto_espelhos SET status = 'em_divergencia' WHERE id = ? AND status IN ('fechado','enviado','em_tratamento','conferido','em_divergencia')"
@@ -604,6 +605,21 @@ final class AssinaturaEletronicaService
                 'motivo' => $motivo,
             ]);
             $this->db->commit();
+
+            AlertasService::emitirEvento([
+                'chave' => 'divergencia:' . $divergenciaId,
+                'codigo' => 'divergencia.aberta',
+                'severidade' => 'alta',
+                'titulo' => 'Divergência aberta — ' . (string) ($doc['colaborador_nome'] ?? $doc['nome'] ?? 'Colaborador'),
+                'detalhe' => $motivo,
+                'href' => '/rh/ponto/' . $espelhoId,
+                'colaborador_id' => $colabId > 0 ? $colabId : null,
+                'espelho_id' => $espelhoId,
+                'documento_id' => (int) $doc['id'],
+                'referencia_tipo' => 'ponto_divergencias',
+                'referencia_id' => $divergenciaId,
+            ]);
+
             $this->notificarDivergenciaRh($doc, $motivo, $dataValida, $espelhoId);
         } catch (Throwable $e) {
             $this->db->rollBack();

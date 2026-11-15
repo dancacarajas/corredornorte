@@ -122,6 +122,9 @@ final class Installer
         $this->migrateEscopoContratos($pdo);
         $messages[] = 'Migração: escopo de usuário por contrato';
 
+        $this->migrateAlertas($pdo);
+        $messages[] = 'Migração: central de alertas';
+
         $adminPassword = bin2hex(random_bytes(8)) . 'A1';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
         $stmt = $pdo->prepare(
@@ -265,11 +268,11 @@ final class Installer
         );
 
         $pdo->exec(
-            "INSERT IGNORE INTO ponto_justificativa_tipos (codigo, nome, abona_falta) VALUES
-             ('atestado', 'Atestado médico', 1),
-             ('ferias', 'Férias', 1),
-             ('folga_compensada', 'Folga compensada', 1),
-             ('outros', 'Outros', 0)"
+            "INSERT IGNORE INTO ponto_justificativa_tipos (codigo, nome, abona_falta, status) VALUES
+             ('atestado', 'Atestado médico', 1, 'ativo'),
+             ('ferias', 'Férias', 1, 'ativo'),
+             ('folga_compensada', 'Folga compensada', 1, 'ativo'),
+             ('outros', 'Outros', 0, 'ativo')"
         );
     }
 
@@ -474,13 +477,13 @@ final class Installer
         $map = [
             'admin' => array_column(\App\Services\PerfilService::catalogoDefinicao(), 'codigo'),
             'rh' => [
-                'dashboard.ver', 'efetivo.ver', 'efetivo.editar', 'cadastros.ver', 'cadastros.editar',
+                'dashboard.ver', 'alertas.ver', 'efetivo.ver', 'efetivo.editar', 'cadastros.ver', 'cadastros.editar',
                 'ponto.ver', 'ponto.editar', 'folha.ver', 'folha.enviar',
                 'medicao.ver', 'medicao.editar', 'ra.ver', 'ra.editar', 'vr.ver', 'vr.editar',
                 'email.gerenciar', 'importacoes.gerenciar',
             ],
             'gestor' => [
-                'dashboard.ver', 'efetivo.ver', 'ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver', 'vr.ver',
+                'dashboard.ver', 'alertas.ver', 'efetivo.ver', 'ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver', 'vr.ver',
             ],
         ];
 
@@ -717,6 +720,28 @@ final class Installer
                 KEY idx_uc_contrato (contrato_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
+    }
+
+    public function migrateAlertas(PDO $pdo): void
+    {
+        (new \App\Services\AlertasService($pdo));
+        (new \App\Services\PerfilService($pdo))->ensureCatalog();
+
+        // Concede alertas.ver a quem já tem dashboard.ver (RH/gestor existentes).
+        $permId = (int) $pdo->query(
+            "SELECT id FROM permissoes WHERE codigo = 'alertas.ver' LIMIT 1"
+        )->fetchColumn();
+        $dashId = (int) $pdo->query(
+            "SELECT id FROM permissoes WHERE codigo = 'dashboard.ver' LIMIT 1"
+        )->fetchColumn();
+        if ($permId > 0 && $dashId > 0) {
+            $pdo->exec(
+                "INSERT IGNORE INTO perfil_permissoes (perfil_id, permissao_id)
+                 SELECT DISTINCT pp.perfil_id, {$permId}
+                 FROM perfil_permissoes pp
+                 WHERE pp.permissao_id = {$dashId}"
+            );
+        }
     }
 
     public function migrateContaUsuario(PDO $pdo): void

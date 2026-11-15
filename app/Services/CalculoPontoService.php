@@ -105,6 +105,25 @@ final class CalculoPontoService
             return;
         }
 
+        // Justificativa que abona falta: dia justificado (não é falta, sem desconto).
+        $justAbono = $this->justificativaAbonoDoDia((int) $dia['espelho_id'], (string) $dia['data']);
+        if ($justAbono !== null) {
+            // Garante UI coerente: sem batidas operacionais em dia abonado.
+            if ($dia['ent1'] || $dia['sai1'] || $dia['ent2'] || $dia['sai2']) {
+                $this->db->prepare(
+                    'UPDATE ponto_dias SET ent1=NULL, sai1=NULL, ent2=NULL, sai2=NULL WHERE id=:id'
+                )->execute(['id' => $pontoDiaId]);
+                $this->db->prepare(
+                    'DELETE FROM ponto_marcacoes WHERE ponto_dia_id=:d AND sequencia BETWEEN 11 AND 14'
+                )->execute(['d' => $pontoDiaId]);
+            }
+            $rotulo = 'Justificado — ' . $justAbono['nome'];
+            $payload = $this->zerado('ok', mb_substr($rotulo, 0, 120), $pctHe);
+            $payload['horas_previstas_min'] = $prevMin;
+            $this->persist($pontoDiaId, $payload);
+            return;
+        }
+
         $ent1 = $dia['ent1'] ?? null;
         $sai1 = $dia['sai1'] ?? null;
         $ent2 = $dia['ent2'] ?? null;
@@ -112,6 +131,7 @@ final class CalculoPontoService
 
         $trab = $this->minutosTrabalhados($ent1, $sai1, $ent2, $sai2);
         $temBatida = $ent1 || $sai1 || $ent2 || $sai2;
+        // Dia útil sem marcação e com jornada prevista = falta.
         $diaFalta = (!$temBatida && $prevMin > 0) ? 1 : 0;
         $faltaMin = $diaFalta ? $prevMin : max(0, $prevMin - $trab);
 
@@ -133,29 +153,6 @@ final class CalculoPontoService
             $diaFalta = 0;
         }
 
-        $abonado = false;
-        if ($diaFalta === 1 || $faltaMin > 0) {
-            try {
-                $jStmt = $this->db->prepare(
-                    'SELECT 1 FROM ponto_justificativas j
-                     INNER JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
-                     WHERE j.espelho_id = :e AND :data BETWEEN j.data_inicio AND j.data_fim AND t.abona_falta = 1
-                     LIMIT 1'
-                );
-                $jStmt->execute(['e' => (int) $dia['espelho_id'], 'data' => (string) $dia['data']]);
-                if ($jStmt->fetchColumn() !== false) {
-                    $diaFalta = 0;
-                    $faltaMin = 0;
-                    $atraso = 0;
-                    $abonado = true;
-                }
-            } catch (\PDOException $e) {
-                if ($e->getCode() !== '42S02') {
-                    throw $e;
-                }
-            }
-        }
-
         $he = max(0, $trab - $prevMin);
         // Dia útil (ex.: 07–17 com saída 19): excedente = HE no % configurado.
         // HE 100% somente domingo; feriado já cai no bloco de descanso acima.
@@ -166,21 +163,17 @@ final class CalculoPontoService
 
         $atrasoRelevante = $atraso > self::TOLERANCIA_MIN;
         $faltaRelevante = $faltaMin > self::TOLERANCIA_MIN;
-        $ok = ($abonado || ($diaFalta === 0 && !$atrasoRelevante && !$faltaRelevante))
+        $ok = ($diaFalta === 0 && !$atrasoRelevante && !$faltaRelevante)
             ? 'ok'
             : ($diaFalta ? 'falta' : 'pendente');
         $normalLabel = ($feriadoInfo !== null && $trabalhaFeriado)
             ? mb_substr('Plantão em feriado — ' . (string) ($feriadoInfo['nome'] ?? 'Feriado'), 0, 120)
             : 'Normal';
-        $resumo = $abonado
-            ? ($he > self::TOLERANCIA_MIN
-                ? sprintf('Justificado +%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
-                : 'Justificado')
-            : ($diaFalta
-                ? 'Falta'
-                : ($he > self::TOLERANCIA_MIN
-                    ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
-                    : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : $normalLabel))));
+        $resumo = $diaFalta
+            ? 'Falta'
+            : ($he > self::TOLERANCIA_MIN
+                ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
+                : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : $normalLabel)));
 
         $this->persist($pontoDiaId, [
             'total_trab_min' => $trab,
@@ -280,7 +273,15 @@ final class CalculoPontoService
             $marcacoes[(int) $row['ponto_dia_id']][(string) $row['origem']][(int) $row['sequencia']] = substr((string) $row['horario'], 0, 5);
         }
 
+        $espMeta = $this->db->prepare('SELECT id, data FROM ponto_dias WHERE id = :id');
         foreach ($ids as $diaId) {
+            $espMeta->execute(['id' => $diaId]);
+            $meta = $espMeta->fetch(PDO::FETCH_ASSOC) ?: [];
+            // Não gera batida britânica em dia coberto por justificativa que abona falta.
+            if ($this->justificativaAbonoDoDia($espelhoId, (string) ($meta['data'] ?? '')) !== null) {
+                $this->recalcularDia($diaId);
+                continue;
+            }
             $map = [];
             foreach ($marcacoes[$diaId]['gerado'] ?? [] as $seq => $hora) {
                 $slot = $seq >= 5 ? $seq - 4 : $seq;
@@ -419,6 +420,79 @@ final class CalculoPontoService
             'ok_status' => $ok,
             'ocorrencia_resumo' => $resumo,
         ];
+    }
+
+    /**
+     * Justificativa ativa que abona falta cobrindo a data do espelho.
+     *
+     * @return ?array{id:int,nome:string}
+     */
+    public function justificativaAbonoDoDia(int $espelhoId, string $data): ?array
+    {
+        if ($espelhoId <= 0 || $data === '') {
+            return null;
+        }
+        try {
+            $st = $this->db->prepare(
+                "SELECT j.id, t.nome
+                 FROM ponto_justificativas j
+                 INNER JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
+                 WHERE j.espelho_id = :e
+                   AND :data BETWEEN j.data_inicio AND j.data_fim
+                   AND t.abona_falta = 1
+                   AND t.status = 'ativo'
+                 ORDER BY j.id DESC
+                 LIMIT 1"
+            );
+            $st->execute(['e' => $espelhoId, 'data' => $data]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                return null;
+            }
+
+            return [
+                'id' => (int) $row['id'],
+                'nome' => (string) ($row['nome'] ?? 'Justificativa'),
+            ];
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '42S02') {
+                return null;
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Aplica efeito operacional de justificativa que abona: limpa batidas do intervalo
+     * e recalcula o espelho (dias ficam Justificado, sem falta/desconto).
+     */
+    public function aplicarJustificativaAbono(int $espelhoId, string $inicio, string $fim): void
+    {
+        if ($espelhoId <= 0 || $inicio === '' || $fim === '' || $inicio > $fim) {
+            return;
+        }
+        $dias = $this->db->prepare(
+            "SELECT id FROM ponto_dias
+             WHERE espelho_id = :e AND tipo_dia = 'trabalho' AND data BETWEEN :i AND :f"
+        );
+        $dias->execute(['e' => $espelhoId, 'i' => $inicio, 'f' => $fim]);
+        $ids = array_map('intval', $dias->fetchAll(PDO::FETCH_COLUMN) ?: []);
+        if ($ids === []) {
+            $this->recalcularEspelho($espelhoId);
+
+            return;
+        }
+        $in = implode(',', $ids);
+        $this->db->exec(
+            "UPDATE ponto_dias
+             SET ent1 = NULL, sai1 = NULL, ent2 = NULL, sai2 = NULL
+             WHERE id IN ({$in})"
+        );
+        $this->db->exec(
+            "DELETE FROM ponto_marcacoes
+             WHERE ponto_dia_id IN ({$in}) AND sequencia BETWEEN 11 AND 14"
+        );
+        $this->recalcularEspelho($espelhoId);
     }
 
     /** @param array<string,mixed> $dia */

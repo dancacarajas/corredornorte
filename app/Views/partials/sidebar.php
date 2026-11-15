@@ -6,6 +6,7 @@ use App\Helpers\View;
 $activeMenu = $activeMenu ?? '';
 $app = $app ?? ['name' => 'Arcadis', 'tagline' => 'RH Operacional'];
 $currentUser = $currentUser ?? ['name' => 'Administrador', 'role' => 'RH'];
+$alertasBadge = (int) ($alertasBadge ?? 0);
 
 $isActive = static fn(string $key): string => $activeMenu === $key ? ' is-active' : '';
 $can = static fn(string ...$perms): bool => Auth::canAny(...$perms);
@@ -17,7 +18,7 @@ $inGroup = static function (array $keys) use ($activeMenu): bool {
 $orgKeys = ['empresas', 'contratos', 'centros', 'os', 'localidades'];
 $escalasKeys = ['jornadas', 'escalas', 'feriados'];
 $pessoasKeys = ['lotacoes', 'cargos', 'funcoes', 'gestores-arcadis', 'gestores-cliente', 'supervisores'];
-$medicaoKeys = ['ponto', 'folha', 'medicao', 'ra'];
+$medicaoKeys = ['ponto', 'folha', 'medicao', 'ra', 'justificativa-tipos'];
 $vrKeys = ['vr-config', 'vr-relatorio'];
 
 $showRh = $can(
@@ -27,7 +28,7 @@ $showRh = $can(
 $showOrg = $can('cadastros.ver', 'cadastros.editar');
 $showPonto = $can('ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver');
 $showVr = $can('vr.ver', 'vr.editar');
-$showSistema = $can('usuarios.gerenciar', 'perfis.gerenciar', 'email.gerenciar', 'importacoes.gerenciar');
+$showSistema = $can('usuarios.gerenciar', 'perfis.gerenciar', 'email.gerenciar', 'importacoes.gerenciar', 'alertas.gerenciar');
 
 $chevron = <<<'SVG'
 <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
@@ -54,6 +55,25 @@ SVG;
                     <a class="nav-link<?= $isActive('dashboard') ?>" href="/">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h7V4H4v9zm9 7h7V11h-7v9zM4 20h7v-5H4v5zm9-16v5h7V4h-7z"/></svg>
                         Visão geral
+                    </a>
+                </li>
+                <?php endif; ?>
+                <?php if ($can('alertas.ver') || $can('dashboard.ver')): ?>
+                <li>
+                    <a class="nav-link<?= $isActive('alertas') ?>" href="/rh/alertas">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+                        Central de Alertas
+                        <?php if ($alertasBadge > 0): ?>
+                            <span class="nav-badge"><?= $alertasBadge > 99 ? '99+' : $alertasBadge ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <?php endif; ?>
+                <?php if ($can('dashboard.ver')): ?>
+                <li>
+                    <a class="nav-link<?= $isActive('mapa-sistema') ?>" href="/ui/mapa-sistema">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8.2 6h7.6M6 8.2v7.6M18 8.2v7.6M8.2 18h7.6"/></svg>
+                        Mapa do sistema
                     </a>
                 </li>
                 <?php endif; ?>
@@ -133,6 +153,7 @@ SVG;
                     <ul class="nav-sublist"<?= $medOpen ? '' : ' hidden' ?>>
                         <?php if ($can('ponto.ver', 'ponto.editar')): ?>
                         <li><a class="nav-sublink<?= $isActive('ponto') ?>" href="/rh/ponto">Gestão de Ponto</a></li>
+                        <li><a class="nav-sublink<?= $isActive('justificativa-tipos') ?>" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a></li>
                         <?php endif; ?>
                         <?php if ($can('folha.ver', 'folha.enviar')): ?>
                         <li><a class="nav-sublink<?= $isActive('folha') ?>" href="/rh/folha">Folha de Ponto</a></li>
@@ -190,6 +211,14 @@ SVG;
                     <a class="nav-link<?= $isActive('email') ?>" href="/rh/email">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16v12H4z"/><path d="M4 7l8 6 8-6"/></svg>
                         Conta de e-mail
+                    </a>
+                </li>
+                <?php endif; ?>
+                <?php if ($can('alertas.gerenciar')): ?>
+                <li>
+                    <a class="nav-link<?= $isActive('alertas-config') ?>" href="/rh/alertas/config">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9L2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+                        Configurar alertas
                     </a>
                 </li>
                 <?php endif; ?>

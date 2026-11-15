@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers\Rh;
 
 use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\Db;
 use App\Helpers\View;
 use App\Services\CalculoPontoService;
@@ -226,7 +227,7 @@ final class PontoController
         ]), ENT_QUOTES, 'UTF-8');
 
         $topbarActions = ''
-            . '<button class="btn btn-secondary btn-sm" type="button" data-modal-open="tiposJustModalIndex">Tipos de justificativa</button>';
+            . '<a class="btn btn-secondary btn-sm" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a>';
         if ($podeGerar) {
             $topbarActions .= '<form method="post" action="/rh/ponto/gerar" style="display:inline;">'
                 . '<input type="hidden" name="data_inicio" value="' . htmlspecialchars($dataInicio, ENT_QUOTES, 'UTF-8') . '">'
@@ -682,7 +683,9 @@ final class PontoController
             $stmt->execute([$espelhoId]);
             $status = $stmt->fetchColumn();
             if ($status !== false && !in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
-                $calc->aplicarBritanicoNoEspelho($espelhoId);
+                // Não aplica britânico automaticamente: dia útil sem batida = falta.
+                // Presença: "Preencher previstos". Ausência abonada: justificativa com abona falta.
+                $calc->recalcularEspelho($espelhoId);
             }
             $pdo->commit();
         } catch (Throwable $erro) {
@@ -862,9 +865,11 @@ final class PontoController
             $heDeclaracoes = [];
         }
 
+        $this->ensureTiposJustificativa($pdo);
         $tipos = $pdo->query("SELECT * FROM ponto_justificativa_tipos WHERE status='ativo' ORDER BY nome")->fetchAll();
         $justs = $pdo->prepare(
-            'SELECT j.*, t.nome AS tipo_nome FROM ponto_justificativas j
+            'SELECT j.*, t.nome AS tipo_nome, t.abona_falta
+             FROM ponto_justificativas j
              INNER JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
              INNER JOIN ponto_espelhos e ON e.id = j.espelho_id
              WHERE e.colaborador_id = :colaborador AND j.data_inicio <= :fim AND j.data_fim >= :ini
@@ -892,7 +897,7 @@ final class PontoController
         $topbarActions = ''
             . '<a class="btn btn-secondary btn-sm" href="/rh/ponto?' . $qsSeguro . '">Voltar ao filtro</a>'
             . $acaoJustificativa
-            . '<button class="btn btn-secondary btn-sm" type="button" data-modal-open="tiposJustModal">Tipos de justificativa</button>'
+            . '<a class="btn btn-secondary btn-sm" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a>'
             . '<a class="btn btn-primary btn-sm" href="/rh/folha/' . $espelhoId . '?' . $qsSeguro . '">Folha / Enviar PDF</a>';
 
         $divergenciasAbertas = [];
@@ -1156,6 +1161,8 @@ final class PontoController
 
     public function justificativa(string $id = '0'): void
     {
+        Auth::requirePermission('ponto.editar');
+        Csrf::requireValid();
         $pdo = Db::tryConnection();
         $espelhoId = (int) $id;
         if (!$pdo instanceof PDO || $espelhoId <= 0) {
@@ -1224,6 +1231,19 @@ final class PontoController
                 }
                 $anexo = 'storage/uploads/anexos/' . basename($dest);
             }
+            $tipoId = (int) ($_POST['tipo_id'] ?? 0);
+            if ($tipoId <= 0) {
+                throw new RuntimeException('Selecione o tipo de justificativa.');
+            }
+            $tipo = $pdo->prepare(
+                "SELECT id, abona_falta, status, nome FROM ponto_justificativa_tipos WHERE id = :id LIMIT 1"
+            );
+            $tipo->execute(['id' => $tipoId]);
+            $tipoRow = $tipo->fetch(PDO::FETCH_ASSOC);
+            if ($tipoRow === false || (string) ($tipoRow['status'] ?? '') !== 'ativo') {
+                throw new RuntimeException('Tipo de justificativa inválido ou inativo.');
+            }
+
             $pdo->prepare(
                 'INSERT INTO ponto_justificativas
                 (espelho_id, ponto_dia_id, tipo_id, data_inicio, data_fim, observacao, anexo_path, usuario_id)
@@ -1231,7 +1251,7 @@ final class PontoController
             )->execute([
                 'e' => $espelhoId,
                 'd' => $diaId > 0 ? $diaId : null,
-                't' => (int) ($_POST['tipo_id'] ?? 0),
+                't' => $tipoId,
                 'i' => $inicio,
                 'f' => $fim,
                 'o' => trim((string) ($_POST['observacao'] ?? '')) ?: null,
@@ -1239,19 +1259,12 @@ final class PontoController
                 'u' => Auth::id(),
             ]);
 
-            // Se abona falta, zera dia_falta nos dias do intervalo
-            $tipo = $pdo->prepare('SELECT abona_falta FROM ponto_justificativa_tipos WHERE id=:id');
-            $tipo->execute(['id' => (int) ($_POST['tipo_id'] ?? 0)]);
-            if ((int) $tipo->fetchColumn() === 1) {
-                $pdo->prepare(
-                    "UPDATE ponto_dias SET dia_falta=0, horas_falta_min=0, desconto_min=0, ok_status='ok', ocorrencia_resumo='Justificado'
-                     WHERE espelho_id=:e AND data BETWEEN :i AND :f AND tipo_dia='trabalho'"
-                )->execute([
-                    'e' => $espelhoId,
-                    'i' => $inicio,
-                    'f' => $fim,
-                ]);
-                (new CalculoPontoService($pdo))->recalcularEspelho($espelhoId);
+            $calc = new CalculoPontoService($pdo);
+            if ((int) ($tipoRow['abona_falta'] ?? 0) === 1) {
+                // Remove batidas do intervalo e recalcula: dias ficam Justificado (sem falta).
+                $calc->aplicarJustificativaAbono($espelhoId, $inicio, $fim);
+            } else {
+                $calc->recalcularEspelho($espelhoId);
             }
 
             $pdo->commit();
@@ -1263,6 +1276,41 @@ final class PontoController
             if ($dest !== null && is_file($dest)) {
                 unlink($dest);
             }
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    public function excluirJustificativa(string $id = '0', string $justificativaId = '0'): void
+    {
+        Auth::requirePermission('ponto.editar');
+        Csrf::requireValid();
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $justId = (int) $justificativaId;
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $justId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            $st = $pdo->prepare(
+                'SELECT j.id, e.status
+                 FROM ponto_justificativas j
+                 INNER JOIN ponto_espelhos e ON e.id = j.espelho_id
+                 WHERE j.id = :j AND j.espelho_id = :e
+                 LIMIT 1'
+            );
+            $st->execute(['j' => $justId, 'e' => $espelhoId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                throw new RuntimeException('Justificativa não encontrada.');
+            }
+            if (in_array((string) $row['status'], ['fechado', 'enviado', 'assinado'], true)) {
+                throw new RuntimeException('Reabra o período para remover justificativas.');
+            }
+            $pdo->prepare('DELETE FROM ponto_justificativas WHERE id = :id')->execute(['id' => $justId]);
+            (new CalculoPontoService($pdo))->recalcularEspelho($espelhoId);
+            $this->redirectEspelho($espelhoId, 'justificativa-removida');
+        } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
         }
     }
@@ -1462,8 +1510,15 @@ final class PontoController
 
                 $calc = new CalculoPontoService($pdo);
                 $aplicados = 0;
+                $metaDia = $pdo->prepare('SELECT data FROM ponto_dias WHERE id = :id');
                 foreach ($pendentes as $dia) {
                     $did = (int) $dia['id'];
+                    $metaDia->execute(['id' => $did]);
+                    $dataDia = (string) ($metaDia->fetchColumn() ?: '');
+                    // Não preenche presença em dia coberto por justificativa que abona falta.
+                    if ($calc->justificativaAbonoDoDia($espelhoId, $dataDia) !== null) {
+                        continue;
+                    }
                     $map = [];
                     foreach ($marcacoes[$did]['gerado'] ?? [] as $seq => $hora) {
                         $slot = $seq >= 5 ? $seq - 4 : $seq;
@@ -1523,6 +1578,25 @@ final class PontoController
             $this->redirectEspelho($espelhoId, 'divergencia-resolvida');
         } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /** Garante tipos padrão quando a tabela existe mas está vazia (install antigo). */
+    private function ensureTiposJustificativa(PDO $pdo): void
+    {
+        try {
+            $n = (int) $pdo->query('SELECT COUNT(*) FROM ponto_justificativa_tipos')->fetchColumn();
+            if ($n > 0) {
+                return;
+            }
+            $pdo->exec(
+                "INSERT IGNORE INTO ponto_justificativa_tipos (codigo, nome, abona_falta, status) VALUES
+                 ('atestado', 'Atestado médico', 1, 'ativo'),
+                 ('ferias', 'Férias', 1, 'ativo'),
+                 ('folga_compensada', 'Folga compensada', 1, 'ativo'),
+                 ('outros', 'Outros', 0, 'ativo')"
+            );
+        } catch (Throwable) {
         }
     }
 }

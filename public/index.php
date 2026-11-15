@@ -99,6 +99,8 @@ $escala = EscalaController::class;
 $emailConta = EmailContaController::class;
 $usuarios = UsuarioController::class;
 $perfisCtrl = PerfilController::class;
+$alertas = \App\Controllers\Rh\AlertaController::class;
+$alertasConfig = \App\Controllers\Rh\AlertaConfigController::class;
 
 $router->get('/login', [$auth, 'showLogin']);
 $router->post('/login', [$auth, 'login']);
@@ -127,6 +129,7 @@ $router->get('/og/arcadis-folha.jpg', [$folha, 'ogLogo']);
 
 $cron = CronController::class;
 $router->get('/cron/cobranca-assinatura', [$cron, 'cobrancaAssinatura']);
+$router->get('/cron/alertas-digest', [$cron, 'alertasDigest']);
 
 $raAssinatura = RelatorioAssinaturaController::class;
 $router->get('/assinar-relatorio/{token}', [$raAssinatura, 'portalAssinatura']);
@@ -180,9 +183,6 @@ $isPublic = in_array($normalizedPath, $public, true)
     || str_starts_with($path, '/install');
 if (!$isPublic) {
     Auth::requireLogin();
-} elseif (str_starts_with($path, '/he') && !in_array($normalizedPath, ['/he/login'], true)) {
-    // Gate central do portal HE (evita endpoint novo sem requireLogin).
-    HePortalAuth::requireLogin();
 
     $requireAny = static function (string ...$perms): void {
         if (!Auth::canAny(...$perms)) {
@@ -235,10 +235,30 @@ if (!$isPublic) {
             $requireAny('cadastros.ver', 'cadastros.editar');
         }
     }
+} elseif (str_starts_with($path, '/he') && !in_array($normalizedPath, ['/he/login'], true)) {
+    // Gate central do portal HE (evita endpoint novo sem requireLogin).
+    HePortalAuth::requireLogin();
 }
 
 $router->get('/', [$home, 'index']);
 $router->get('/ui/showcase', [$home, 'showcase']);
+$router->get('/ui/mapa-sistema', [$home, 'mapaSistema']);
+
+$router->get('/rh/alertas', [$alertas, 'index']);
+$router->post('/rh/alertas/sincronizar', [$alertas, 'sincronizar']);
+$router->post('/rh/alertas/marcar-todos-lidos', [$alertas, 'marcarTodosLidos']);
+$router->post('/rh/alertas/{id}/lido', [$alertas, 'marcarLido']);
+$router->post('/rh/alertas/{id}/dispensar', [$alertas, 'dispensar']);
+$router->post('/rh/alertas/{id}/atribuir', [$alertas, 'atribuir']);
+$router->get('/rh/alertas/config', [$alertasConfig, 'index']);
+$router->post('/rh/alertas/config/tipos', [$alertasConfig, 'salvarTipos']);
+$router->post('/rh/alertas/config/destinos', [$alertasConfig, 'salvarDestinos']);
+$router->post('/rh/alertas/config/geral', [$alertasConfig, 'salvarGeral']);
+$router->post('/rh/alertas/config/testar-digest', [$alertasConfig, 'testarDigest']);
+$router->post('/rh/alertas/config/executar-cobranca', [$alertasConfig, 'executarCobranca']);
+$router->post('/rh/alertas/admin/resolver', [$alertasConfig, 'adminResolver']);
+$router->post('/rh/alertas/admin/reatribuir', [$alertasConfig, 'adminReatribuir']);
+$router->post('/rh/alertas/admin/dispensar', [$alertasConfig, 'adminDispensar']);
 
 $router->get('/rh/efetivo', [$efetivo, 'index']);
 $router->get('/rh/efetivo/exportar', [$efetivo, 'exportar']);
@@ -330,14 +350,19 @@ $router->get('/rh/perfis/{id}/editar', [$perfisCtrl, 'editForm']);
 $router->post('/rh/perfis/{id}/duplicar', [$perfisCtrl, 'duplicar']);
 $router->post('/rh/perfis/{id}', [$perfisCtrl, 'update']);
 
+$justTipos = \App\Controllers\Rh\JustificativaTipoController::class;
 $router->get('/rh/ponto', [$ponto, 'index']);
 $router->post('/rh/ponto/gerar', [$ponto, 'gerar']);
 $router->post('/rh/ponto/lote-status', [$ponto, 'loteStatus']);
-$router->post('/rh/ponto/justificativa-tipos', [$ponto, 'tipoJustificativa']);
+$router->get('/rh/ponto/justificativa-tipos', [$justTipos, 'index']);
+$router->post('/rh/ponto/justificativa-tipos', [$justTipos, 'store']);
+$router->post('/rh/ponto/justificativa-tipos/{id}/excluir', [$justTipos, 'excluir']);
+$router->post('/rh/ponto/justificativa-tipos/{id}', [$justTipos, 'update']);
 $router->get('/rh/ponto/anexos/{justificativaId}', [$ponto, 'baixarAnexo']);
 $router->get('/rh/ponto/{id}', [$ponto, 'show']);
 $router->post('/rh/ponto/{id}/dia', [$ponto, 'salvarDia']);
 $router->post('/rh/ponto/{id}/justificativa', [$ponto, 'justificativa']);
+$router->post('/rh/ponto/{id}/justificativa/{justificativaId}/excluir', [$ponto, 'excluirJustificativa']);
 $router->post('/rh/ponto/{id}/ocorrencia', [$ponto, 'ocorrencia']);
 $router->post('/rh/ponto/{id}/status', [$ponto, 'status']);
 $router->post('/rh/ponto/{id}/apontar', [$ponto, 'apontar']);

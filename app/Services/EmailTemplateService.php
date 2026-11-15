@@ -100,6 +100,12 @@ final class EmailTemplateService
                 'trigger' => 'Botão “Testar envio” em Conta de e-mail',
                 'vars' => ['destinatario', 'conta_email', 'conta_linha'],
             ],
+            'sistema.alertas_digest' => [
+                'label' => 'Digest diário — Central de Alertas',
+                'group' => 'Sistema',
+                'trigger' => 'Cron /cron/alertas-digest no horário configurado',
+                'vars' => ['nome', 'quantidade', 'portalUrl', 'cta_label', 'cta_bloco', 'link_fallback'],
+            ],
             'auth.redefinir_senha' => [
                 'label' => 'Redefinição de senha',
                 'group' => 'Conta / Autenticação',
@@ -327,6 +333,19 @@ HTML,
 HTML,
                 'rodape' => $rodapePadrao . ' Mensagem automática de diagnóstico.',
             ],
+            'sistema.alertas_digest' => [
+                'assunto' => 'Arcadis RH — {{quantidade}} alerta(s) não lido(s)',
+                'titulo' => 'Central de Alertas',
+                'texto' => "Oi {{nome}},\n\nVocê tem {{quantidade}} alerta(s) não lido(s) na Central de Alertas do Arcadis RH.\nAbra a central: {{portalUrl}}\n\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Você tem <strong>{{quantidade}}</strong> alerta(s) não lido(s) na <strong>Central de Alertas</strong>.</p>
+<p>Abra a inbox para tratar bloqueios e atrasos do fechamento.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Digest diário configurável em Sistema → Configurar alertas.',
+            ],
             'auth.redefinir_senha' => [
                 'assunto' => 'Redefinição de senha — Arcadis RH',
                 'titulo' => 'Redefinir senha',
@@ -543,6 +562,12 @@ HTML,
                 'destinatario' => 'seu@email.com',
                 'contaEmail' => 'rh@empresa.com',
             ],
+            'sistema.alertas_digest' => [
+                'nome' => 'Administrador',
+                'quantidade' => '3',
+                'portalUrl' => '#preview-alertas',
+                'cta_label' => 'ABRIR CENTRAL DE ALERTAS',
+            ],
             'auth.redefinir_senha' => [
                 'nome' => 'Administrador',
                 'portalUrl' => '#preview-reset',
@@ -708,6 +733,31 @@ HTML,
                 'cta_bloco' => $cta,
                 'link_fallback' => $fallback,
                 'portal_txt' => $portalTxt,
+            ];
+        }
+
+        if ($key === 'sistema.alertas_digest') {
+            $nome = trim((string) ($vars['nome'] ?? 'Usuário'));
+            $quantidade = trim((string) ($vars['quantidade'] ?? '0'));
+            $portalUrl = trim((string) ($vars['portalUrl'] ?? $vars['portal_url'] ?? ''));
+            $ctaLabel = trim((string) ($vars['cta_label'] ?? 'ABRIR CENTRAL DE ALERTAS'));
+            if ($ctaLabel === '') {
+                $ctaLabel = 'ABRIR CENTRAL DE ALERTAS';
+            }
+            $cta = '';
+            $fallback = '';
+            if ($portalUrl !== '') {
+                $cta = self::ctaButtonHtml($portalUrl, $ctaLabel);
+                $fallback = self::ctaFallbackHtml($portalUrl);
+            }
+
+            return [
+                'nome' => $nome,
+                'quantidade' => $quantidade,
+                'portal_url' => $portalUrl,
+                'portalurl' => $portalUrl,
+                'cta_bloco' => $cta,
+                'link_fallback' => $fallback,
             ];
         }
 
