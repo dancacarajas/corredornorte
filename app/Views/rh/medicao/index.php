@@ -404,7 +404,7 @@ $errosLote = is_array($errosLote ?? null) ? $errosLote : [];
                     <span class="medicao-step-num">7</span>
                     <div>
                         <strong>7. Baixar dossiê</strong>
-                        <p>ZIP com pastas por colaborador (ponto + RA)</p>
+                        <p>ZIP com pastas por colaborador (ponto + RA + anexos)</p>
                         <div class="progress <?= $prontoDossie ? 'is-success' : '' ?>"><span style="width:<?= $prontoDossie ? 100 : 0 ?>%"></span></div>
                         <small><?= $prontoDossie ? '1/1 disponível' : '0/1 · libera com 100%' ?></small>
                     </div>
@@ -702,7 +702,7 @@ foreach ($loteBotoes as $b) {
             <p class="muted">Nenhum cartão de ponto neste período. Gere o período em Gestão de Ponto.</p>
         <?php elseif ($modoDossie && $prontoDossie): ?>
             <div class="medicao-dossie-ready">
-                <p>Todos os colaboradores concluíram a jornada. Baixe o ZIP com uma pasta por colaborador contendo o cartão de ponto e o relatório de atividades assinados.</p>
+                <p>Todos os colaboradores concluíram a jornada. Baixe o ZIP com uma pasta por colaborador contendo o cartão de ponto, o RA assinados e, quando houver, os anexos de justificativa (ex.: atestado).</p>
                 <a class="btn btn-primary" href="<?= View::e($dossieUrl) ?>">Baixar dossiê (ZIP)</a>
             </div>
         <?php elseif ($colaboradoresFiltrados === []): ?>

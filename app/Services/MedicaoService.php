@@ -502,6 +502,7 @@ final class MedicaoService
 
     /**
      * Gera ZIP do dossiê (só se todos 100%).
+     * Cada pasta do colaborador traz folha assinada, RA assinado e anexos de justificativa do período.
      * @return array{path:string,filename:string}
      */
     public function gerarDossieZip(string $dataInicio, string $dataFim): array
@@ -527,6 +528,12 @@ final class MedicaoService
             throw new RuntimeException('Não foi possível criar o arquivo ZIP.');
         }
 
+        $anexosPorColab = $this->mapAnexosJustificativaPorColaborador(
+            array_column($painel['colaboradores'], 'colaborador_id'),
+            $dataInicio,
+            $dataFim
+        );
+
         try {
             foreach ($painel['colaboradores'] as $colab) {
                 $pasta = $this->nomePastaSeguro((string) $colab['nome']);
@@ -542,6 +549,16 @@ final class MedicaoService
                 }
                 $zip->addFile($folhaAbs, $pasta . '/Cartao_de_ponto_assinado.pdf');
                 $zip->addFile($raAbs, $pasta . '/Relatorio_de_Atividades_assinado.pdf');
+
+                $usados = [];
+                foreach ($anexosPorColab[(int) $colab['colaborador_id']] ?? [] as $anexo) {
+                    $abs = $this->absPath((string) $anexo['path']);
+                    if (!is_file($abs)) {
+                        continue;
+                    }
+                    $nomeArquivo = $this->nomeAnexoJustificativa($anexo, $usados);
+                    $zip->addFile($abs, $pasta . '/Justificativas/' . $nomeArquivo);
+                }
             }
         } finally {
             $zip->close();
@@ -551,6 +568,70 @@ final class MedicaoService
             'path' => $zipPath,
             'filename' => $slug . '.zip',
         ];
+    }
+
+    /**
+     * Anexos de justificativa do período, indexados por colaborador.
+     *
+     * @param list<int|string> $colaboradorIds
+     * @return array<int, list<array{id:int,path:string,tipo:string,data_inicio:string,data_fim:string}>>
+     */
+    private function mapAnexosJustificativaPorColaborador(array $colaboradorIds, string $dataInicio, string $dataFim): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $colaboradorIds))));
+        if ($ids === [] || !$this->tableExists('ponto_justificativas')) {
+            return [];
+        }
+
+        $in = implode(',', $ids);
+        $sql = "SELECT j.id, j.anexo_path, j.data_inicio, j.data_fim,
+                       e.colaborador_id, COALESCE(t.nome, t.codigo, 'Justificativa') AS tipo_nome
+                FROM ponto_justificativas j
+                INNER JOIN ponto_espelhos e ON e.id = j.espelho_id
+                LEFT JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
+                WHERE e.colaborador_id IN ({$in})
+                  AND j.anexo_path IS NOT NULL AND TRIM(j.anexo_path) <> ''
+                  AND j.data_inicio <= :fim AND j.data_fim >= :ini
+                ORDER BY e.colaborador_id, j.data_inicio, j.id";
+        $st = $this->db->prepare($sql);
+        $st->execute(['ini' => $dataInicio, 'fim' => $dataFim]);
+
+        $map = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $cid = (int) $row['colaborador_id'];
+            $map[$cid][] = [
+                'id' => (int) $row['id'],
+                'path' => (string) $row['anexo_path'],
+                'tipo' => (string) $row['tipo_nome'],
+                'data_inicio' => (string) $row['data_inicio'],
+                'data_fim' => (string) $row['data_fim'],
+            ];
+        }
+        return $map;
+    }
+
+    /**
+     * @param array{id:int,path:string,tipo:string,data_inicio:string,data_fim:string} $anexo
+     * @param array<string,true> $usados
+     */
+    private function nomeAnexoJustificativa(array $anexo, array &$usados): string
+    {
+        $ext = strtolower((string) pathinfo((string) $anexo['path'], PATHINFO_EXTENSION));
+        if ($ext === '' || !preg_match('/^[a-z0-9]{1,8}$/', $ext)) {
+            $ext = 'bin';
+        }
+        $tipo = $this->nomePastaSeguro((string) $anexo['tipo']);
+        $tipo = str_replace(' ', '_', $tipo);
+        $ini = preg_replace('/\D+/', '', (string) $anexo['data_inicio']) ?: 'inicio';
+        $fim = preg_replace('/\D+/', '', (string) $anexo['data_fim']) ?: 'fim';
+        $periodo = $ini === $fim ? $ini : ($ini . '_a_' . $fim);
+        $base = $tipo . '_' . $periodo;
+        $nome = $base . '.' . $ext;
+        if (isset($usados[$nome])) {
+            $nome = $base . '_' . (int) $anexo['id'] . '.' . $ext;
+        }
+        $usados[$nome] = true;
+        return $nome;
     }
 
     private function nomePastaSeguro(string $nome): string
