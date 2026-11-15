@@ -159,4 +159,28 @@ final class RelatorioAtividadesController
         header('Location: /rh/relatorios-atividades/' . $relatorioId);
         exit;
     }
+
+    public function acaoLote(): void
+    {
+        Auth::requireLogin();
+        Csrf::requireValid();
+        $ids = is_array($_POST['relatorio_ids'] ?? null) ? $_POST['relatorio_ids'] : [];
+        $acao = trim((string) ($_POST['acao'] ?? ''));
+        if ($ids === []) {
+            $_SESSION['rh_error'] = 'Selecione ao menos um relatório para executar a ação em lote.';
+            header('Location: /rh/relatorios-atividades');
+            exit;
+        }
+        try {
+            $res = (new RelatorioAtividadesService())->acaoLote($ids, $acao, Auth::id());
+            $proc = (int) ($res['processados'] ?? 0);
+            $ign = (int) ($res['ignorados'] ?? 0);
+            $rotuloAcao = $acao === 'gerar_link' ? 'PDF(s) + link(s) gerados' : 'relatório(s) aprovado(s)';
+            $_SESSION['rh_flash'] = sprintf('%d %s.%s', $proc, $rotuloAcao, $ign > 0 ? " ({$ign} ignorado(s) por status incompatível)." : '');
+        } catch (Throwable $e) {
+            $_SESSION['rh_error'] = $e->getMessage();
+        }
+        header('Location: /rh/relatorios-atividades');
+        exit;
+    }
 }

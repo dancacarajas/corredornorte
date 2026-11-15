@@ -54,6 +54,7 @@ $statusLabel = match ($status) {
 $diasSemanaPt = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 $diasTrabalho = 0;
 $diasFolga = 0;
+$diasDispensados = 0;
 $camposOk = 0;
 $camposTotal = 0;
 $faltamDescricao = 0;
@@ -64,6 +65,10 @@ foreach ($dias as $dia) {
     $tipo = (string) ($dia['tipo_dia'] ?? 'trabalho');
     if ($tipo !== 'trabalho') {
         $diasFolga++;
+        continue;
+    }
+    if (!empty($dia['dispensado_preenchimento'])) {
+        $diasDispensados++;
         continue;
     }
     $diasTrabalho++;
@@ -90,8 +95,8 @@ foreach ($dias as $dia) {
         $diasIncompletos++;
     }
 }
-$progressoPct = $camposTotal > 0 ? (int) round(($camposOk / $camposTotal) * 100) : 0;
-$prontoEnviar = $diasTrabalho > 0 && $diasIncompletos === 0;
+$progressoPct = $camposTotal > 0 ? (int) round(($camposOk / $camposTotal) * 100) : ($diasDispensados > 0 ? 100 : 0);
+$prontoEnviar = ($diasTrabalho > 0 || $diasDispensados > 0) && $diasIncompletos === 0;
 $primeiroPendenteAberto = false;
 ?>
 
@@ -383,17 +388,20 @@ $primeiroPendenteAberto = false;
                     $pontoBatidas = trim((string) ($dia['ponto_batidas_label'] ?? ''));
                     $pontoUltima = substr((string) ($dia['ponto_ultima_batida'] ?? ''), 0, 5);
                     $ehFolga = $tipo !== 'trabalho';
+                    $dispensado = !$ehFolga && !empty($dia['dispensado_preenchimento']);
+                    $motivoDispensa = trim((string) ($dia['motivo_dispensa_label'] ?? 'Ausência / Justificativa no ponto'));
+                    $exigeObrigatorios = !$ehFolga && !$dispensado;
                     $temHeOuTextoFolga = $ehFolga && ($heIni !== '' || $heFim !== '' || trim((string) ($dia['descricao'] ?? '')) !== '');
                     $temDesc = trim((string) ($dia['descricao'] ?? '')) !== '';
                     $temProj = trim((string) ($dia['projeto_obra'] ?? '')) !== '';
-                    $pendenteObrigatorio = !$ehFolga && (!$temDesc || !$temProj || $amb === '') && !$somenteLeitura;
-                    $completo = !$ehFolga && $temDesc && $temProj && $amb !== '';
+                    $pendenteObrigatorio = $exigeObrigatorios && (!$temDesc || !$temProj || $amb === '') && !$somenteLeitura;
+                    $completo = $dispensado || ($exigeObrigatorios && $temDesc && $temProj && $amb !== '');
                     $abrirInicial = ($pendenteObrigatorio && !$primeiroPendenteAberto) || $temHeOuTextoFolga;
                     if ($pendenteObrigatorio && !$primeiroPendenteAberto) {
                         $primeiroPendenteAberto = true;
                     }
                     $tipoLabel = match ($tipo) {
-                        'trabalho' => 'Trabalho',
+                        'trabalho' => $dispensado ? ('Trabalho · ' . $motivoDispensa) : 'Trabalho',
                         'folga', 'folga_escala' => 'Folga',
                         'feriado' => 'Feriado',
                         default => ucfirst(str_replace('_', ' ', $tipo)),
@@ -410,10 +418,13 @@ $primeiroPendenteAberto = false;
                     if ($abrirInicial) {
                         $cardClasses[] = 'is-open';
                     }
+                    $cardDataAttrs = $ehFolga
+                        ? ('data-folga="1"' . ($temHeOuTextoFolga ? '' : ' hidden'))
+                        : ($dispensado ? 'data-dispensado="1"' : 'data-ra-dia-trabalho="1"');
                     ?>
                     <article class="<?= implode(' ', $cardClasses) ?>"
                              data-day-index="<?= (int) $i ?>"
-                             <?= $ehFolga ? 'data-folga="1"' . ($temHeOuTextoFolga ? '' : ' hidden') : 'data-ra-dia-trabalho="1"' ?>
+                             <?= $cardDataAttrs ?>
                              data-tipo="<?= View::e($tipo) ?>">
                         <input type="hidden" name="dias[<?= $i ?>][data]" value="<?= View::e($data) ?>">
                         <header class="ra-day-card-head">
@@ -423,14 +434,18 @@ $primeiroPendenteAberto = false;
                                 <span class="muted text-sm">(<?= View::e($tipoLabel) ?>)</span>
                             </button>
                             <div class="ra-day-head-meta">
-                                <?php if (!$ehFolga): ?>
+                                <?php if ($dispensado): ?>
+                                    <span class="ra-status-pill ra-status-enviado" data-day-badge title="Dia dispensado de preenchimento obrigatório pelo cartão de ponto">
+                                        <?= View::e($motivoDispensa) ?> · Dispensado
+                                    </span>
+                                <?php elseif (!$ehFolga): ?>
                                     <span class="ra-status-pill <?= $completo ? 'ra-status-aprovado' : 'ra-status-rascunho' ?>" data-day-badge>
                                         <?= $completo ? 'Completo' : 'Pendente' ?>
                                     </span>
                                 <?php elseif ($heCliente && ($heIni !== '' || $heFim !== '')): ?>
                                     <span class="ra-status-pill ra-status-enviado">HE <?= View::e($heIni ?: '—') ?>–<?= View::e($heFim ?: '—') ?></span>
                                 <?php endif; ?>
-                                <?php if (!$somenteLeitura && $i > 0): ?>
+                                <?php if (!$somenteLeitura && $i > 0 && !$dispensado): ?>
                                     <button type="button" class="btn btn-ghost btn-sm" data-copy-prev="<?= (int) $i ?>"
                                             title="Copiar dados preenchidos do dia anterior">
                                         Copiar dia anterior
@@ -440,23 +455,28 @@ $primeiroPendenteAberto = false;
                         </header>
 
                         <div class="ra-day-body">
+                            <?php if ($dispensado): ?>
+                                <div class="muted text-sm" style="margin-bottom:.65rem;padding:.5rem .75rem;border-radius:6px;background:rgba(37,99,235,.08);color:var(--c-text,#1e293b);">
+                                    <strong>Dia abonado/justificado no ponto (<?= View::e($motivoDispensa) ?>):</strong> o preenchimento de atividades, projeto/obra e ambiente é opcional neste dia.
+                                </div>
+                            <?php endif; ?>
                             <div class="ra-day-fields-grid">
                                 <div class="ra-field-box span-full">
-                                    <label>Descrição das atividades <?= $ehFolga ? '(opcional na folga)' : '*' ?></label>
+                                    <label>Descrição das atividades <?= !$exigeObrigatorios ? '(opcional)' : '*' ?></label>
                                     <textarea name="dias[<?= $i ?>][descricao]"
-                                              <?= !$ehFolga ? 'data-ra-obrigatorio="descricao"' : '' ?>
-                                              <?= $somenteLeitura ? 'readonly' : ($ehFolga ? '' : 'required') ?>
-                                              placeholder="<?= $ehFolga ? 'Descreva se houve atividade/HE neste dia' : 'Descreva as atividades executadas' ?>"><?= View::e((string) ($dia['descricao'] ?? '')) ?></textarea>
+                                              <?= $exigeObrigatorios ? 'data-ra-obrigatorio="descricao"' : '' ?>
+                                              <?= $somenteLeitura ? 'readonly' : ($exigeObrigatorios ? 'required' : '') ?>
+                                              placeholder="<?= $dispensado ? ('Opcional — ' . View::e($motivoDispensa)) : ($ehFolga ? 'Descreva se houve atividade/HE neste dia' : 'Descreva as atividades executadas') ?>"><?= View::e((string) ($dia['descricao'] ?? '')) ?></textarea>
                                 </div>
 
                                 <div class="ra-field-box">
-                                    <label>Projeto / Obra <?= $ehFolga ? '' : '*' ?></label>
+                                    <label>Projeto / Obra <?= !$exigeObrigatorios ? '' : '*' ?></label>
                                     <input type="text" name="dias[<?= $i ?>][projeto_obra]"
-                                           <?= !$ehFolga ? 'data-ra-obrigatorio="projeto"' : '' ?>
+                                           <?= $exigeObrigatorios ? 'data-ra-obrigatorio="projeto"' : '' ?>
                                            data-field="projeto_obra"
                                            value="<?= View::e((string) ($dia['projeto_obra'] ?? '')) ?>"
-                                           <?= $somenteLeitura ? 'readonly' : ($ehFolga ? '' : 'required') ?>
-                                           placeholder="<?= $ehFolga ? 'Opcional' : 'Obrigatório' ?>">
+                                           <?= $somenteLeitura ? 'readonly' : ($exigeObrigatorios ? 'required' : '') ?>
+                                           placeholder="<?= !$exigeObrigatorios ? 'Opcional' : 'Obrigatório' ?>">
                                 </div>
 
                                 <div class="ra-field-box">
@@ -481,9 +501,9 @@ $primeiroPendenteAberto = false;
                                 </div>
 
                                 <div class="ra-field-box span-full">
-                                    <label>Ambiente <?= $ehFolga ? '' : '*' ?></label>
+                                    <label>Ambiente <?= !$exigeObrigatorios ? '' : '*' ?></label>
                                     <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
-                                        <div class="ra-amb-group" data-ambiente-group <?= !$ehFolga ? 'data-trabalho="1"' : '' ?>>
+                                        <div class="ra-amb-group" data-ambiente-group <?= $exigeObrigatorios ? 'data-trabalho="1"' : '' ?>>
                                             <?php foreach (['remoto' => 'Remoto', 'site' => 'Site', 'viagem' => 'Viagem'] as $val => $lab): ?>
                                                 <label class="ra-amb-opt">
                                                     <input type="radio" name="dias[<?= $i ?>][ambiente]" value="<?= $val ?>"
@@ -757,7 +777,8 @@ $primeiroPendenteAberto = false;
       }
     });
 
-    const pct = camposTotal > 0 ? Math.round((camposOk / camposTotal) * 100) : 0;
+    const hasDispensados = document.querySelectorAll('.ra-day-card[data-dispensado="1"]').length > 0;
+    const pct = camposTotal > 0 ? Math.round((camposOk / camposTotal) * 100) : (hasDispensados ? 100 : 0);
     const fill = document.querySelector('.ra-progress-fill');
     const track = document.querySelector('[data-ra-progress-bar]');
     const label = document.querySelector('[data-ra-progress-label]');
@@ -783,7 +804,7 @@ $primeiroPendenteAberto = false;
         ? '100% preenchido — pronto para enviar.'
         : ('Progresso <strong>' + pct + '%</strong> · faltam <strong>' + diasIncompletos + '</strong> dia(s).');
     }
-    if (enviarBtn) enviarBtn.disabled = diasIncompletos > 0 || camposTotal === 0;
+    if (enviarBtn) enviarBtn.disabled = diasIncompletos > 0 || (camposTotal === 0 && !hasDispensados);
   };
 
   // Copiar do dia anterior
