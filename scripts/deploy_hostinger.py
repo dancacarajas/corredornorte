@@ -28,6 +28,8 @@ SKIP_DIR_NAMES = {
     "agent-transcripts",
     "__pycache__",
 }
+# Pasta tmp/ na raiz do projeto (não confundir com storage/tmp)
+SKIP_ROOT_DIRS = {"tmp"}
 SKIP_FILE_NAMES = {".env", "database.local.php", "app.local.php", "install.lock", "app.key"}
 DEV_SCRIPT_EXACT = {"deploy_hostinger.py", "install_db.php", "e2e_verify.php"}
 DEV_SCRIPT_PREFIXES = (
@@ -45,14 +47,21 @@ DEV_SCRIPT_PREFIXES = (
 def should_skip(path: Path, rel: Path) -> bool:
     if set(rel.parts) & SKIP_DIR_NAMES:
         return True
+    if rel.parts and rel.parts[0] in SKIP_ROOT_DIRS:
+        return True
     if path.name in SKIP_FILE_NAMES:
         return True
     if path.suffix in {".pyc", ".pyo"}:
+        return True
+    if path.name.startswith("_tmp_") or path.name.startswith("~$"):
         return True
     if rel.parts and rel.parts[0] == "scripts" and path.is_file():
         if path.name in DEV_SCRIPT_EXACT or any(
             path.name.startswith(p) for p in DEV_SCRIPT_PREFIXES
         ):
+            return True
+        # Scripts PHP de diagnóstico nunca sobem para produção
+        if path.name.startswith("_tmp_"):
             return True
     if rel.parts and rel.parts[0] == "output" and path.name != ".gitkeep":
         return True
@@ -174,9 +183,11 @@ def main() -> int:
             f"ls -la {remote_root} | head -n 25",
         )
 
-        # Garante rewrite para /public se o document root for a pasta do projeto
+        # .htaccess raiz endurecido: bloqueia pastas sensíveis e encaminha para /public
         htaccess = (
             "RewriteEngine On\n"
+            "RewriteRule ^(storage|config|vendor|app|database|scripts|tmp|output)(/|$) - [F,L]\n"
+            "RewriteRule ^(\\.env|composer\\.(json|lock)|docker-compose\\.yml)$ - [F,L]\n"
             "RewriteRule ^$ public/ [L]\n"
             "RewriteRule (.*) public/$1 [L]\n"
         )
@@ -196,7 +207,17 @@ def main() -> int:
             f"for d in uploads assinaturas logs; do "
             f"  if [ -d {bak}/storage/$d ]; then cp -a {bak}/storage/$d/. {remote_root}/storage/$d/; fi; "
             f"done; "
+            # Remove scripts de diagnóstico e lixo tmp do servidor
+            f"rm -f {remote_root}/scripts/_tmp_* {remote_root}/tmp/_wa_* 2>/dev/null; "
+            f"find {remote_root}/tmp -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name '.gitkeep' -exec rm -rf {{}} + 2>/dev/null; "
             f"echo CONFIG_RESTORED",
+        )
+        # Orienta DocumentRoot ideal (= .../public) sem quebrar o rewrite atual
+        print(
+            "Dica Hostinger: aponte o DocumentRoot do subdomínio para "
+            f"{remote_root}/public (mais seguro). Enquanto isso, o .htaccess "
+            "da raiz bloqueia storage/config/app e encaminha para /public.",
+            flush=True,
         )
 
         print("Deploy concluído.", flush=True)

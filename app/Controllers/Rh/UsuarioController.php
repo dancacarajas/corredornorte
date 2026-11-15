@@ -72,8 +72,17 @@ final class UsuarioController
     {
         $pdo = Db::tryConnection();
         $perfis = [];
+        $contratos = [];
         if ($pdo instanceof PDO) {
             $perfis = (new PerfilService($pdo))->listar(true);
+            \App\Helpers\EscopoAcesso::ensureSchema($pdo);
+            try {
+                $contratos = $pdo->query(
+                    "SELECT id, codigo, nome FROM rh_contratos WHERE status = 'ativo' ORDER BY codigo"
+                )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            } catch (Throwable) {
+                $contratos = [];
+            }
         }
         View::render('rh/usuarios/form', [
             'pageTitle' => $usuario ? 'Editar usuário' : 'Novo usuário',
@@ -81,6 +90,7 @@ final class UsuarioController
             'activeMenu' => 'usuarios',
             'usuario' => $usuario,
             'perfis' => $perfis,
+            'contratos' => $contratos,
             'error' => null,
         ]);
     }
@@ -133,6 +143,7 @@ final class UsuarioController
             'senha' => (string) ($_POST['senha'] ?? ''),
             'status' => (string) ($_POST['status'] ?? 'ativo'),
             'perfil_ids' => array_map('intval', (array) ($_POST['perfil_ids'] ?? [])),
+            'contrato_ids' => array_map('intval', (array) ($_POST['contrato_ids'] ?? [])),
         ];
         $enviarBoasVindas = !empty($_POST['enviar_boas_vindas']);
 
@@ -148,17 +159,26 @@ final class UsuarioController
                 $svc->atualizar($id, $data, Auth::id());
                 if (Auth::id() === $id) {
                     Auth::refreshSessionProfile();
+                    Auth::refreshSessionAccess();
                 }
                 header('Location: /rh/usuarios?ok=atualizado');
             }
         } catch (Throwable $e) {
             $perfis = (new PerfilService($pdo))->listar(true);
+            $contratos = [];
+            try {
+                $contratos = $pdo->query(
+                    "SELECT id, codigo, nome FROM rh_contratos WHERE status = 'ativo' ORDER BY codigo"
+                )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            } catch (Throwable) {
+            }
             $usuario = $id ? (new UsuarioService($pdo))->buscar($id) : [
                 'nome' => $data['nome'],
                 'email' => $data['email'],
                 'telefone' => $data['telefone'],
                 'status' => $data['status'],
                 'perfis' => array_map(static fn (int $pid): array => ['id' => $pid], $data['perfil_ids']),
+                'contrato_ids' => $data['contrato_ids'],
             ];
             View::render('rh/usuarios/form', [
                 'pageTitle' => $id ? 'Editar usuário' : 'Novo usuário',
@@ -166,6 +186,7 @@ final class UsuarioController
                 'activeMenu' => 'usuarios',
                 'usuario' => $usuario,
                 'perfis' => $perfis,
+                'contratos' => $contratos,
                 'error' => $e->getMessage(),
             ]);
             return;

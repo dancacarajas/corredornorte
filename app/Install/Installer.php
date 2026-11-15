@@ -119,6 +119,9 @@ final class Installer
         $this->migrateContaUsuario($pdo);
         $messages[] = 'Migração: conta de usuário (perfil, avatar, reset)';
 
+        $this->migrateEscopoContratos($pdo);
+        $messages[] = 'Migração: escopo de usuário por contrato';
+
         $adminPassword = bin2hex(random_bytes(8)) . 'A1';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
         $stmt = $pdo->prepare(
@@ -702,6 +705,18 @@ final class Installer
             $pdo->exec("ALTER TABLE ra_dias ADD COLUMN {$col} {$def} AFTER {$after}");
             $after = $col;
         }
+    }
+
+    public function migrateEscopoContratos(PDO $pdo): void
+    {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS usuario_contratos (
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                contrato_id BIGINT UNSIGNED NOT NULL,
+                PRIMARY KEY (usuario_id, contrato_id),
+                KEY idx_uc_contrato (contrato_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
     }
 
     public function migrateContaUsuario(PDO $pdo): void

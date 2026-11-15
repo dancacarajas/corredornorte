@@ -66,6 +66,9 @@ final class EfetivoController
                 $sql .= ' AND ct.id = :contrato_id';
                 $params['contrato_id'] = $filters['contrato_id'];
             }
+            $escopo = \App\Helpers\EscopoAcesso::sqlFiltroColaborador('c');
+            $sql .= $escopo['sql'];
+            $params = array_merge($params, $escopo['params']);
             if ($filters['centro_custo_id'] > 0) {
                 $sql .= ' AND cc.id = :cc_id';
                 $params['cc_id'] = $filters['centro_custo_id'];

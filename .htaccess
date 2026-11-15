@@ -1,3 +1,9 @@
 RewriteEngine On
+
+# Bloqueia acesso direto a pastas sensíveis (mesmo com DocumentRoot na raiz do projeto).
+RewriteRule ^(storage|config|vendor|app|database|scripts|tmp|output)(/|$) - [F,L]
+RewriteRule ^(\.env|composer\.(json|lock)|docker-compose\.yml)$ - [F,L]
+
+# Encaminha tudo para /public (use DocumentRoot = .../public quando possível).
 RewriteRule ^$ public/ [L]
 RewriteRule (.*) public/$1 [L]

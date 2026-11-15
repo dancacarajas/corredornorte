@@ -107,15 +107,16 @@ final class PontoController
                         GROUP BY espelho_id
                     ) d ON d.espelho_id = e.id
                     WHERE pp.data_inicio = :p_inicio AND pp.data_fim = :p_fim
-                    ORDER BY c.nome
                 SQL;
+                $escopo = \App\Helpers\EscopoAcesso::sqlFiltroColaborador('c');
+                $sql .= $escopo['sql'] . ' ORDER BY c.nome';
                 $stmt = $pdo->prepare($sql);
-                $stmt->execute([
+                $stmt->execute(array_merge([
                     'inicio' => $dataInicio,
                     'fim' => $dataFim,
                     'p_inicio' => $dataInicio,
                     'p_fim' => $dataFim,
-                ]);
+                ], $escopo['params']));
 
                 $hePorColab = [];
                 try {

@@ -55,12 +55,13 @@ final class UsuarioService
         );
         $ps->execute(['id' => $id]);
         $user['perfis'] = $ps->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $user['contrato_ids'] = \App\Helpers\EscopoAcesso::carregarContratoIds($this->db, $id);
 
         return $user;
     }
 
     /**
-     * @param array{nome:string,email:string,senha?:string,status:string,perfil_ids:list<int>} $data
+     * @param array{nome:string,email:string,senha?:string,status:string,perfil_ids:list<int>,contrato_ids?:list<int>} $data
      */
     public function criar(array $data, ?int $actorId = null): int
     {
@@ -69,6 +70,7 @@ final class UsuarioService
         $senha = (string) ($data['senha'] ?? '');
         $status = ($data['status'] ?? 'ativo') === 'inativo' ? 'inativo' : 'ativo';
         $perfilIds = array_values(array_unique(array_map('intval', $data['perfil_ids'] ?? [])));
+        $contratoIds = array_values(array_unique(array_map('intval', $data['contrato_ids'] ?? [])));
 
         if ($nome === '' || mb_strlen($nome) < 3) {
             throw new RuntimeException('Informe o nome completo.');
@@ -103,8 +105,10 @@ final class UsuarioService
             ]);
             $id = (int) $this->db->lastInsertId();
             $this->syncPerfis($id, $perfilIds);
+            \App\Helpers\EscopoAcesso::syncContratos($this->db, $id, $contratoIds);
             $this->audit('usuarios', $id, 'criar', null, [
-                'nome' => $nome, 'email' => $email, 'status' => $status, 'perfil_ids' => $perfilIds,
+                'nome' => $nome, 'email' => $email, 'status' => $status,
+                'perfil_ids' => $perfilIds, 'contrato_ids' => $contratoIds,
             ], $actorId);
             $this->db->commit();
 
@@ -116,7 +120,7 @@ final class UsuarioService
     }
 
     /**
-     * @param array{nome:string,email:string,senha?:string,status:string,perfil_ids:list<int>} $data
+     * @param array{nome:string,email:string,senha?:string,status:string,perfil_ids:list<int>,contrato_ids?:list<int>} $data
      */
     public function atualizar(int $id, array $data, ?int $actorId = null): void
     {
@@ -130,6 +134,7 @@ final class UsuarioService
         $senha = trim((string) ($data['senha'] ?? ''));
         $status = ($data['status'] ?? 'ativo') === 'inativo' ? 'inativo' : 'ativo';
         $perfilIds = array_values(array_unique(array_map('intval', $data['perfil_ids'] ?? [])));
+        $contratoIds = array_values(array_unique(array_map('intval', $data['contrato_ids'] ?? [])));
 
         if ($nome === '' || mb_strlen($nome) < 3) {
             throw new RuntimeException('Informe o nome completo.');
@@ -177,10 +182,12 @@ final class UsuarioService
                 ]);
             }
             $this->syncPerfis($id, $perfilIds);
+            \App\Helpers\EscopoAcesso::syncContratos($this->db, $id, $contratoIds);
             $this->audit('usuarios', $id, 'atualizar', [
                 'nome' => $atual['nome'], 'email' => $atual['email'], 'status' => $atual['status'],
             ], [
-                'nome' => $nome, 'email' => $email, 'status' => $status, 'perfil_ids' => $perfilIds,
+                'nome' => $nome, 'email' => $email, 'status' => $status,
+                'perfil_ids' => $perfilIds, 'contrato_ids' => $contratoIds,
             ], $actorId);
             $this->db->commit();
         } catch (\Throwable $e) {

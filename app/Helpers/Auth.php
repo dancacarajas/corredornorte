@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Helpers;
 
 use App\Config\Database;
+use App\Helpers\EscopoAcesso;
 use PDO;
 use Throwable;
 
@@ -53,6 +54,9 @@ final class Auth
         session_regenerate_id(true);
         self::$activeChecked = true;
         $acesso = self::carregarAcesso($pdo, (int) $user['id']);
+        $contratoIds = in_array('admin', $acesso['perfis'], true)
+            ? null
+            : EscopoAcesso::carregarContratoIds($pdo, (int) $user['id']);
         $_SESSION['user'] = [
             'id' => (int) $user['id'],
             'name' => (string) $user['nome'],
@@ -62,6 +66,8 @@ final class Auth
             'role' => $acesso['role'],
             'perfis' => $acesso['perfis'],
             'permissoes' => $acesso['permissoes'],
+            // null = irrestrito; lista = só esses contratos
+            'contrato_ids' => ($contratoIds === [] || $contratoIds === null) ? null : $contratoIds,
         ];
 
         return true;
@@ -83,6 +89,12 @@ final class Auth
             $_SESSION['user']['role'] = $acesso['role'];
             $_SESSION['user']['perfis'] = $acesso['perfis'];
             $_SESSION['user']['permissoes'] = $acesso['permissoes'];
+            if (in_array('admin', $acesso['perfis'], true)) {
+                $_SESSION['user']['contrato_ids'] = null;
+            } else {
+                $ids = EscopoAcesso::carregarContratoIds($pdo, $id);
+                $_SESSION['user']['contrato_ids'] = $ids === [] ? null : $ids;
+            }
         } catch (Throwable) {
         }
     }

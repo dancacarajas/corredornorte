@@ -9,8 +9,8 @@ declare(strict_types=1);
  *   0 9  * * 1-5  /usr/bin/php /home/.../corredornorte/scripts/cron_cobranca_assinatura.php manha
  *   0 15 * * 1-5  /usr/bin/php /home/.../corredornorte/scripts/cron_cobranca_assinatura.php tarde
  *
- * Ou HTTP:
- *   curl -fsS "https://SEU-DOMINIO/cron/cobranca-assinatura?key=SEGREDO&slot=manha"
+ * Ou HTTP (só header — nunca ?key=):
+ *   curl -fsS -H "X-Cron-Key: SEGREDO" "https://SEU-DOMINIO/cron/cobranca-assinatura"
  *
  * Uso local:
  *   php scripts/cron_cobranca_assinatura.php manha

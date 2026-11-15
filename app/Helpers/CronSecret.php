@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Helpers;
 
 /**
- * Segredo do endpoint HTTP de cron (Hostinger wget/curl).
- * CLI não exige; HTTP exige key=… igual a este valor.
+ * Segredo do endpoint HTTP de cron.
+ * CLI não exige; HTTP exige header X-Cron-Key (ou Authorization: Bearer).
  */
 final class CronSecret
 {

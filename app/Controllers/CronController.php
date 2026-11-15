@@ -8,13 +8,18 @@ use App\Helpers\CronSecret;
 use App\Helpers\Db;
 use App\Services\CobrancaAssinaturaService;
 
-/** Endpoints HTTP para cron da Hostinger (wget/curl). */
+/**
+ * Endpoint HTTP de cron. Autenticação apenas por header
+ * (X-Cron-Key ou Authorization: Bearer) — nunca por ?key= (vaza em logs).
+ *
+ * Exemplo Hostinger:
+ *   curl -fsS -H "X-Cron-Key: SEGREDO" https://DOMINIO/cron/cobranca-assinatura
+ */
 final class CronController
 {
     public function cobrancaAssinatura(): void
     {
-        // Preferir header; query string só como fallback legado (aparece em logs).
-        $key = trim((string) ($_SERVER['HTTP_X_CRON_KEY'] ?? $_GET['key'] ?? ''));
+        $key = $this->extractKey();
         if (!CronSecret::matches($key)) {
             http_response_code(403);
             header('Content-Type: application/json; charset=utf-8');
@@ -30,18 +35,12 @@ final class CronController
             return;
         }
 
-        // Em HTTP: nunca aceitar override de data/slot (evita disparo forçado).
-        // Overrides só via CLI (scripts/cron_cobranca_assinatura.php).
-        $slot = 'auto';
-        $agora = null;
-
         $svc = new CobrancaAssinaturaService($pdo);
-        $result = $svc->executar($slot, $agora);
+        $result = $svc->executar('auto', null);
 
-        // Sem PII na resposta HTTP.
         $safe = [
             'ok' => (bool) ($result['ok'] ?? true),
-            'slot' => (string) ($result['slot'] ?? $slot),
+            'slot' => (string) ($result['slot'] ?? 'auto'),
             'enviados' => (int) ($result['enviados'] ?? 0),
             'falhas' => (int) ($result['falhas'] ?? 0),
             'ignorados' => (int) ($result['ignorados'] ?? 0),
@@ -52,5 +51,19 @@ final class CronController
 
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($safe, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private function extractKey(): string
+    {
+        $header = trim((string) ($_SERVER['HTTP_X_CRON_KEY'] ?? ''));
+        if ($header !== '') {
+            return $header;
+        }
+        $auth = trim((string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''));
+        if (preg_match('/^Bearer\s+(\S+)$/i', $auth, $m) === 1) {
+            return trim($m[1]);
+        }
+
+        return '';
     }
 }

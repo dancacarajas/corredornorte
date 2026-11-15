@@ -183,8 +183,8 @@ final class MedicaoService
              )"
             : "";
 
-        $st = $this->db->prepare(
-            "SELECT e.id AS espelho_id, e.status AS espelho_status, e.colaborador_id,
+        $escopo = \App\Helpers\EscopoAcesso::sqlFiltroColaborador('c');
+        $sql = "SELECT e.id AS espelho_id, e.status AS espelho_status, e.colaborador_id,
                     c.nome, c.matricula, c.email_corp, c.telefone, COALESCE(c.he_fluxo, 'off') AS he_fluxo,
                     r.id AS relatorio_id, r.status AS ra_status,
                     d.id AS documento_id, d.status AS folha_status, d.portal_token,
@@ -201,10 +201,11 @@ final class MedicaoService
                 ORDER BY d2.id DESC LIMIT 1
              )
              {$raJoin}
-             WHERE pp.data_inicio = :i AND pp.data_fim = :f
-             ORDER BY c.nome, e.id"
-        );
-        $st->execute(['i' => $dataInicio, 'f' => $dataFim]);
+             WHERE pp.data_inicio = :i AND pp.data_fim = :f"
+            . $escopo['sql']
+            . ' ORDER BY c.nome, e.id';
+        $st = $this->db->prepare($sql);
+        $st->execute(array_merge(['i' => $dataInicio, 'f' => $dataFim], $escopo['params']));
         $raw = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $hePendentes = $this->mapHePendentesPorEspelho(array_column($raw, 'espelho_id'));

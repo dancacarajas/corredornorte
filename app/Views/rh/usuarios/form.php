@@ -4,12 +4,18 @@ use App\Helpers\View;
 
 /** @var ?array<string,mixed> $usuario */
 /** @var list<array<string,mixed>> $perfis */
+/** @var list<array<string,mixed>> $contratos */
 /** @var ?string $error */
 
 $selected = [];
 foreach (($usuario['perfis'] ?? []) as $p) {
     $selected[(int) ($p['id'] ?? 0)] = true;
 }
+$selectedContratos = [];
+foreach (($usuario['contrato_ids'] ?? []) as $cid) {
+    $selectedContratos[(int) $cid] = true;
+}
+$contratos = is_array($contratos ?? null) ? $contratos : [];
 $isEdit = !empty($usuario['id']);
 $flashOk = $_GET['ok'] ?? null;
 $flashErro = $_GET['erro'] ?? null;
@@ -101,6 +107,28 @@ $okMsgs = [
                     </label>
                 <?php endforeach; ?>
             </div>
+        </div>
+        <div class="form-field" style="grid-column:1/-1;">
+            <label class="form-label">Escopo por contrato</label>
+            <p class="text-sm muted" style="margin:0 0 .55rem;">
+                Nenhum marcado = vê todos os contratos. Marcando um ou mais, o usuário só enxerga colaboradores da lotação vigente nesses contratos (Medição, Ponto, Efetivo).
+            </p>
+            <?php if ($contratos === []): ?>
+                <p class="text-sm muted">Nenhum contrato ativo cadastrado.</p>
+            <?php else: ?>
+                <div style="display:grid;gap:.45rem;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+                    <?php foreach ($contratos as $ct): ?>
+                        <label class="text-sm" style="border:1px solid var(--border);border-radius:8px;padding:.65rem;display:flex;gap:.5rem;align-items:flex-start;">
+                            <input type="checkbox" name="contrato_ids[]" value="<?= (int) $ct['id'] ?>"
+                                <?= !empty($selectedContratos[(int) $ct['id']]) ? 'checked' : '' ?>>
+                            <span>
+                                <strong><?= View::e((string) $ct['codigo']) ?></strong>
+                                <div class="text-xs muted"><?= View::e((string) ($ct['nome'] ?? '')) ?></div>
+                            </span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
         </div>
         <div class="stack-row" style="grid-column:1/-1;">
             <button class="btn btn-primary" type="submit">Salvar</button>
