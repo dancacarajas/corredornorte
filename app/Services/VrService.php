@@ -152,7 +152,9 @@ final class VrService
     }
 
     /**
-     * VR = valor_dia × dias Remoto do relatório no período (regra + alocação por contrato).
+     * VR = valor_dia × dias Remoto do RA enviado/aprovado no período.
+     * Ignora rascunho; exige cruzamento com ponto (dia útil sem falta/afastamento/abono).
+     *
      * @return list<array<string,mixed>>
      */
     public function calcularPeriodo(string $dataInicio, string $dataFim): array
@@ -162,19 +164,55 @@ final class VrService
             throw new RuntimeException('Cadastre uma configuração de Vale Refeição vigente.');
         }
 
-        $sql = 'SELECT r.id AS relatorio_id, r.status, r.contrato_id, c.id AS colaborador_id, c.nome, c.matricula,
+        $condJustCol = $this->hasColumn('ponto_dias', 'justificativa_tipo')
+            ? " AND COALESCE(pd.justificativa_tipo, '') NOT IN ('ferias', 'atestado', 'abona_falta', 'dispensa', 'afastamento')"
+            : '';
+        $condJustTbl = $this->tableExists('ponto_justificativas')
+            ? " AND NOT EXISTS (
+                    SELECT 1 FROM ponto_justificativas pj
+                    INNER JOIN ponto_justificativa_tipos jt ON jt.id = pj.tipo_id
+                    WHERE (pj.espelho_id = pd.espelho_id
+                           OR pj.espelho_id IN (
+                               SELECT pe2.id FROM ponto_espelhos pe2
+                               WHERE pe2.colaborador_id = ra.colaborador_id
+                           ))
+                      AND rd.data BETWEEN pj.data_inicio AND pj.data_fim
+                      AND jt.status = 'ativo'
+                      AND (
+                          jt.abona_falta = 1
+                          OR LOWER(jt.codigo) IN ('ferias', 'férias', 'atestado', 'atst', 'abona_falta', 'abono', 'dispensa', 'afastamento', 'folga_compensada')
+                      )
+                )"
+            : '';
+        // Remoto só conta com dia de trabalho no ponto, sem falta integral nem afastamento/justificativa abonadora.
+        $condDiaValido = 'pd.id IS NOT NULL'
+            . " AND pd.tipo_dia = 'trabalho'"
+            . ' AND COALESCE(pd.dia_falta, 0) = 0'
+            . " AND LOWER(COALESCE(pd.ocorrencia_resumo, '')) NOT LIKE 'justificado%'"
+            . $condJustCol
+            . $condJustTbl;
+
+        $sql = "SELECT ra.id AS relatorio_id, ra.status, ra.contrato_id, c.id AS colaborador_id, c.nome, c.matricula,
                        pp.data_inicio, pp.data_fim,
-                       SUM(CASE WHEN d.ambiente = \'remoto\' THEN 1 ELSE 0 END) AS dias_remoto_todos,
-                       SUM(CASE WHEN d.ambiente = \'remoto\' AND WEEKDAY(d.data) < 5 THEN 1 ELSE 0 END) AS dias_remoto_uteis,
-                       SUM(CASE WHEN d.ambiente = \'site\' THEN 1 ELSE 0 END) AS dias_site,
-                       SUM(CASE WHEN d.ambiente = \'viagem\' THEN 1 ELSE 0 END) AS dias_viagem
-                FROM ra_relatorios r
-                INNER JOIN rh_colaboradores c ON c.id = r.colaborador_id
-                INNER JOIN ponto_periodos pp ON pp.id = r.periodo_id
-                INNER JOIN ra_dias d ON d.relatorio_id = r.id
+                       SUM(CASE WHEN rd.ambiente = 'remoto' AND {$condDiaValido} THEN 1 ELSE 0 END) AS dias_remoto_todos,
+                       SUM(CASE WHEN rd.ambiente = 'remoto' AND WEEKDAY(rd.data) < 5 AND {$condDiaValido} THEN 1 ELSE 0 END) AS dias_remoto_uteis,
+                       SUM(CASE WHEN rd.ambiente = 'site' THEN 1 ELSE 0 END) AS dias_site,
+                       SUM(CASE WHEN rd.ambiente = 'viagem' THEN 1 ELSE 0 END) AS dias_viagem
+                FROM ra_relatorios ra
+                INNER JOIN rh_colaboradores c ON c.id = ra.colaborador_id
+                INNER JOIN ponto_periodos pp ON pp.id = ra.periodo_id
+                INNER JOIN ra_dias rd ON rd.relatorio_id = ra.id
+                LEFT JOIN ponto_espelhos pe ON pe.id = COALESCE(
+                    NULLIF(ra.espelho_id, 0),
+                    (SELECT pe2.id FROM ponto_espelhos pe2
+                     WHERE pe2.colaborador_id = ra.colaborador_id AND pe2.periodo_id = ra.periodo_id
+                     ORDER BY pe2.id DESC LIMIT 1)
+                )
+                LEFT JOIN ponto_dias pd ON pd.espelho_id = pe.id AND pd.data = rd.data
                 WHERE pp.data_inicio = :i AND pp.data_fim = :f
-                GROUP BY r.id, r.status, r.contrato_id, c.id, c.nome, c.matricula, pp.data_inicio, pp.data_fim
-                ORDER BY c.nome';
+                  AND ra.status IN ('enviado', 'aprovado')
+                GROUP BY ra.id, ra.status, ra.contrato_id, c.id, c.nome, c.matricula, pp.data_inicio, pp.data_fim
+                ORDER BY c.nome";
         $st = $this->db->prepare($sql);
         $st->execute(['i' => $dataInicio, 'f' => $dataFim]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -414,5 +452,33 @@ final class VrService
             return null;
         }
         return $vigenciaFim;
+    }
+
+    private function tableExists(string $table): bool
+    {
+        try {
+            $st = $this->db->prepare(
+                'SELECT 1 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t LIMIT 1'
+            );
+            $st->execute(['t' => $table]);
+            return (bool) $st->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function hasColumn(string $table, string $column): bool
+    {
+        try {
+            $st = $this->db->prepare(
+                'SELECT 1 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c LIMIT 1'
+            );
+            $st->execute(['t' => $table, 'c' => $column]);
+            return (bool) $st->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }
