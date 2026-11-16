@@ -4,11 +4,11 @@
   if (typeof popup?.showModal !== 'function') return;
 
   const barra = popup.querySelector('[role="progressbar"]');
-  const preenchimento = barra.firstElementChild;
+  const preenchimento = barra?.firstElementChild;
   const porcentagem = document.getElementById('ponto-progresso-porcentagem');
   const status = document.getElementById('ponto-progresso-status');
   const rodape = popup.querySelector('.modal-footer');
-  const fechar = rodape.querySelector('button');
+  const fechar = rodape?.querySelector('button');
   const erroComunicacao = 'Não foi possível confirmar a conclusão. Confira a lista de espelhos antes de tentar novamente.';
   let ocupado = false;
   let urlAtualizacao = null;
@@ -16,6 +16,7 @@
   let pendenteEndpoint = null;
 
   const exibirProgresso = (valor) => {
+    if (!porcentagem || !barra || !preenchimento) return;
     const v = Math.min(100, Math.max(0, Math.floor(valor)));
     porcentagem.textContent = `${v}%`;
     barra.setAttribute('aria-valuenow', String(v));
@@ -23,6 +24,7 @@
   };
 
   const exibirStatus = (mensagem) => {
+    if (!status) return;
     if (status.textContent !== mensagem) status.textContent = mensagem;
   };
 
@@ -37,42 +39,92 @@
     }
   };
 
+  const csrfAtual = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+  const mensagemErro = (payload, fallback = erroComunicacao) => {
+    if (!payload || typeof payload !== 'object') return fallback;
+    const msg = payload.message || payload.error || payload.erro;
+    return typeof msg === 'string' && msg.trim() !== '' ? msg.trim() : fallback;
+  };
+
+  const normalizarEvento = (payload) => {
+    if (!payload || typeof payload !== 'object') return payload;
+    // Respostas de CSRF/auth legadas sem type.
+    if (payload.type == null && (payload.ok === false || payload.error || payload.erro)) {
+      return { ...payload, type: 'error', message: mensagemErro(payload) };
+    }
+    return payload;
+  };
+
   const lerJson = async (resposta) => {
     const tipo = resposta.headers.get('Content-Type') || '';
-    if (!tipo.includes('application/json')) {
-      const texto = await resposta.text();
-      if (resposta.redirected || /\/login/i.test(resposta.url)) {
-        throw new Error('Sessão expirada');
-      }
-      throw new Error(texto.slice(0, 180) || 'Resposta inesperada');
+    const texto = await resposta.text();
+    if (resposta.redirected || /\/login/i.test(resposta.url)) {
+      throw new Error('Sessão expirada');
     }
-    return resposta.json();
+    if (!tipo.includes('application/json')) {
+      if (/csrf|sessão|sessao|token/i.test(texto)) {
+        throw new Error('Sessão expirada ou token CSRF inválido. Recarregue a página.');
+      }
+      throw new Error((texto || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 180) || 'Resposta inesperada');
+    }
+    let payload;
+    try {
+      payload = texto ? JSON.parse(texto) : null;
+    } catch {
+      throw new Error('Resposta JSON inválida do servidor.');
+    }
+    return normalizarEvento(payload);
   };
 
   const postGeracao = async (formulario, endpoint, extras = {}) => {
     const body = new FormData(formulario);
     Object.entries(extras).forEach(([k, v]) => body.set(k, String(v)));
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    if (csrf && !body.has('_csrf')) body.set('_csrf', csrf);
-    const headers = { Accept: 'application/json' };
+    const csrf = csrfAtual();
+    if (csrf) {
+      body.set('_csrf', csrf);
+    }
+    const headers = { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
     if (csrf) headers['X-CSRF-Token'] = csrf;
     const resposta = await fetch(endpoint, {
       method: 'POST',
       headers,
       credentials: 'same-origin',
       body,
+      redirect: 'follow',
     });
     if (resposta.redirected && new URL(resposta.url).pathname.endsWith('/login')) {
       throw new Error('Sessão expirada');
     }
+    if (resposta.status === 403 || resposta.status === 401) {
+      const payload = await lerJson(resposta).catch(() => null);
+      throw new Error(mensagemErro(payload, 'Sessão expirada ou sem permissão. Recarregue a página.'));
+    }
     return lerJson(resposta);
+  };
+
+  const abrirConfirmacaoExistente = (eventoResp, formulario, endpoint) => {
+    const detalhe = document.getElementById('ponto-periodo-existe-detalhe');
+    if (detalhe) {
+      const n = Number(eventoResp?.espelhos) || 0;
+      detalhe.textContent = n > 0
+        ? `Há ${n} cartão(ões) neste período.`
+        : 'O período já foi registrado no sistema.';
+    }
+    pendenteFormulario = formulario;
+    pendenteEndpoint = endpoint;
+    if (typeof confirmPopup?.showModal === 'function') {
+      confirmPopup.showModal();
+      return true;
+    }
+    return false;
   };
 
   const executarGeracao = async (formulario, endpoint, force = false) => {
     ocupado = true;
     urlAtualizacao = null;
-    rodape.hidden = true;
-    barra.classList.remove('is-success', 'is-danger');
+    if (rodape) rodape.hidden = true;
+    barra?.classList.remove('is-success', 'is-danger');
     exibirProgresso(0);
     exibirStatus('Preparando a geração…');
     if (!popup.open) popup.showModal();
@@ -91,25 +143,18 @@
           force: force ? '1' : '0',
         });
 
-        if (eventoResp?.type === 'exists_confirm') {
+        if (eventoResp?.type === 'exists_confirm' || eventoResp?.exists === true) {
           ocupado = false;
           popup.close();
-          const detalhe = document.getElementById('ponto-periodo-existe-detalhe');
-          if (detalhe) {
-            const n = Number(eventoResp.espelhos) || 0;
-            detalhe.textContent = n > 0
-              ? `Há ${n} cartão(ões) neste período.`
-              : 'O período já foi registrado no sistema.';
+          if (!abrirConfirmacaoExistente(eventoResp, formulario, endpoint)) {
+            throw new Error(mensagemErro(eventoResp, 'Já existe cartão gerado para este período.'));
           }
-          pendenteFormulario = formulario;
-          pendenteEndpoint = endpoint;
-          if (typeof confirmPopup?.showModal === 'function') confirmPopup.showModal();
           return;
         }
 
-        if (eventoResp?.type === 'error') {
-          exibirStatus(eventoResp.message || erroComunicacao);
-          barra.classList.add('is-danger');
+        if (eventoResp?.type === 'error' || eventoResp?.ok === false) {
+          exibirStatus(mensagemErro(eventoResp));
+          barra?.classList.add('is-danger');
           return;
         }
 
@@ -130,12 +175,12 @@
           urlAtualizacao = destino;
           exibirProgresso(100);
           exibirStatus(eventoResp.message || 'Espelhos gerados com sucesso.');
-          barra.classList.add('is-success');
+          barra?.classList.add('is-success');
           return;
         }
 
         if (eventoResp?.type !== 'progress') {
-          throw new Error('Conclusão não confirmada');
+          throw new Error(mensagemErro(eventoResp, 'Conclusão não confirmada'));
         }
 
         phase = eventoResp.phase === 'calculation' ? 'calculation' : 'generation';
@@ -153,11 +198,11 @@
           ? erro.message
           : erroComunicacao);
       exibirStatus(msg);
-      barra.classList.add('is-danger');
+      barra?.classList.add('is-danger');
     } finally {
       ocupado = false;
-      rodape.hidden = false;
-      fechar.focus();
+      if (rodape) rodape.hidden = false;
+      fechar?.focus();
     }
   };
 
@@ -192,7 +237,7 @@
     if (ocupado || popup.open || botao.disabled) return;
 
     const formulario = evento.target;
-    const endpoint = botao.getAttribute('formaction') || formulario.action;
+    const endpoint = botao.getAttribute('formaction') || formulario.action || '/rh/ponto/gerar';
     const textoOriginal = botao.textContent;
     botao.disabled = true;
     botao.textContent = 'Verificando…';
@@ -200,35 +245,26 @@
     try {
       const check = await postGeracao(formulario, endpoint, { phase: 'check', batch_offset: 0, batch_size: 1 });
       if (check?.type === 'exists_confirm' || check?.exists === true) {
-        const detalhe = document.getElementById('ponto-periodo-existe-detalhe');
-        if (detalhe) {
-          const n = Number(check.espelhos) || 0;
-          detalhe.textContent = n > 0
-            ? `Há ${n} cartão(ões) neste período.`
-            : 'O período já foi registrado no sistema.';
+        if (!abrirConfirmacaoExistente(check, formulario, endpoint)) {
+          throw new Error(mensagemErro(check, 'Já existe cartão gerado para este período.'));
         }
-        pendenteFormulario = formulario;
-        pendenteEndpoint = endpoint;
-        if (typeof confirmPopup?.showModal === 'function') {
-          confirmPopup.showModal();
-          return;
-        }
+        return;
       }
-      if (check?.type === 'error') {
-        throw new Error(check.message || erroComunicacao);
+      if (check?.type === 'error' || check?.ok === false) {
+        throw new Error(mensagemErro(check));
       }
       await executarGeracao(formulario, endpoint, false);
     } catch (erro) {
       ocupado = true;
       urlAtualizacao = null;
-      rodape.hidden = false;
-      barra.classList.remove('is-success');
-      barra.classList.add('is-danger');
+      if (rodape) rodape.hidden = false;
+      barra?.classList.remove('is-success');
+      barra?.classList.add('is-danger');
       exibirProgresso(0);
       exibirStatus(erro instanceof Error ? erro.message : erroComunicacao);
-      popup.showModal();
+      if (!popup.open) popup.showModal();
       ocupado = false;
-      fechar.focus();
+      fechar?.focus();
     } finally {
       botao.disabled = false;
       botao.textContent = textoOriginal;

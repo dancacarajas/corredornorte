@@ -293,6 +293,16 @@ final class Auth
         self::requireLogin();
         if (!self::can($permissao)) {
             http_response_code(403);
+            $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
+            if (str_contains($accept, 'application/json')) {
+                header('Content-Type: application/json; charset=UTF-8');
+                echo json_encode([
+                    'ok' => false,
+                    'type' => 'error',
+                    'message' => 'Seu perfil não tem permissão para esta ação (' . $permissao . ').',
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
             View::render('ui/forbidden', [
                 'pageTitle' => 'Acesso negado',
                 'pageSubtitle' => 'Seu perfil não tem permissão para esta área',

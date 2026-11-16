@@ -772,6 +772,9 @@ final class PontoController
     /** @param array<string,mixed> $payload */
     private function responderJson(array $payload): void
     {
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store, no-transform');
         echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);

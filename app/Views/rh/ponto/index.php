@@ -450,26 +450,24 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
     </div>
 </dialog>
 
-<?php if ($podeGerar): ?>
-    <dialog class="modal ponto-progresso" id="ponto-progresso" aria-labelledby="ponto-progresso-titulo">
-        <div class="modal-header">
-            <h2 class="card-title" id="ponto-progresso-titulo" tabindex="-1" autofocus>Geração de espelhos</h2>
+<dialog class="modal ponto-progresso" id="ponto-progresso" aria-labelledby="ponto-progresso-titulo">
+    <div class="modal-header">
+        <h2 class="card-title" id="ponto-progresso-titulo" tabindex="-1" autofocus>Geração de espelhos</h2>
+    </div>
+    <div class="modal-body section-stack">
+        <div class="ponto-progresso-resumo text-sm">
+            <span id="ponto-progresso-status" role="status"></span>
+            <strong id="ponto-progresso-porcentagem" aria-hidden="true">0%</strong>
         </div>
-        <div class="modal-body section-stack">
-            <div class="ponto-progresso-resumo text-sm">
-                <span id="ponto-progresso-status" role="status"></span>
-                <strong id="ponto-progresso-porcentagem" aria-hidden="true">0%</strong>
-            </div>
-            <div class="progress" role="progressbar" aria-labelledby="ponto-progresso-titulo" aria-valuenow="0">
-                <span></span>
-            </div>
+        <div class="progress" role="progressbar" aria-labelledby="ponto-progresso-titulo" aria-valuenow="0">
+            <span></span>
         </div>
-        <form method="dialog" class="modal-footer" hidden>
-            <button class="btn btn-primary btn-sm" type="submit">Fechar</button>
-        </form>
-    </dialog>
-    <script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-periodo-20261113" defer></script>
-<?php endif; ?>
+    </div>
+    <form method="dialog" class="modal-footer" hidden>
+        <button class="btn btn-primary btn-sm" type="submit">Fechar</button>
+    </form>
+</dialog>
+<script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-gerar-20261116" defer></script>
 
 <div class="modal-backdrop" id="pontoReabrirModal">
     <div class="modal">

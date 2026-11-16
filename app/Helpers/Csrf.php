@@ -65,7 +65,12 @@ final class Csrf
         $xhr = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? ''));
         if (str_contains($accept, 'application/json') || $xhr === 'xmlhttprequest') {
             header('Content-Type: application/json; charset=UTF-8');
-            echo json_encode(['ok' => false, 'error' => 'Sessão expirada ou token CSRF inválido. Recarregue a página.']);
+            echo json_encode([
+                'ok' => false,
+                'type' => 'error',
+                'error' => 'Sessão expirada ou token CSRF inválido. Recarregue a página.',
+                'message' => 'Sessão expirada ou token CSRF inválido. Recarregue a página.',
+            ]);
             exit;
         }
 
