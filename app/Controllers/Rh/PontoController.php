@@ -13,6 +13,7 @@ use App\Services\MedicaoService;
 use App\Services\MotorPontoService;
 use App\Services\PainelExcecoesService;
 use App\Services\PeriodoPonto;
+use App\Services\PerfilService;
 use PDO;
 use PDOException;
 use RuntimeException;
@@ -236,6 +237,15 @@ final class PontoController
                 . '</form>';
         }
 
+        $podeExcluirPeriodo = false;
+        if ($dbOk && $periodoGerado !== null) {
+            try {
+                (new PerfilService($pdo))->ensureCatalog();
+            } catch (Throwable) {
+            }
+            $podeExcluirPeriodo = Auth::can('ponto.excluir_periodo');
+        }
+
         View::render('rh/ponto/index', [
             'pageTitle' => 'Gestão de Ponto',
             'pageSubtitle' => date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', strtotime($dataFim)),
@@ -247,6 +257,7 @@ final class PontoController
             'resumo' => $resumo,
             'mesUnico' => true,
             'podeGerar' => $podeGerar,
+            'podeExcluirPeriodo' => $podeExcluirPeriodo,
             'rotuloGerar' => $rotuloGerar,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
@@ -260,6 +271,58 @@ final class PontoController
             'periodosGerados' => $periodosGerados,
             'atalhosPeriodo' => $this->atalhosPeriodo(),
         ]);
+    }
+
+    /** Exclui definitivamente o período gerado e todo o conteúdo associado. */
+    public function excluirPeriodo(): void
+    {
+        $pdo = Db::tryConnection();
+        if ($pdo instanceof PDO) {
+            try {
+                (new PerfilService($pdo))->ensureCatalog();
+            } catch (Throwable) {
+            }
+        }
+        Auth::requirePermission('ponto.excluir_periodo');
+
+        $periodo = $this->resolverPeriodo($_POST);
+        $dataInicio = $periodo['inicio'];
+        $dataFim = $periodo['fim'];
+        $redirectBase = '/rh/ponto?' . http_build_query([
+            'data_inicio' => $dataInicio,
+            'data_fim' => $dataFim,
+        ]);
+
+        if (!$pdo instanceof PDO) {
+            header('Location: ' . $redirectBase . '&erro=' . rawurlencode('Banco indisponível.'));
+            exit;
+        }
+
+        $confirm = trim((string) ($_POST['confirm_texto'] ?? ''));
+        $esperado = 'EXCLUIR';
+        if (mb_strtoupper($confirm) !== $esperado) {
+            header('Location: ' . $redirectBase . '&erro=' . rawurlencode(
+                'Para excluir o período, digite EXCLUIR na confirmação.'
+            ));
+            exit;
+        }
+
+        try {
+            $resumo = (new MotorPontoService($pdo))->excluirPeriodoDefinitivo($dataInicio, $dataFim);
+            $msg = sprintf(
+                'Período %s a %s excluído definitivamente (%d cartão(ões), %d PDF(s), %d RA, %d anexo(s)).',
+                date('d/m/Y', strtotime($dataInicio)),
+                date('d/m/Y', strtotime($dataFim)),
+                (int) $resumo['espelhos'],
+                (int) $resumo['documentos'],
+                (int) $resumo['ra'],
+                (int) $resumo['anexos']
+            );
+            header('Location: /rh/ponto?ok=' . rawurlencode($msg));
+        } catch (Throwable $e) {
+            header('Location: ' . $redirectBase . '&erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
     }
 
     public function acaoLote(): void

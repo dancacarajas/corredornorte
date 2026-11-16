@@ -214,6 +214,8 @@ if (!$isPublic) {
         $requireAny('perfis.gerenciar');
     } elseif (str_starts_with($normalizedPath, '/rh/folha')) {
         $httpMethod === 'POST' ? $requireAny('folha.enviar') : $requireAny('folha.ver', 'folha.enviar');
+    } elseif ($normalizedPath === '/rh/ponto/periodo/excluir') {
+        $requireAny('ponto.excluir_periodo');
     } elseif (str_starts_with($normalizedPath, '/rh/ponto')) {
         $httpMethod === 'POST' ? $requireAny('ponto.editar') : $requireAny('ponto.ver', 'ponto.editar');
     } elseif (str_starts_with($normalizedPath, '/rh/medicao')) {
@@ -353,6 +355,7 @@ $router->post('/rh/perfis/{id}', [$perfisCtrl, 'update']);
 $justTipos = \App\Controllers\Rh\JustificativaTipoController::class;
 $router->get('/rh/ponto', [$ponto, 'index']);
 $router->post('/rh/ponto/gerar', [$ponto, 'gerar']);
+$router->post('/rh/ponto/periodo/excluir', [$ponto, 'excluirPeriodo']);
 $router->post('/rh/ponto/lote-status', [$ponto, 'loteStatus']);
 $router->get('/rh/ponto/justificativa-tipos', [$justTipos, 'index']);
 $router->post('/rh/ponto/justificativa-tipos', [$justTipos, 'store']);

@@ -82,6 +82,197 @@ final class MotorPontoService
     }
 
     /**
+     * Apaga definitivamente o período e tudo que foi gerado nele (sem soft-delete).
+     *
+     * @return array{periodo_id:int,espelhos:int,documentos:int,ra:int,anexos:int}
+     */
+    public function excluirPeriodoDefinitivo(string $dataInicio, string $dataFim): array
+    {
+        $this->validarPeriodo($dataInicio, $dataFim);
+        $periodo = $this->buscarPeriodo($dataInicio, $dataFim);
+        if ($periodo === null) {
+            throw new RuntimeException('Período não encontrado.');
+        }
+        $periodoId = (int) $periodo['id'];
+
+        $espelhoIds = $this->db->query(
+            'SELECT id FROM ponto_espelhos WHERE periodo_id = ' . $periodoId
+        )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        $espelhoIds = array_values(array_map('intval', $espelhoIds));
+        $inEspelhos = $espelhoIds !== [] ? implode(',', $espelhoIds) : '0';
+
+        $arquivos = [];
+        $anexosCount = 0;
+
+        if ($espelhoIds !== [] && $this->tableExists('ponto_justificativas')) {
+            $justRows = $this->db->query(
+                "SELECT anexo_path FROM ponto_justificativas
+                 WHERE espelho_id IN ({$inEspelhos})
+                   AND anexo_path IS NOT NULL AND TRIM(anexo_path) <> ''"
+            )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            foreach ($justRows as $rel) {
+                $arquivos[] = (string) $rel;
+                $anexosCount++;
+            }
+        }
+
+        $docIds = [];
+        if ($espelhoIds !== [] && $this->tableExists('documentos')) {
+            $docIds = $this->db->query(
+                "SELECT DISTINCT id FROM documentos WHERE espelho_id IN ({$inEspelhos})"
+            )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            if ($this->tableExists('documentos_espelhos')) {
+                $extra = $this->db->query(
+                    "SELECT DISTINCT documento_id FROM documentos_espelhos WHERE espelho_id IN ({$inEspelhos})"
+                )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+                $docIds = array_values(array_unique(array_merge(
+                    array_map('intval', $docIds),
+                    array_map('intval', $extra)
+                )));
+            } else {
+                $docIds = array_values(array_map('intval', $docIds));
+            }
+        }
+        $inDocs = $docIds !== [] ? implode(',', $docIds) : '0';
+
+        if ($docIds !== []) {
+            $paths = $this->db->query(
+                "SELECT * FROM documentos WHERE id IN ({$inDocs})"
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($paths as $p) {
+                if (!empty($p['arquivo_path'])) {
+                    $arquivos[] = (string) $p['arquivo_path'];
+                }
+                if (!empty($p['arquivo_assinado_path'])) {
+                    $arquivos[] = (string) $p['arquivo_assinado_path'];
+                }
+            }
+            if ($this->tableExists('documentos_versoes')) {
+                $verPaths = $this->db->query(
+                    "SELECT arquivo_path FROM documentos_versoes WHERE documento_id IN ({$inDocs})"
+                )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+                foreach ($verPaths as $rel) {
+                    $arquivos[] = (string) $rel;
+                }
+            }
+        }
+
+        $raIds = [];
+        if ($this->tableExists('ra_relatorios')) {
+            $raIds = array_values(array_map(
+                'intval',
+                $this->db->query(
+                    'SELECT id FROM ra_relatorios WHERE periodo_id = ' . $periodoId
+                )->fetchAll(PDO::FETCH_COLUMN) ?: []
+            ));
+        }
+        $inRa = $raIds !== [] ? implode(',', $raIds) : '0';
+        if ($raIds !== [] && $this->tableExists('ra_documentos')) {
+            $raPaths = $this->db->query(
+                "SELECT * FROM ra_documentos WHERE relatorio_id IN ({$inRa})"
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($raPaths as $p) {
+                if (!empty($p['arquivo_path'])) {
+                    $arquivos[] = (string) $p['arquivo_path'];
+                }
+                if (!empty($p['arquivo_assinado_path'])) {
+                    $arquivos[] = (string) $p['arquivo_assinado_path'];
+                }
+            }
+        }
+
+        $this->db->beginTransaction();
+        try {
+            if ($this->tableExists('alerta_eventos')) {
+                if ($espelhoIds !== []) {
+                    $this->db->exec("DELETE FROM alerta_eventos WHERE espelho_id IN ({$inEspelhos})");
+                }
+                if ($docIds !== []) {
+                    $this->db->exec("DELETE FROM alerta_eventos WHERE documento_id IN ({$inDocs})");
+                }
+                $this->db->prepare(
+                    'DELETE FROM alerta_eventos WHERE periodo_inicio = :i AND periodo_fim = :f'
+                )->execute(['i' => $dataInicio, 'f' => $dataFim]);
+            }
+
+            if ($this->tableExists('cobranca_envios')) {
+                $this->db->exec('DELETE FROM cobranca_envios WHERE periodo_id = ' . $periodoId);
+                if ($docIds !== []) {
+                    $this->db->exec("DELETE FROM cobranca_envios WHERE documento_id IN ({$inDocs})");
+                }
+            }
+
+            if ($docIds !== []) {
+                // Quebra auto-referência antes do DELETE.
+                $this->db->exec("UPDATE documentos SET substituido_por_id = NULL WHERE id IN ({$inDocs})");
+                if ($this->tableExists('emails_envios')) {
+                    $this->db->exec("DELETE FROM emails_envios WHERE documento_id IN ({$inDocs})");
+                }
+                if ($this->tableExists('documentos_versoes')) {
+                    $this->db->exec("DELETE FROM documentos_versoes WHERE documento_id IN ({$inDocs})");
+                }
+                if ($this->tableExists('documentos_espelhos')) {
+                    $this->db->exec("DELETE FROM documentos_espelhos WHERE documento_id IN ({$inDocs})");
+                    if ($espelhoIds !== []) {
+                        $this->db->exec("DELETE FROM documentos_espelhos WHERE espelho_id IN ({$inEspelhos})");
+                    }
+                }
+                if ($this->tableExists('ponto_divergencias')) {
+                    $this->db->exec("UPDATE ponto_divergencias SET documento_id = NULL WHERE documento_id IN ({$inDocs})");
+                }
+                $this->db->exec("DELETE FROM documentos WHERE id IN ({$inDocs})");
+            }
+
+            if ($raIds !== []) {
+                if ($this->tableExists('ra_documentos')) {
+                    $this->db->exec("DELETE FROM ra_documentos WHERE relatorio_id IN ({$inRa})");
+                }
+                if ($this->tableExists('ra_dias')) {
+                    $this->db->exec("DELETE FROM ra_dias WHERE relatorio_id IN ({$inRa})");
+                }
+                $this->db->exec("DELETE FROM ra_relatorios WHERE id IN ({$inRa})");
+            } elseif ($this->tableExists('ra_relatorios')) {
+                $this->db->exec('DELETE FROM ra_relatorios WHERE periodo_id = ' . $periodoId);
+            }
+
+            if ($espelhoIds !== []) {
+                // CASCADE cobre dias, marcações, ocorrências, justificativas, ajustes, fechamentos, divergências.
+                $this->db->exec("DELETE FROM ponto_espelhos WHERE id IN ({$inEspelhos})");
+            }
+            $this->db->exec('DELETE FROM ponto_periodos WHERE id = ' . $periodoId);
+
+            $this->db->commit();
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
+
+        $root = dirname(__DIR__, 2);
+        foreach (array_unique($arquivos) as $rel) {
+            $rel = str_replace('\\', '/', (string) $rel);
+            if ($rel === '' || str_contains($rel, '..')) {
+                continue;
+            }
+            $abs = str_starts_with($rel, $root)
+                ? $rel
+                : $root . '/' . ltrim($rel, '/');
+            if (is_file($abs)) {
+                @unlink($abs);
+            }
+        }
+
+        return [
+            'periodo_id' => $periodoId,
+            'espelhos' => count($espelhoIds),
+            'documentos' => count($docIds),
+            'ra' => count($raIds),
+            'anexos' => $anexosCount,
+        ];
+    }
+
+    /**
      * Gera/atualiza espelho do colaborador no período exato.
      */
     public function gerarEspelho(

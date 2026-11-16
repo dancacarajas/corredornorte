@@ -33,6 +33,7 @@ final class PerfilService
 
             ['codigo' => 'ponto.ver', 'nome' => 'Ver gestão de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Consultar espelhos e batidas'],
             ['codigo' => 'ponto.editar', 'nome' => 'Editar gestão de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Gerar período, ajustar batidas e fechar'],
+            ['codigo' => 'ponto.excluir_periodo', 'nome' => 'Excluir período de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Apagar definitivamente um período gerado (cartões, PDFs, RA, anexos)'],
             ['codigo' => 'folha.ver', 'nome' => 'Ver folha de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Consultar folhas e PDFs'],
             ['codigo' => 'folha.enviar', 'nome' => 'Enviar / assinar folha', 'grupo' => 'Medição e ponto', 'descricao' => 'E-mail, link e lembretes de assinatura'],
             ['codigo' => 'medicao.ver', 'nome' => 'Ver medição', 'grupo' => 'Medição e ponto', 'descricao' => 'Painel da jornada de medição e dossiê'],

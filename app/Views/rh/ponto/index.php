@@ -1,6 +1,7 @@
 <?php
 
 use App\Helpers\View;
+use App\Helpers\Csrf;
 use App\Services\CalculoPontoService;
 
 /** @var bool $dbOk */
@@ -8,6 +9,7 @@ use App\Services\CalculoPontoService;
 /** @var array<string,int> $resumo */
 /** @var bool $mesUnico */
 /** @var bool $podeGerar */
+/** @var bool $podeExcluirPeriodo */
 /** @var string $rotuloGerar */
 /** @var string $dataInicio */
 /** @var string $dataFim */
@@ -20,6 +22,7 @@ use App\Services\CalculoPontoService;
 /** @var bool $periodoJaGerado */
 
 $podeGerar = $podeGerar ?? $mesUnico;
+$podeExcluirPeriodo = (bool) ($podeExcluirPeriodo ?? false);
 $rotuloGerar = $rotuloGerar ?? 'Gerar espelhos';
 $periodoInexistente = (bool) ($periodoInexistente ?? false);
 $periodoJaGerado = (bool) ($periodoJaGerado ?? false);
@@ -54,7 +57,11 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
 <?php endif; ?>
 
 <?php if (!empty($_GET['ok'])): ?>
-    <div class="alert alert-success">Espelhos gerados para o período.</div>
+    <div class="alert alert-success">
+        <?= ((string) $_GET['ok'] === '1')
+            ? 'Espelhos gerados para o período.'
+            : View::e((string) $_GET['ok']) ?>
+    </div>
 <?php endif; ?>
 <?php if (!empty($_GET['ok_lote'])): ?>
     <div class="alert alert-success">
@@ -91,8 +98,46 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
                 </a>
             <?php endforeach; ?>
         <?php endif; ?>
+        <?php if ($podeExcluirPeriodo && $periodoJaGerado): ?>
+            <button class="btn btn-danger-soft btn-sm" type="button" data-modal-open="excluirPeriodoModal">
+                Excluir período
+            </button>
+        <?php endif; ?>
     </div>
 </section>
+
+<?php if ($podeExcluirPeriodo && $periodoJaGerado): ?>
+<div class="modal-backdrop" id="excluirPeriodoModal">
+    <div class="modal" role="dialog" aria-labelledby="excluirPeriodoTitulo">
+        <form method="post" action="/rh/ponto/periodo/excluir">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+            <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+            <div class="modal-header">
+                <h3 class="card-title" id="excluirPeriodoTitulo">Excluir período definitivamente</h3>
+                <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    Esta ação apaga <strong>tudo</strong> gerado em
+                    <strong><?= View::e($rotuloPeriodo) ?></strong>:
+                    cartões de ponto, batidas, justificativas e anexos, PDFs/folha,
+                    e-mails, links de assinatura, RA e arquivos em disco.
+                    Não há recuperação.
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="confirmTextoExcluir">Digite <strong>EXCLUIR</strong> para confirmar</label>
+                    <input class="form-control" id="confirmTextoExcluir" name="confirm_texto" required autocomplete="off" placeholder="EXCLUIR">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button>
+                <button class="btn btn-danger" type="submit">Excluir período agora</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php if ($filtroEspecial === 'divergencia'): ?>
     <div class="alert alert-warning" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
