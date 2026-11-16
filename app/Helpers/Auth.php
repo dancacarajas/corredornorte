@@ -70,6 +70,21 @@ final class Auth
             'contrato_ids' => ($contratoIds === [] || $contratoIds === null) ? null : $contratoIds,
         ];
 
+        try {
+            $ip = (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
+            if (str_contains($ip, ',')) {
+                $ip = trim(explode(',', $ip)[0]);
+            }
+            $ua = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+            (new \App\Services\AtividadeService($pdo))->abrirSessao(
+                (int) $user['id'],
+                session_id(),
+                $ip !== '' ? $ip : null,
+                $ua !== '' ? $ua : null
+            );
+        } catch (Throwable) {
+        }
+
         return true;
     }
 
@@ -316,6 +331,15 @@ final class Auth
     public static function logout(): void
     {
         self::start();
+        try {
+            $uid = self::id();
+            $sid = session_id();
+            if ($uid !== null && $sid !== '') {
+                $pdo = Database::connection();
+                (new \App\Services\AtividadeService($pdo))->encerrarSessao($sid, 'logout');
+            }
+        } catch (Throwable) {
+        }
         $_SESSION = [];
         session_destroy();
     }

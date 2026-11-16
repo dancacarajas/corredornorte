@@ -86,6 +86,9 @@ if ($alertasBadge === 0 && \App\Helpers\Auth::check() && \App\Helpers\Auth::canA
 </div>
 <script src="<?= View::asset('js/app.js') ?>?v=nav-vr-20261114"></script>
 <script src="<?= View::asset('js/batch-runner.js') ?>?v=email-report-20261114"></script>
+<?php if (\App\Helpers\Auth::check()): ?>
+<script src="<?= View::asset('js/atividade-heartbeat.js') ?>?v=atividade-20261116"></script>
+<?php endif; ?>
 <?php foreach (($extraJs ?? []) as $jsFile): ?>
 <script src="<?= View::asset($jsFile) ?>"></script>
 <?php endforeach; ?>

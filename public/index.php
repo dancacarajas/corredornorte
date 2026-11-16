@@ -19,6 +19,7 @@ use App\Controllers\Rh\PerfilController;
 use App\Controllers\Rh\PontoController;
 use App\Controllers\Rh\RelatorioAtividadesController;
 use App\Controllers\Rh\UsuarioController;
+use App\Controllers\Rh\AtividadeController;
 use App\Controllers\CronController;
 use App\Controllers\Rh\MedicaoController;
 use App\Controllers\Rh\ValeRefeicaoController;
@@ -98,6 +99,7 @@ $calendario = CalendarioController::class;
 $escala = EscalaController::class;
 $emailConta = EmailContaController::class;
 $usuarios = UsuarioController::class;
+$atividade = AtividadeController::class;
 $perfisCtrl = PerfilController::class;
 $alertas = \App\Controllers\Rh\AlertaController::class;
 $alertasConfig = \App\Controllers\Rh\AlertaConfigController::class;
@@ -210,6 +212,10 @@ if (!$isPublic) {
         $requireAny('email.gerenciar');
     } elseif (str_starts_with($normalizedPath, '/rh/usuarios')) {
         $requireAny('usuarios.gerenciar');
+    } elseif ($normalizedPath === '/rh/atividade/heartbeat') {
+        // qualquer usuário autenticado — presença
+    } elseif (str_starts_with($normalizedPath, '/rh/atividade')) {
+        $requireAny('atividade.ver');
     } elseif (str_starts_with($normalizedPath, '/rh/perfis')) {
         $requireAny('perfis.gerenciar');
     } elseif (str_starts_with($normalizedPath, '/rh/folha')) {
@@ -344,6 +350,11 @@ $router->post('/rh/usuarios', [$usuarios, 'store']);
 $router->get('/rh/usuarios/{id}/editar', [$usuarios, 'editForm']);
 $router->post('/rh/usuarios/{id}', [$usuarios, 'update']);
 $router->post('/rh/usuarios/{id}/enviar-reset', [$usuarios, 'enviarReset']);
+
+$router->get('/rh/atividade', [$atividade, 'index']);
+$router->get('/rh/atividade/live.json', [$atividade, 'live']);
+$router->post('/rh/atividade/heartbeat', [$atividade, 'heartbeat']);
+$router->get('/rh/atividade/{id}', [$atividade, 'show']);
 
 $router->get('/rh/perfis', [$perfisCtrl, 'index']);
 $router->get('/rh/perfis/novo', [$perfisCtrl, 'createForm']);

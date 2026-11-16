@@ -28,7 +28,7 @@ $showRh = $can(
 $showOrg = $can('cadastros.ver', 'cadastros.editar');
 $showPonto = $can('ponto.ver', 'medicao.ver', 'ra.ver');
 $showVr = $can('vr.ver', 'vr.editar');
-$showSistema = $can('usuarios.gerenciar', 'perfis.gerenciar', 'email.gerenciar', 'importacoes.gerenciar', 'alertas.gerenciar');
+$showSistema = $can('usuarios.gerenciar', 'atividade.ver', 'perfis.gerenciar', 'email.gerenciar', 'importacoes.gerenciar', 'alertas.gerenciar');
 
 $chevron = <<<'SVG'
 <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
@@ -192,6 +192,15 @@ SVG;
                     <a class="nav-link<?= $isActive('usuarios') ?>" href="/rh/usuarios">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                         Usuários
+                    </a>
+                </li>
+                <?php endif; ?>
+                <?php if ($can('atividade.ver')): ?>
+                <li>
+                    <a class="nav-link<?= $isActive('atividade') ?>" href="/rh/atividade">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M5 12h2M17 12h2M12 5V3"/></svg>
+                        Atividade
+                        <span class="nav-badge" id="atividadeOnlineBadge" hidden>0</span>
                     </a>
                 </li>
                 <?php endif; ?>

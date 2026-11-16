@@ -46,6 +46,7 @@ final class PerfilService
             ['codigo' => 'email.gerenciar', 'nome' => 'Conta de e-mail', 'grupo' => 'Sistema', 'descricao' => 'Conectar SMTP/OAuth e templates'],
             ['codigo' => 'importacoes.gerenciar', 'nome' => 'Importações', 'grupo' => 'Sistema', 'descricao' => 'Importar planilha de efetivo'],
             ['codigo' => 'usuarios.gerenciar', 'nome' => 'Gerenciar usuários', 'grupo' => 'Sistema', 'descricao' => 'Criar e editar usuários'],
+            ['codigo' => 'atividade.ver', 'nome' => 'Atividade de usuários', 'grupo' => 'Sistema', 'descricao' => 'Ver online, histórico de login/logout e gráficos de uso'],
             ['codigo' => 'perfis.gerenciar', 'nome' => 'Gerenciar perfis', 'grupo' => 'Sistema', 'descricao' => 'Criar perfis e marcar permissões'],
         ];
     }

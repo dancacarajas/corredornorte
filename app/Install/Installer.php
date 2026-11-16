@@ -119,6 +119,9 @@ final class Installer
         $this->migrateContaUsuario($pdo);
         $messages[] = 'Migração: conta de usuário (perfil, avatar, reset)';
 
+        $this->migrateAtividadeUsuarios($pdo);
+        $messages[] = 'Migração: atividade de usuários (login/logout/online)';
+
         $this->migrateEscopoContratos($pdo);
         $messages[] = 'Migração: escopo de usuário por contrato';
 
@@ -742,6 +745,12 @@ final class Installer
                  WHERE pp.permissao_id = {$dashId}"
             );
         }
+    }
+
+    public function migrateAtividadeUsuarios(PDO $pdo): void
+    {
+        (new \App\Services\AtividadeService($pdo))->ensureSchema();
+        (new \App\Services\PerfilService($pdo))->ensureCatalog();
     }
 
     public function migrateContaUsuario(PDO $pdo): void
