@@ -1,37 +1,188 @@
 <?php use App\Helpers\View; ?>
 
+<style>
+  .ds-swatch-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:.75rem; }
+  .ds-swatch { border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; background:var(--surface); }
+  .ds-swatch-chip { height:64px; }
+  .ds-swatch-meta { padding:.65rem .75rem; }
+  .ds-swatch-meta strong { display:block; font-size:var(--text-sm); font-weight:700; letter-spacing:var(--tracking); }
+  .ds-swatch-meta span { display:block; font-size:var(--text-xs); color:var(--ink-muted); margin-top:.15rem; }
+  .ds-tint-row { display:flex; gap:.35rem; flex-wrap:wrap; margin-top:.55rem; }
+  .ds-tint { width:36px; height:36px; border-radius:8px; border:1px solid var(--border); }
+  .ds-type-row { display:grid; gap:.85rem; }
+  .ds-type-row > div { padding:.75rem 0; border-bottom:1px solid var(--border); }
+  .ds-type-row > div:last-child { border-bottom:0; }
+  .ds-rules { margin:0; padding-left:1.1rem; color:var(--ink-muted); font-size:var(--text-sm); line-height:1.55; }
+  .ds-rules li + li { margin-top:.35rem; }
+</style>
+
 <div class="alert alert-brand">
-    Design System Arcadis — tokens da logo, shell ERP e componentes base prontos para o módulo RH.
+    Design System Arcadis 2026 — Visual Identity (§3.1–3.3) aplicada à intranet RH. Tipografia Arial; FS Elliot reservada a marketing.
 </div>
 
-<section class="kpi-grid">
-    <article class="card kpi-card">
-        <div class="kpi-label">Primária</div>
-        <div class="kpi-value" style="color:var(--brand-primary)">#E06008</div>
-        <div class="kpi-meta up">Brand primary</div>
-    </article>
-    <article class="card kpi-card">
-        <div class="kpi-label">Soft</div>
-        <div class="kpi-value">#FFF1E6</div>
-        <div class="kpi-meta neutral">Fundos ativos</div>
-    </article>
-    <article class="card kpi-card">
-        <div class="kpi-label">Ink</div>
-        <div class="kpi-value">#111111</div>
-        <div class="kpi-meta neutral">Texto / wordmark</div>
-    </article>
-    <article class="card kpi-card">
-        <div class="kpi-label">Canvas</div>
-        <div class="kpi-value">#F3F4F6</div>
-        <div class="kpi-meta neutral">Fundo app</div>
-    </article>
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Regras de uso</h2>
+            <p class="card-subtitle">Lead with primary · Orange as accent · Arial only</p>
+        </div>
+    </div>
+    <div class="card-body">
+        <ul class="ds-rules">
+            <li><strong>Dominant:</strong> Wisdom White / Confidence Black (fundo e texto).</li>
+            <li><strong>Support:</strong> neutros oficiais + Integrity (estrutura, links, info).</li>
+            <li><strong>Accent:</strong> Heritage Orange para CTA e foco — não precisa dominar a tela.</li>
+            <li><strong>Secundárias:</strong> Collaboration / Customer Success / Sustainability / Integrity só para status e categoria.</li>
+            <li><strong>Tipo:</strong> Arial Regular/Bold/Italic; sem tracking; sem Arial Black.</li>
+            <li><strong>Logo:</strong> full color em fundo claro; mono branco em Heritage/escuro; clear space e mínimo 102px.</li>
+        </ul>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Cores primárias</h2>
+            <p class="card-subtitle">Heritage · Confidence · Wisdom (+ tintas oficiais)</p>
+        </div>
+    </div>
+    <div class="card-body ds-swatch-grid">
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-heritage)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Heritage</strong>
+                <span>#E4610F · PMS 152C</span>
+                <div class="ds-tint-row">
+                    <span class="ds-tint" style="background:var(--brand-heritage-t1)" title="#EB894B"></span>
+                    <span class="ds-tint" style="background:var(--brand-heritage-t2)" title="#F2B087"></span>
+                    <span class="ds-tint" style="background:var(--brand-heritage-t3)" title="#F8D8C3"></span>
+                    <span class="ds-tint" style="background:var(--brand-heritage-t4)" title="#FFEDE6"></span>
+                </div>
+            </div>
+        </article>
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-confidence)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Confidence</strong>
+                <span>#1D1D1D · Black C</span>
+            </div>
+        </article>
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-wisdom); border-bottom:1px solid var(--border)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Wisdom</strong>
+                <span>#FFFFFF · White C</span>
+            </div>
+        </article>
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--canvas)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Canvas / Neutros</strong>
+                <span>#F3F2F1 · #E7E6E6 · #C2C1C1 · #868484 · #494646</span>
+            </div>
+        </article>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Cores secundárias</h2>
+            <p class="card-subtitle">Suporte e status — nunca como primária da tela</p>
+        </div>
+    </div>
+    <div class="card-body ds-swatch-grid">
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-collaboration)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Collaboration</strong>
+                <span>#9C266E · PMS 7648C</span>
+                <div class="ds-tint-row">
+                    <span class="ds-tint" style="background:var(--brand-collaboration-t1)"></span>
+                    <span class="ds-tint" style="background:var(--brand-collaboration-t2)"></span>
+                    <span class="ds-tint" style="background:var(--brand-collaboration-t3)"></span>
+                    <span class="ds-tint" style="background:var(--brand-collaboration-t4)"></span>
+                </div>
+            </div>
+        </article>
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-customer-success)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Customer Success</strong>
+                <span>#F1B434 · PMS 143C</span>
+                <div class="ds-tint-row">
+                    <span class="ds-tint" style="background:var(--brand-customer-success-t1)"></span>
+                    <span class="ds-tint" style="background:var(--brand-customer-success-t2)"></span>
+                    <span class="ds-tint" style="background:var(--brand-customer-success-t3)"></span>
+                    <span class="ds-tint" style="background:var(--brand-customer-success-t4)"></span>
+                </div>
+            </div>
+        </article>
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-sustainability)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Sustainability</strong>
+                <span>#007377 · PMS 322C</span>
+                <div class="ds-tint-row">
+                    <span class="ds-tint" style="background:var(--brand-sustainability-t1)"></span>
+                    <span class="ds-tint" style="background:var(--brand-sustainability-t2)"></span>
+                    <span class="ds-tint" style="background:var(--brand-sustainability-t3)"></span>
+                    <span class="ds-tint" style="background:var(--brand-sustainability-t4)"></span>
+                </div>
+            </div>
+        </article>
+        <article class="ds-swatch">
+            <div class="ds-swatch-chip" style="background:var(--brand-integrity)"></div>
+            <div class="ds-swatch-meta">
+                <strong>Integrity</strong>
+                <span>#326295 · PMS 653C</span>
+                <div class="ds-tint-row">
+                    <span class="ds-tint" style="background:var(--brand-integrity-t1)"></span>
+                    <span class="ds-tint" style="background:var(--brand-integrity-t2)"></span>
+                    <span class="ds-tint" style="background:var(--brand-integrity-t3)"></span>
+                    <span class="ds-tint" style="background:var(--brand-integrity-t4)"></span>
+                </div>
+            </div>
+        </article>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Tipografia Arial</h2>
+            <p class="card-subtitle">Hierarquia do Brand Guidelines §3.3 (intranet)</p>
+        </div>
+    </div>
+    <div class="card-body ds-type-row">
+        <div>
+            <div class="text-h1">Heading 1 — 19px Bold</div>
+            <div class="text-xs muted">.text-h1 · var(--text-h1)</div>
+        </div>
+        <div>
+            <div class="text-h2">Heading 2 — 16px Bold</div>
+            <div class="text-xs muted">.text-h2 · var(--text-h2)</div>
+        </div>
+        <div>
+            <div class="text-h3">Heading 3 — 14px Bold</div>
+            <div class="text-xs muted">.text-h3 · var(--text-h3)</div>
+        </div>
+        <div>
+            <div class="text-h4">Heading 4 — 12px Bold</div>
+            <div class="text-xs muted">.text-h4 · var(--text-h4)</div>
+        </div>
+        <div>
+            <div class="text-body">Body copy — texto de interface em Confidence Black, alinhado à esquerda, sem tracking.</div>
+            <div class="text-xs muted">.text-body · var(--text-body)</div>
+        </div>
+    </div>
 </section>
 
 <section class="card">
     <div class="card-header">
         <div>
             <h2 class="card-title">Botões e ações</h2>
-            <p class="card-subtitle">Primário laranja Arcadis como CTA padrão</p>
+            <p class="card-subtitle">Heritage como accent de CTA</p>
         </div>
     </div>
     <div class="card-body" style="display:flex;gap:.75rem;flex-wrap:wrap;">
@@ -48,7 +199,7 @@
     <div class="card-header">
         <div>
             <h2 class="card-title">Formulários</h2>
-            <p class="card-subtitle">Campos com foco na cor da marca</p>
+            <p class="card-subtitle">Foco com ring Heritage oficial</p>
         </div>
     </div>
     <div class="card-body form-grid cols-3">
@@ -76,17 +227,18 @@
 <section class="card">
     <div class="card-header">
         <div>
-            <h2 class="card-title">Status e prioridades</h2>
-            <p class="card-subtitle">Pills para ponto, envio e assinatura</p>
+            <h2 class="card-title">Status semânticos</h2>
+            <p class="card-subtitle">Mapeados às secundárias Arcadis</p>
         </div>
     </div>
     <div class="card-body" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-        <span class="pill pill-success">Enviado</span>
-        <span class="pill pill-warning">Aguardando</span>
-        <span class="pill pill-danger">Falha</span>
-        <span class="pill pill-info">Em tratamento</span>
-        <span class="pill pill-brand">Fechado</span>
-        <span class="pill pill-neutral">Em aberto</span>
+        <span class="pill pill-success">Sustainability / sucesso</span>
+        <span class="pill pill-warning">Customer Success / alerta</span>
+        <span class="pill pill-info">Integrity / info</span>
+        <span class="pill pill-collaboration">Collaboration</span>
+        <span class="pill pill-brand">Heritage</span>
+        <span class="pill pill-danger">Perigo</span>
+        <span class="pill pill-neutral">Neutro</span>
         <span class="tag tag-high">Alta</span>
         <span class="tag tag-medium">Média</span>
         <span class="tag tag-low">Baixa</span>
@@ -96,8 +248,24 @@
 <section class="card">
     <div class="card-header">
         <div>
-            <h2 class="card-title">Tabela de efetivo (amostra)</h2>
-            <p class="card-subtitle">Padrão visual para listagens do RH</p>
+            <h2 class="card-title">Alertas</h2>
+            <p class="card-subtitle">Fundos soft oficiais</p>
+        </div>
+    </div>
+    <div class="card-body section-stack">
+        <div class="alert alert-brand">Brand — ação ou destaque Heritage</div>
+        <div class="alert alert-success">Sucesso — Sustainability</div>
+        <div class="alert alert-warning">Atenção — Customer Success</div>
+        <div class="alert alert-info">Informação — Integrity</div>
+        <div class="alert alert-danger">Erro / bloqueio</div>
+    </div>
+</section>
+
+<section class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Tabela (amostra)</h2>
+            <p class="card-subtitle">Listagens RH com pills semânticas</p>
         </div>
         <button class="btn btn-secondary btn-sm" type="button">Exportar</button>
     </div>

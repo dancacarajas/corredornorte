@@ -17,7 +17,7 @@ final class UsuarioController
 {
     public function index(): void
     {
-        Auth::requirePermission('usuarios.gerenciar');
+        Auth::requirePermission('usuarios.ver');
         $pdo = Db::tryConnection();
         $usuarios = [];
         $dbOk = $pdo instanceof PDO;
@@ -26,10 +26,13 @@ final class UsuarioController
             $usuarios = (new UsuarioService($pdo))->listar($_GET['q'] ?? null);
         }
 
+        $podeCriar = Auth::canAny('usuarios.criar', 'usuarios.operar', 'usuarios.gerenciar');
         ob_start();
-        ?>
+        if ($podeCriar) {
+            ?>
         <a class="btn btn-primary btn-sm" href="/rh/usuarios/novo">Novo usuário</a>
-        <?php
+            <?php
+        }
         $topbarActions = ob_get_clean() ?: '';
 
         View::render('rh/usuarios/index', [
@@ -42,18 +45,21 @@ final class UsuarioController
             'busca' => (string) ($_GET['q'] ?? ''),
             'flashOk' => $_GET['ok'] ?? null,
             'flashErro' => $_GET['erro'] ?? null,
+            'podeCriar' => $podeCriar,
+            'podeEditar' => Auth::canAny('usuarios.editar', 'usuarios.operar', 'usuarios.gerenciar'),
+            'podeExcluir' => Auth::canAny('usuarios.excluir', 'usuarios.gerenciar'),
         ]);
     }
 
     public function createForm(): void
     {
-        Auth::requirePermission('usuarios.gerenciar');
+        Auth::requirePermission('usuarios.criar');
         $this->form(null);
     }
 
     public function editForm(string $id = ''): void
     {
-        Auth::requirePermission('usuarios.gerenciar');
+        Auth::requirePermission('usuarios.editar');
         $pdo = Db::tryConnection();
         $usuario = null;
         if ($pdo instanceof PDO) {
@@ -97,19 +103,37 @@ final class UsuarioController
 
     public function store(): void
     {
-        Auth::requirePermission('usuarios.gerenciar');
+        Auth::requirePermission('usuarios.criar');
         $this->save(null);
     }
 
     public function update(string $id = ''): void
     {
-        Auth::requirePermission('usuarios.gerenciar');
+        Auth::requirePermission('usuarios.editar');
         $this->save((int) $id);
+    }
+
+    public function excluir(string $id = ''): void
+    {
+        Auth::requirePermission('usuarios.excluir');
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            header('Location: /rh/usuarios?erro=' . rawurlencode('MySQL indisponível'));
+            exit;
+        }
+        try {
+            (new ContaService($pdo))->ensureSchema();
+            (new UsuarioService($pdo))->excluir((int) $id, Auth::id());
+            header('Location: /rh/usuarios?ok=excluido');
+        } catch (Throwable $e) {
+            header('Location: /rh/usuarios?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
     }
 
     public function enviarReset(string $id = ''): void
     {
-        Auth::requirePermission('usuarios.gerenciar');
+        Auth::requirePermission('usuarios.operar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
             header('Location: /rh/usuarios?erro=' . rawurlencode('MySQL indisponível'));

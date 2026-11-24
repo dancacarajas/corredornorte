@@ -20,7 +20,7 @@ final class AlertaConfigController
 {
     public function index(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.ver');
         $pdo = Db::tryConnection();
         $aba = (string) ($_GET['aba'] ?? 'tipos');
         if (!in_array($aba, ['tipos', 'destinos', 'geral', 'operacao'], true)) {
@@ -116,7 +116,7 @@ final class AlertaConfigController
 
     public function salvarTipos(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -130,7 +130,7 @@ final class AlertaConfigController
 
     public function salvarDestinos(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -157,7 +157,7 @@ final class AlertaConfigController
 
     public function salvarGeral(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -174,7 +174,7 @@ final class AlertaConfigController
 
     public function testarDigest(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.operar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -212,7 +212,7 @@ final class AlertaConfigController
 
     public function executarCobranca(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.operar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -248,7 +248,7 @@ final class AlertaConfigController
 
     public function adminResolver(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         $ids = $this->idsFromPost();
@@ -264,7 +264,7 @@ final class AlertaConfigController
 
     public function adminReatribuir(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         $ids = $this->idsFromPost();
@@ -285,7 +285,7 @@ final class AlertaConfigController
 
     public function adminDispensar(): void
     {
-        Auth::requirePermission('alertas.gerenciar');
+        Auth::requirePermission('alertas_config.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         $ids = $this->idsFromPost();

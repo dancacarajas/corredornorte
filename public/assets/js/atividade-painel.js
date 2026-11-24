@@ -14,10 +14,17 @@
 
   const fmtQuando = (dt) => {
     if (!dt) return '—';
-    const d = new Date(String(dt).replace(' ', 'T'));
+    if (window.AppClock?.formatDateTime) {
+      return window.AppClock.formatDateTime(dt);
+    }
+    const raw = String(dt).trim().replace(' ', 'T');
+    const d = new Date(/[zZ]|[+\-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}-03:00`);
     if (Number.isNaN(d.getTime())) return '—';
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }).format(d);
   };
 
   const inicial = (nome) => {
@@ -30,6 +37,20 @@
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+
+  const avatarHtml = (row, idKey, nome, extraClass = '') => {
+    const url = String(row?.avatar_url || '').trim()
+      || (() => {
+        const p = String(row?.avatar_path || '').trim();
+        const uid = Number(row?.[idKey]) || 0;
+        return p && uid > 0 ? `/conta/avatar?id=${uid}` : '';
+      })();
+    const cls = `atividade-avatar ${extraClass} ${url ? 'has-photo' : ''}`.trim();
+    if (url) {
+      return `<span class="${cls}" aria-hidden="true"><img src="${esc(url)}" alt=""></span>`;
+    }
+    return `<span class="${cls}" aria-hidden="true">${esc(inicial(nome))}</span>`;
+  };
 
   const renderOnline = (lista) => {
     if (!onlineGrid || !onlineEmpty) return;
@@ -44,7 +65,7 @@
     onlineGrid.hidden = false;
     onlineGrid.innerHTML = items.map((o) => `
       <a class="atividade-online-card" href="/rh/atividade/${Number(o.usuario_id) || 0}">
-        <span class="atividade-avatar" aria-hidden="true">${esc(inicial(o.nome))}</span>
+        ${avatarHtml(o, 'usuario_id', o.nome)}
         <span>
           <strong>${esc(o.nome)}</strong>
           <small>desde ${esc(fmtQuando(o.logged_in_at))}</small>
@@ -63,7 +84,7 @@
         <tr data-user-id="${Number(u.id) || 0}">
           <td>
             <div class="atividade-user-cell">
-              <span class="atividade-avatar ${online ? 'is-online' : ''}">${esc(inicial(u.nome))}</span>
+              ${avatarHtml(u, 'id', u.nome, online ? 'is-online' : '')}
               <span>
                 <strong>${esc(u.nome)}</strong>
                 <small class="muted">${esc(u.email)}</small>
@@ -112,9 +133,10 @@
       if (kpiHoje) kpiHoje.textContent = String(data.resumo?.sessoes_hoje ?? 0);
       if (kpiAtivos) kpiAtivos.textContent = String(data.resumo?.usuarios_ativos_7d ?? 0);
       if (kpiLive) {
-        const agora = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
-        kpiLive.textContent = `${pad(agora.getHours())}:${pad(agora.getMinutes())}:${pad(agora.getSeconds())}`;
+        kpiLive.textContent = window.AppClock?.nowTime(true)
+          || new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit',
+          }).format(new Date());
       }
       renderOnline(data.online);
       renderUsers(data.usuarios);

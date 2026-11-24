@@ -414,9 +414,22 @@ final class FolhaController
                 throw new RuntimeException('Sistema indisponível. Tente novamente em instantes.');
             }
             $hashVisualizado = is_string($_POST['hash_sha256'] ?? null) ? $_POST['hash_sha256'] : '';
-            (new AssinaturaEletronicaService($pdo))->assinarNoPortal($token, $nome, ($_POST['aceite'] ?? '') === '1', $hashVisualizado);
-            $mensagem['ok'] = 'assinado';
+            $assinatura = new AssinaturaEletronicaService($pdo);
+            try {
+                $assinatura->assinarNoPortal($token, $nome, ($_POST['aceite'] ?? '') === '1', $hashVisualizado);
+                $mensagem['ok'] = 'assinado';
+            } catch (Throwable $e) {
+                // Assinatura pode ter sido gravada e ainda assim estourar pós-processamento.
+                $doc = $assinatura->buscarPorPortalToken($token);
+                if (is_array($doc) && ($doc['status'] ?? '') === 'assinado') {
+                    $mensagem['ok'] = 'assinado';
+                    error_log('Arcadis RH: assinatura ok com exceção residual. ' . $e->getMessage());
+                } else {
+                    throw $e;
+                }
+            }
         } catch (Throwable $e) {
+            error_log('Arcadis RH: falha portalAssinar. ' . $e->getMessage());
             $mensagem['erro'] = $e instanceof RuntimeException && !$e instanceof PDOException
                 ? $e->getMessage() : 'Não foi possível concluir a operação. Tente novamente ou fale com o RH.';
             $mensagem['nome'] = $nome;
@@ -496,23 +509,27 @@ final class FolhaController
             echo 'Peça ao RH para atualizar esta folha antes de assinar.';
             return;
         }
-        if (($doc['status'] ?? '') === 'assinado' && empty($doc['arquivo_assinado_path'])) {
-            http_response_code(409);
-            echo 'PDF assinado indisponível';
-            return;
+        $assinatura = new AssinaturaEletronicaService($pdo);
+        $assinado = (($doc['status'] ?? '') === 'assinado');
+        if ($assinado) {
+            try {
+                $path = $assinatura->garantirPdfAssinado($doc);
+            } catch (Throwable) {
+                http_response_code(409);
+                echo 'PDF assinado indisponível';
+                return;
+            }
+            $expectedHash = (string) ($doc['arquivo_assinado_sha256'] ?? '');
+        } else {
+            $rel = (string) $doc['arquivo_path'];
+            $path = dirname(__DIR__, 3) . '/' . ltrim($rel, '/');
+            if (!is_file($path)) {
+                http_response_code(404);
+                echo 'Arquivo ausente';
+                return;
+            }
+            $expectedHash = (string) ($doc['hash_sha256'] ?? '');
         }
-        $rel = (($doc['status'] ?? '') === 'assinado')
-            ? (string) $doc['arquivo_assinado_path']
-            : (string) $doc['arquivo_path'];
-        $path = dirname(__DIR__, 3) . '/' . ltrim($rel, '/');
-        if (!is_file($path)) {
-            http_response_code(404);
-            echo 'Arquivo ausente';
-            return;
-        }
-        $expectedHash = (($doc['status'] ?? '') === 'assinado')
-            ? (string) ($doc['arquivo_assinado_sha256'] ?? '')
-            : (string) ($doc['hash_sha256'] ?? '');
         if (array_key_exists('versao', $_GET) && (!is_string($_GET['versao']) || !hash_equals($expectedHash, $_GET['versao']))) {
             http_response_code(409);
             echo 'A via da folha mudou. Atualize a página para conferir o PDF atual.';
@@ -523,7 +540,6 @@ final class FolhaController
             echo 'Integridade do PDF comprometida';
             return;
         }
-        $assinado = (($doc['status'] ?? '') === 'assinado');
         $name = $assinado
             ? 'cartao_ponto_assinado_' . (int) $doc['id'] . '.pdf'
             : 'folha_' . (int) $doc['id'] . '.pdf';
@@ -600,9 +616,20 @@ final class FolhaController
             return;
         }
         $versaoAssinada = ($_GET['versao'] ?? '') === 'assinada';
-        $rel = $versaoAssinada ? (string) ($doc['arquivo_assinado_path'] ?? '') : (string) $doc['arquivo_path'];
         $storageRoot = realpath(dirname(__DIR__, 3) . '/storage');
-        $path = $rel !== '' ? realpath(dirname(__DIR__, 3) . '/' . ltrim($rel, '/')) : false;
+        if ($versaoAssinada) {
+            try {
+                $pathAbs = (new AssinaturaEletronicaService($pdo))->garantirPdfAssinado($doc);
+            } catch (Throwable) {
+                http_response_code(404);
+                echo 'Arquivo ausente';
+                return;
+            }
+            $path = realpath($pathAbs);
+        } else {
+            $rel = (string) $doc['arquivo_path'];
+            $path = $rel !== '' ? realpath(dirname(__DIR__, 3) . '/' . ltrim($rel, '/')) : false;
+        }
         if ($storageRoot === false || $path === false || !str_starts_with($path, $storageRoot . DIRECTORY_SEPARATOR) || !is_file($path)) {
             http_response_code(404);
             echo 'Arquivo ausente';

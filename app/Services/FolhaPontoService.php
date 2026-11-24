@@ -506,21 +506,22 @@ final class FolhaPontoService
                     pp.data_inicio AS periodo_inicio, pp.data_fim AS periodo_fim,
                     YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes,
                     l.codigo AS lotacao_codigo,
-                    ct.codigo AS contrato_codigo, cc.codigo AS cc_codigo, os.codigo AS os_codigo,
+                    ct.codigo AS contrato_codigo, ct.nome AS contrato_nome,
+                    cc.codigo AS cc_codigo, os.codigo AS os_codigo,
                     loc.municipio, loc.uf,
-                    esc.tipo AS escala_tipo, esc.codigo AS escala_codigo,
-                    j.entrada AS jornada_entrada, j.intervalo_inicio AS jornada_intervalo_inicio,
-                    j.intervalo_fim AS jornada_intervalo_fim, j.saida AS jornada_saida
+                    h.tipo AS escala_tipo, h.codigo AS escala_codigo,
+                    h.nome AS jornada_descricao,
+                    NULL AS jornada_entrada, NULL AS jornada_intervalo_inicio,
+                    NULL AS jornada_intervalo_fim, NULL AS jornada_saida
              FROM ponto_espelhos e
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
              INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              LEFT JOIN rh_lotacoes l ON l.id = e.lotacao_id
-             LEFT JOIN rh_escalas esc ON esc.id = l.escala_id
+             LEFT JOIN rh_horarios h ON h.id = l.horario_id
              LEFT JOIN rh_contratos ct ON ct.id = l.contrato_id
              LEFT JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
              LEFT JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
              LEFT JOIN rh_localidades loc ON loc.id = l.localidade_id
-             LEFT JOIN rh_jornadas j ON j.id = l.jornada_id
              WHERE e.id = :id' . ($bloquear ? ' FOR UPDATE' : '')
         );
         $stmt->execute(['id' => $espelhoId]);
@@ -584,7 +585,9 @@ final class FolhaPontoService
     {
         $e = $dados['espelho'];
         $diasSemana = [1 => 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM'];
-        $atestados = $this->carregarAtestados(array_map(static fn(array $dia): int => (int) $dia['id'], $dados['dias']));
+        $idsDias = array_map(static fn(array $dia): int => (int) $dia['id'], $dados['dias']);
+        $atestados = $this->carregarAtestados($idsDias);
+        $feriados = $this->feriadosParaImpressao($idsDias);
         $jornadas = [];
         $diasOut = [];
         $totais = array_fill_keys(['norm', 'trab', 'adn', 'prev', 'dias_falta', 'falta', 'atraso', 'he', 'desconto', 'atestado'], 0);
@@ -621,8 +624,11 @@ final class FolhaPontoService
             $noturno = (int) ($dia['adn_min'] ?? 0);
             $atestadoMin = $atestados[$mid]['minutos'] ?? null;
             $diasOut[] = [
+                'data' => (string) $dia['data'],
                 'data_fmt' => date('d/m', $ts) . ' ' . $diasSemana[$diaSemana],
                 'tipo_dia' => $dia['tipo_dia'],
+                'ocorrencia_resumo' => (string) ($dia['ocorrencia_resumo'] ?? ''),
+                'feriado_nome' => $feriados[$mid] ?? self::FERIADOS_NACIONAIS_MODELO[$dia['data']] ?? '',
                 'ent1' => $dia['ent1'] ?? null,
                 'sai1' => $dia['sai1'] ?? null,
                 'ent2' => $dia['ent2'] ?? null,
@@ -681,19 +687,24 @@ final class FolhaPontoService
             'codigo' => $codigo,
             'emitido' => date('d/m/Y H:i'),
             'periodo' => str_replace(' a ', ' A ', PeriodoPonto::rotulo($dados['periodo'])),
+            'periodo_inicio' => $dados['periodo']['data_inicio'],
+            'periodo_fim' => $dados['periodo']['data_fim'],
             'espelho' => [
                 'empresa' => 'ARCADIS',
                 'nome' => $e['nome'],
                 'matricula' => $e['matricula'],
                 'cpf' => $e['cpf'] ?? '',
                 'cargo' => $e['cargo'] ?: ($e['funcao'] ?? ''),
+                'funcao' => $e['funcao'] ?? '',
                 'contrato_codigo' => $e['contrato_codigo'] ?? '',
+                'contrato_nome' => $e['contrato_nome'] ?? '',
                 'cc_codigo' => $e['cc_codigo'] ?? '',
                 'os_codigo' => $e['os_codigo'] ?? '',
                 'municipio' => $e['municipio'] ?? '',
                 'uf' => $e['uf'] ?? '',
                 'escala_tipo' => $escalaTipo,
                 'escala_codigo' => $e['escala_codigo'] ?? '',
+                'jornada_descricao' => $e['jornada_descricao'] ?? '',
                 'jornada' => [
                     'entrada' => $e['jornada_entrada'] ?? null,
                     'intervalo_inicio' => $e['jornada_intervalo_inicio'] ?? null,
@@ -728,6 +739,63 @@ final class FolhaPontoService
         ];
         $chave = implode('|', $horario);
         $jornadas[$diaSemana][$chave] = ['tipo' => 'trabalho'] + $horario;
+    }
+
+    // Datas nacionais da aba Feriados do modelo 2026, somente para a legenda impressa.
+    private const FERIADOS_NACIONAIS_MODELO = [
+        '2026-01-01' => 'Confraternização Universal',
+        '2026-04-03' => 'Paixão de Cristo',
+        '2026-04-21' => 'Tiradentes',
+        '2026-05-01' => 'Dia Mundial do Trabalho',
+        '2026-09-07' => 'Independência do Brasil',
+        '2026-10-12' => 'Nossa Senhora Aparecida',
+        '2026-11-02' => 'Finados',
+        '2026-11-15' => 'Proclamação da República',
+        '2026-11-20' => 'Dia Nacional de Zumbi e da Consciência Negra',
+        '2026-12-25' => 'Natal',
+    ];
+
+    /** @param list<int> $idsDias @return array<int,string> */
+    private function feriadosParaImpressao(array $idsDias): array
+    {
+        if ($idsDias === []) {
+            return [];
+        }
+        // Mesmos escopos e prioridade de LotacaoResolver::calendarioComposto, em lote.
+        $params = implode(',', array_fill(0, count($idsDias), '?'));
+        $stmt = $this->db->prepare(
+            "SELECT d.id, f.nome FROM ponto_dias d
+             JOIN ponto_espelhos e ON e.id = d.espelho_id
+             LEFT JOIN rh_lotacoes l ON l.id = COALESCE((
+                 SELECT cl.lotacao_id FROM rh_colaborador_lotacoes cl
+                 WHERE cl.colaborador_id = e.colaborador_id AND cl.vigencia_inicio <= d.data
+                   AND (cl.vigencia_fim IS NULL OR cl.vigencia_fim >= d.data)
+                 ORDER BY cl.vigencia_inicio DESC, cl.id DESC LIMIT 1
+             ), e.lotacao_id)
+             LEFT JOIN rh_localidades loc ON loc.id = l.localidade_id
+             JOIN rh_feriados f ON f.tipo = 'feriado' AND (
+                 (f.recorrente_ano = 0 AND f.data = d.data) OR
+                 (f.recorrente_ano = 1 AND MONTH(f.data) = MONTH(d.data) AND DAY(f.data) = DAY(d.data))
+             )
+             JOIN rh_calendarios cal ON cal.id = f.calendario_id AND cal.status = 'ativo'
+             WHERE d.id IN ($params) AND (
+                 cal.escopo = 'nacional'
+                 OR (cal.escopo = 'estadual' AND cal.uf = loc.uf)
+                 OR (cal.escopo = 'municipal' AND cal.localidade_id = l.localidade_id)
+                 OR (cal.escopo = 'contrato' AND (cal.contrato_id = l.contrato_id OR cal.id = COALESCE((
+                     SELECT ex.calendario_id FROM rh_colaborador_excecoes ex
+                     WHERE ex.colaborador_id = e.colaborador_id AND d.data BETWEEN ex.vigencia_inicio AND ex.vigencia_fim
+                     ORDER BY ex.vigencia_inicio DESC, ex.id DESC LIMIT 1
+                 ), l.calendario_id)))
+             )
+             ORDER BY d.id, FIELD(cal.escopo, 'nacional','estadual','municipal','contrato'), f.nome"
+        );
+        $stmt->execute($idsDias);
+        $nomes = [];
+        foreach ($stmt as $row) {
+            $nomes[(int) $row['id']] ??= (string) $row['nome'];
+        }
+        return $nomes;
     }
 
     /** @return array<int, array{minutos: ?int}> */

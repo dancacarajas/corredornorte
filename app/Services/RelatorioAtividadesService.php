@@ -22,7 +22,7 @@ final class RelatorioAtividadesService
         $this->resolver = new LotacaoResolver($this->db);
     }
 
-    public function garantirParaEspelho(int $espelhoId): ?int
+    public function garantirParaEspelho(int $espelhoId, bool $notificar = true): ?int
     {
         $stmt = $this->db->prepare(
             'SELECT e.id, e.colaborador_id, e.periodo_id, e.lotacao_id,
@@ -81,7 +81,234 @@ final class RelatorioAtividadesService
         ]);
         $relatorioId = (int) $this->db->lastInsertId();
         $this->garantirDias($relatorioId, $inicio, $fim, $colaboradorId, $cfg);
+
+        // Nunca bloquear geração de espelho com SMTP/OAuth (timeout longo → UI em 0%).
+        if ($notificar) {
+            try {
+                (new RelatorioAtividadesNotificacaoService($this->db))->notificarDisponivel($relatorioId);
+            } catch (Throwable) {
+            }
+        }
+
         return $relatorioId;
+    }
+
+    /**
+     * Prefill da descrição do dia no RA a partir da justificativa de HE registrada pelo RH.
+     * Só aplica em RA rascunho; não sobrescreve descrição já preenchida pelo colaborador
+     * (a menos que $forcar=true).
+     */
+    public function preencherDescricaoHeDoDia(
+        int $colaboradorId,
+        int $periodoId,
+        string $data,
+        string $justificativa,
+        bool $forcar = false
+    ): bool {
+        $justificativa = trim(preg_replace('/\s+/u', ' ', $justificativa) ?? '');
+        if ($justificativa === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $data)) {
+            return false;
+        }
+        if (mb_strlen($justificativa) > 2000) {
+            $justificativa = mb_substr($justificativa, 0, 2000);
+        }
+
+        $st = $this->db->prepare(
+            "SELECT r.id, r.status
+             FROM ra_relatorios r
+             WHERE r.colaborador_id = ? AND r.periodo_id = ?
+             LIMIT 1"
+        );
+        $st->execute([$colaboradorId, $periodoId]);
+        $rel = $st->fetch(PDO::FETCH_ASSOC);
+        if ($rel === false || (string) $rel['status'] !== 'rascunho') {
+            return false;
+        }
+        $relatorioId = (int) $rel['id'];
+
+        // Garante a linha do dia.
+        $this->db->prepare(
+            'INSERT IGNORE INTO ra_dias (relatorio_id, data) VALUES (?, ?)'
+        )->execute([$relatorioId, $data]);
+
+        if ($forcar) {
+            $upd = $this->db->prepare(
+                'UPDATE ra_dias SET descricao = ? WHERE relatorio_id = ? AND data = ?'
+            );
+            $upd->execute([$justificativa, $relatorioId, $data]);
+        } else {
+            $upd = $this->db->prepare(
+                "UPDATE ra_dias
+                 SET descricao = ?
+                 WHERE relatorio_id = ? AND data = ?
+                   AND (descricao IS NULL OR TRIM(descricao) = '')"
+            );
+            $upd->execute([$justificativa, $relatorioId, $data]);
+        }
+
+        return $upd->rowCount() > 0;
+    }
+
+    /**
+     * Espelha no RA a HE já lançada no cartão de ponto (sai2 além do previsto).
+     * Para colaboradores HE Cliente em RA rascunho: preenche início/fim e marca como aplicada.
+     */
+    public function sincronizarHeDoPontoDia(
+        int $colaboradorId,
+        int $periodoId,
+        string $data,
+        int $pontoDiaId,
+        ?string $previstoSaida,
+        ?string $sai2,
+        int $horasExtrasMin,
+        ?int $usuarioId = null
+    ): bool {
+        if (!$this->hasRaHeColumns() || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $data) || $pontoDiaId <= 0) {
+            return false;
+        }
+        if (!$this->colaboradorUsaHeCliente($colaboradorId)) {
+            return false;
+        }
+
+        $st = $this->db->prepare(
+            "SELECT r.id, r.status
+             FROM ra_relatorios r
+             WHERE r.colaborador_id = ? AND r.periodo_id = ?
+             LIMIT 1"
+        );
+        $st->execute([$colaboradorId, $periodoId]);
+        $rel = $st->fetch(PDO::FETCH_ASSOC);
+        if ($rel === false || (string) $rel['status'] !== 'rascunho') {
+            return false;
+        }
+        $relatorioId = (int) $rel['id'];
+        if ($this->temDocumentoAssinado($relatorioId)) {
+            return false;
+        }
+        $this->db->prepare(
+            'INSERT IGNORE INTO ra_dias (relatorio_id, data) VALUES (?, ?)'
+        )->execute([$relatorioId, $data]);
+
+        $stDia = $this->db->prepare(
+            'SELECT id, he_status, he_hora_inicio, he_hora_fim, he_sai2_anterior
+             FROM ra_dias WHERE relatorio_id = ? AND data = ? LIMIT 1'
+        );
+        $stDia->execute([$relatorioId, $data]);
+        $diaRa = $stDia->fetch(PDO::FETCH_ASSOC);
+        if ($diaRa === false) {
+            return false;
+        }
+        if (in_array((string) ($diaRa['he_status'] ?? ''), ['divergente', 'declarada'], true)) {
+            return false;
+        }
+
+        $tolerancia = PontoHeAutorizacaoService::TOLERANCIA_HE_MIN;
+        if ($horasExtrasMin <= $tolerancia) {
+            // Remove HE espelhada do ponto se o cartão deixou de ter HE relevante.
+            if ((string) ($diaRa['he_status'] ?? '') === 'aplicada') {
+                $updClear = $this->db->prepare(
+                    "UPDATE ra_dias
+                     SET he_hora_inicio = NULL,
+                         he_hora_fim = NULL,
+                         he_status = 'nenhuma',
+                         he_aplicada_em = NULL,
+                         he_aplicada_por_usuario_id = NULL,
+                         he_ponto_dia_id = NULL,
+                         he_sai2_anterior = NULL,
+                         updated_at = NOW()
+                     WHERE id = ? AND he_status = 'aplicada'"
+                );
+                $updClear->execute([(int) $diaRa['id']]);
+                return $updClear->rowCount() > 0;
+            }
+            return false;
+        }
+
+        $sai1 = null;
+        if ($this->normHoraHe($sai2) === null) {
+            $stSai1 = $this->db->prepare('SELECT sai1 FROM ponto_dias WHERE id = ? LIMIT 1');
+            $stSai1->execute([$pontoDiaId]);
+            $sai1Val = $stSai1->fetchColumn();
+            $sai1 = $sai1Val !== false && $sai1Val !== null ? (string) $sai1Val : null;
+        }
+
+        $intervalo = $this->intervaloHeAPartirDoPonto($previstoSaida, $sai2, $horasExtrasMin, $sai1);
+        if ($intervalo === null) {
+            return false;
+        }
+
+        $upd = $this->db->prepare(
+            "UPDATE ra_dias
+             SET he_hora_inicio = ?,
+                 he_hora_fim = ?,
+                 he_status = 'aplicada',
+                 he_aplicada_em = COALESCE(he_aplicada_em, NOW()),
+                 he_aplicada_por_usuario_id = COALESCE(?, he_aplicada_por_usuario_id),
+                 he_ponto_dia_id = ?,
+                 he_sai2_anterior = ?,
+                 updated_at = NOW()
+             WHERE id = ?"
+        );
+        $upd->execute([
+            $intervalo['inicio'],
+            $intervalo['fim'],
+            ($usuarioId !== null && $usuarioId > 0) ? $usuarioId : null,
+            $pontoDiaId,
+            $intervalo['sai2_anterior'],
+            (int) $diaRa['id'],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Garante que dias do RA com HE no ponto (e ainda sem HE no RA) recebam o espelhamento.
+     *
+     * @param list<array<string,mixed>> $dias
+     */
+    public function sincronizarHeDoPontoNosDias(array $dias, int $colaboradorId, int $periodoId): bool
+    {
+        if (!$this->hasRaHeColumns() || !$this->colaboradorUsaHeCliente($colaboradorId) || $dias === []) {
+            return false;
+        }
+
+        $alterou = false;
+        foreach ($dias as $dia) {
+            $pontoDiaId = (int) ($dia['ponto_dia_id'] ?? 0);
+            $heMin = (int) ($dia['ponto_horas_extras_min'] ?? $dia['horas_extras_min'] ?? 0);
+            $statusHe = (string) ($dia['he_status'] ?? 'nenhuma');
+            if ($pontoDiaId <= 0) {
+                continue;
+            }
+            if (in_array($statusHe, ['divergente', 'declarada'], true)) {
+                continue;
+            }
+            // Atualiza ou limpa conforme a HE atual do cartão.
+            if ($heMin <= PontoHeAutorizacaoService::TOLERANCIA_HE_MIN && $statusHe !== 'aplicada') {
+                continue;
+            }
+            $sai2Dia = isset($dia['ponto_sai2']) && trim((string) $dia['ponto_sai2']) !== ''
+                ? (string) $dia['ponto_sai2']
+                : (isset($dia['sai2']) && trim((string) $dia['sai2']) !== ''
+                    ? (string) $dia['sai2']
+                    : (isset($dia['ponto_sai1']) && trim((string) $dia['ponto_sai1']) !== ''
+                        ? (string) $dia['ponto_sai1']
+                        : (isset($dia['sai1']) && trim((string) $dia['sai1']) !== '' ? (string) $dia['sai1'] : null)));
+            $ok = $this->sincronizarHeDoPontoDia(
+                $colaboradorId,
+                $periodoId,
+                (string) ($dia['data'] ?? ''),
+                $pontoDiaId,
+                isset($dia['ponto_previsto_saida']) ? (string) $dia['ponto_previsto_saida'] : (isset($dia['previsto_saida']) ? (string) $dia['previsto_saida'] : null),
+                $sai2Dia,
+                $heMin
+            );
+            if ($ok) {
+                $alterou = true;
+            }
+        }
+
+        return $alterou;
     }
 
     public function backfillColaborador(int $colaboradorId): int
@@ -273,7 +500,8 @@ final class RelatorioAtividadesService
                     pd.ent1 AS ponto_ent1, pd.sai1 AS ponto_sai1,
                     pd.ent2 AS ponto_ent2, pd.sai2 AS ponto_sai2,
                     pd.previsto_entrada AS ponto_previsto_entrada,
-                    pd.previsto_saida AS ponto_previsto_saida
+                    pd.previsto_saida AS ponto_previsto_saida,
+                    COALESCE(pd.horas_extras_min, 0) AS ponto_horas_extras_min
              FROM ra_dias d
              LEFT JOIN ponto_dias pd ON pd.espelho_id = :esp AND pd.data = d.data
              WHERE d.relatorio_id = :r
@@ -284,6 +512,23 @@ final class RelatorioAtividadesService
             'r' => $relatorioId,
         ]);
         $dias = $diasSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Se o RH já lançou HE no cartão, espelha no RA (HE Cliente) ao abrir o relatório em rascunho.
+        if ((string) ($relatorio['status'] ?? '') === 'rascunho'
+            && !$this->temDocumentoAssinado($relatorioId)
+            && $this->sincronizarHeDoPontoNosDias(
+                $dias,
+                (int) ($relatorio['colaborador_id'] ?? 0),
+                (int) ($relatorio['periodo_id'] ?? 0)
+            )
+        ) {
+            $diasSt->execute([
+                'esp' => $espelhoId,
+                'r' => $relatorioId,
+            ]);
+            $dias = $diasSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
         $heSvc = new HeClienteService($this->db);
         foreach ($dias as &$diaRow) {
             // Não usar ?? puro: coluna vazia '' no ponto_dias não pode mascarar a justificativa da tabela.
@@ -472,7 +717,7 @@ final class RelatorioAtividadesService
             ]);
 
             $temHe = $this->hasRaHeColumns();
-            if ($temHe) {
+            if ($temHe && $enviar) {
                 $this->sincronizarHeAoEnviar($relatorioId, $dados['dias'], $byData);
             }
 
@@ -523,11 +768,12 @@ final class RelatorioAtividadesService
             try {
                 $dadosEnviados = $this->carregar($relatorioId, $colaboradorId);
                 if ($dadosEnviados !== null) {
-                    $arquivoPdf = (new RelatorioAtividadesPdf($this->db))->gerar($dadosEnviados);
+                    $arquivoPdf = (new RelatorioAtividadesPdf())->gerarArquivo($dadosEnviados);
                     (new RelatorioAssinaturaService($this->db))->gerarLinkPortal($relatorioId, $arquivoPdf, null);
                 }
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
                 // Não impede o envio caso o motor de PDF indisponibilize no momento; pode ser gerado depois.
+                error_log('RelatorioAtividadesService::salvar falha ao gerar PDF/link do RA #' . $relatorioId . ': ' . $e->getMessage());
             }
         }
     }
@@ -693,10 +939,24 @@ final class RelatorioAtividadesService
                 $pontoDiaId = (int) $stPd->fetchColumn();
             }
 
+            $espelhoEditavel = false;
+            if ($pontoDiaId > 0) {
+                $stEsp = $this->db->prepare(
+                    'SELECT e.status
+                     FROM ponto_dias pd
+                     INNER JOIN ponto_espelhos e ON e.id = pd.espelho_id
+                     WHERE pd.id = :id
+                     LIMIT 1'
+                );
+                $stEsp->execute(['id' => $pontoDiaId]);
+                $espStatus = (string) ($stEsp->fetchColumn() ?: '');
+                $espelhoEditavel = in_array($espStatus, ['em_aberto', 'em_tratamento', 'em_divergencia'], true);
+            }
+
             if ($novIni === null || $novFim === null) {
-                // Colaborador removeu a HE daquele dia: restaura sai2 original e limpa ocorrência
+                // Colaborador removeu a HE daquele dia: só restaura ponto_dias se o espelho ainda estiver editável.
                 $byData[$data]['he_status'] = 'nenhuma';
-                if ($pontoDiaId > 0) {
+                if ($pontoDiaId > 0 && $espelhoEditavel) {
                     $espelhoId = $this->restaurarSai2PontoDia($pontoDiaId, $diaAnt['he_sai2_anterior'] ?? null, $calc);
                     $this->db->prepare(
                         "DELETE FROM ponto_ocorrencias WHERE ponto_dia_id = :dia AND tipo = 'hora_extra' AND observacao LIKE 'HE Cliente%'"
@@ -709,55 +969,12 @@ final class RelatorioAtividadesService
                     'UPDATE ra_dias SET he_aplicada_em = NULL, he_sai2_anterior = NULL WHERE relatorio_id = :r AND data = :d'
                 )->execute(['r' => $relatorioId, 'd' => $data]);
             } else {
-                // Colaborador ajustou o horário da HE que já estava aplicada: atualiza sai2 no espelho para o novo he_hora_fim
-                $byData[$data]['he_status'] = 'aplicada';
-                if ($pontoDiaId > 0) {
-                    $stCur = $this->db->prepare('SELECT sai2 FROM ponto_dias WHERE id = :id LIMIT 1');
-                    $stCur->execute(['id' => $pontoDiaId]);
-                    $sai2AtualBanco = $stCur->fetchColumn();
-                    $sai2Base = $diaAnt['he_sai2_anterior'] ?? ($sai2AtualBanco !== false ? $sai2AtualBanco : null);
-
-                    $espelhoId = $this->restaurarSai2PontoDia($pontoDiaId, $novFim, $calc);
-                    if ($espelhoId > 0) {
-                        $espelhosRecalcular[$espelhoId] = true;
-                    }
-
-                    $iniTs = strtotime('1970-01-01 ' . $novIni);
-                    $fimTs = strtotime('1970-01-01 ' . $novFim);
-                    if ($iniTs !== false && $fimTs !== false) {
-                        if ($fimTs < $iniTs) {
-                            $fimTs += 86400;
-                        }
-                        $minutos = (int) (($fimTs - $iniTs) / 60);
-                        $obs = 'HE Cliente (RA #' . $relatorioId . ') — saída ajustada para ' . substr($novFim, 0, 5);
-                        $this->db->prepare(
-                            "DELETE FROM ponto_ocorrencias WHERE ponto_dia_id = :dia AND tipo = 'hora_extra' AND observacao LIKE 'HE Cliente%'"
-                        )->execute(['dia' => $pontoDiaId]);
-                        if ($minutos > 0) {
-                            $this->db->prepare(
-                                "INSERT INTO ponto_ocorrencias (ponto_dia_id, tipo, minutos, observacao)
-                                 VALUES (:dia, 'hora_extra', :min, :obs)"
-                            )->execute([
-                                'dia' => $pontoDiaId,
-                                'min' => $minutos,
-                                'obs' => $obs,
-                            ]);
-                        }
-                    }
-
-                    $this->db->prepare(
-                        'UPDATE ra_dias
-                         SET he_aplicada_em = NOW(),
-                             he_ponto_dia_id = :pd,
-                             he_sai2_anterior = COALESCE(he_sai2_anterior, :ant)
-                         WHERE relatorio_id = :r AND data = :d'
-                    )->execute([
-                        'pd' => $pontoDiaId,
-                        'ant' => $this->normHoraHe($sai2Base),
-                        'r' => $relatorioId,
-                        'd' => $data,
-                    ]);
-                }
+                // Colaborador alterou o horário de uma HE já aplicada: exige nova conferência/aprovação do RH
+                // antes de alterar ponto_dias, preservando integridade de espelhos fechados/assinados.
+                $byData[$data]['he_status'] = 'declarada';
+                $this->db->prepare(
+                    'UPDATE ra_dias SET he_aplicada_em = NULL WHERE relatorio_id = :r AND data = :d'
+                )->execute(['r' => $relatorioId, 'd' => $data]);
             }
         }
 
@@ -837,13 +1054,14 @@ final class RelatorioAtividadesService
                         $ignorados++;
                         continue;
                     }
-                    $arquivo = (new RelatorioAtividadesPdf($this->db))->gerar($dados);
+                    $arquivo = (new RelatorioAtividadesPdf())->gerarArquivo($dados);
                     (new RelatorioAssinaturaService($this->db))->gerarLinkPortal($rid, $arquivo, $usuarioId);
                     $processados++;
                 } else {
                     $ignorados++;
                 }
-            } catch (Throwable) {
+            } catch (Throwable $e) {
+                error_log('RelatorioAtividadesService::acaoLote (' . $acao . ') RA #' . $rid . ': ' . $e->getMessage());
                 $ignorados++;
             }
         }
@@ -963,6 +1181,78 @@ final class RelatorioAtividadesService
     private function hasRaHeColumns(): bool
     {
         return $this->hasColumn('ra_dias', 'he_hora_inicio') && $this->hasColumn('ra_dias', 'he_status');
+    }
+
+    private function colaboradorUsaHeCliente(int $colaboradorId): bool
+    {
+        if (!$this->hasColumn('rh_colaboradores', 'he_fluxo')) {
+            return false;
+        }
+        $st = $this->db->prepare('SELECT he_fluxo FROM rh_colaboradores WHERE id = ? LIMIT 1');
+        $st->execute([$colaboradorId]);
+        return (string) $st->fetchColumn() === 'cliente';
+    }
+
+    private function temDocumentoAssinado(int $relatorioId): bool
+    {
+        if ($relatorioId <= 0 || !$this->tableExists('ra_documentos')) {
+            return false;
+        }
+        $st = $this->db->prepare(
+            "SELECT 1 FROM ra_documentos WHERE relatorio_id = ? AND status = 'assinado' LIMIT 1"
+        );
+        $st->execute([$relatorioId]);
+        return (bool) $st->fetchColumn();
+    }
+
+    /**
+     * @return array{inicio:string,fim:string,sai2_anterior:string}|null
+     */
+    private function intervaloHeAPartirDoPonto(?string $previstoSaida, ?string $sai2, int $horasExtrasMin, ?string $sai1 = null): ?array
+    {
+        $fim = $this->normHoraHe($sai2) ?? $this->normHoraHe($sai1);
+        if ($fim === null) {
+            return null;
+        }
+
+        $previsto = $this->normHoraHe($previstoSaida);
+        if ($previsto !== null) {
+            $iniTs = strtotime('1970-01-02 ' . $previsto);
+            $fimTs = strtotime('1970-01-02 ' . $fim);
+            if ($iniTs !== false && $fimTs !== false) {
+                if ($fimTs < $iniTs) {
+                    $fimTs += 86400;
+                }
+                $duracaoSeg = $fimTs - $iniTs;
+                $duracaoMin = (int) round($duracaoSeg / 60);
+                $tolerancia = max(PontoHeAutorizacaoService::TOLERANCIA_HE_MIN, 15);
+                $compativel = $duracaoSeg > 0
+                    && $duracaoSeg <= 12 * 3600
+                    && ($horasExtrasMin <= 0 || abs($duracaoMin - $horasExtrasMin) <= $tolerancia);
+                if ($compativel) {
+                    return [
+                        'inicio' => $previsto,
+                        'fim' => $fim,
+                        'sai2_anterior' => $previsto,
+                    ];
+                }
+            }
+        }
+
+        if ($horasExtrasMin <= 0) {
+            return null;
+        }
+        $fimTs = strtotime('1970-01-02 ' . $fim);
+        if ($fimTs === false) {
+            return null;
+        }
+        $iniTs = $fimTs - ($horasExtrasMin * 60);
+        $inicio = date('H:i:s', $iniTs);
+        return [
+            'inicio' => $inicio,
+            'fim' => $fim,
+            'sai2_anterior' => $inicio,
+        ];
     }
 
     private function tableExists(string $table): bool

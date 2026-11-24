@@ -15,7 +15,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 0.75rem;
 }
@@ -26,6 +26,14 @@
   font-weight: 740;
 }
 
+.perfis-access-sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  max-width: 40rem;
+  line-height: 1.4;
+}
+
 .perfis-access-tools {
   display: flex;
   flex-wrap: wrap;
@@ -34,7 +42,7 @@
 }
 
 .perfis-search {
-  width: min(240px, 100%);
+  width: min(260px, 100%);
 }
 
 .perfis-count {
@@ -45,19 +53,53 @@
   white-space: nowrap;
 }
 
+.perfis-matrix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.1rem;
+  margin: 0 0 0.85rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #F7F9FB;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.perfis-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 650;
+}
+
+.perfis-acao-ico {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-muted);
+}
+
+.perfis-acao-ico svg {
+  width: 14px;
+  height: 14px;
+}
+
 .perfis-modules {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--surface);
+  background: #EEF2F6;
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.65rem;
 }
 
 .perfis-mod {
-  border-top: 1px solid var(--border);
-}
-
-.perfis-mod:first-child {
-  border-top: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface);
 }
 
 .perfis-mod-head {
@@ -68,7 +110,7 @@
   width: 100%;
   padding: 0.7rem 0.9rem;
   border: 0;
-  background: transparent;
+  background: #F8FAFC;
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -76,11 +118,12 @@
 }
 
 .perfis-mod-head:hover {
-  background: var(--canvas);
+  background: #F1F5F9;
 }
 
 .perfis-mod.is-open > .perfis-mod-head {
-  background: #FAFBFC;
+  background: #F1F5F9;
+  border-bottom: 1px solid var(--border);
 }
 
 .perfis-mod-check {
@@ -98,6 +141,8 @@
 .perfis-mod-title strong {
   font-size: 0.9rem;
   font-weight: 740;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .perfis-mod-title span {
@@ -117,7 +162,6 @@
 }
 
 .perfis-mod-body {
-  border-top: 1px solid var(--border);
   background: #fff;
 }
 
@@ -125,34 +169,121 @@
   display: none !important;
 }
 
-.perfis-row {
+.perfis-matrix-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.perfis-matrix-head,
+.perfis-matrix-row {
   display: grid;
-  grid-template-columns: 22px 1fr;
-  gap: 0.65rem;
-  align-items: start;
-  padding: 0.55rem 0.9rem 0.55rem 2.35rem;
-  border-top: 1px solid #F0F1F3;
-  cursor: pointer;
+  grid-template-columns: minmax(160px, 1.6fr) repeat(5, minmax(56px, 1fr));
+  align-items: stretch;
+  border-top: 1px solid #E8ECF0;
 }
 
-.perfis-row:first-child {
+.perfis-matrix-head {
+  background: #F8FAFC;
   border-top: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
-.perfis-row:hover {
+.perfis-matrix-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.45rem 0.35rem;
+  min-height: 44px;
+  border-left: 1px solid #EEF1F4;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--ink-subtle);
+}
+
+.perfis-matrix-cell:first-child,
+.perfis-matrix-cell.is-label {
+  justify-content: flex-start;
+  border-left: 0;
+  padding-left: 0.9rem;
+  padding-right: 0.6rem;
+}
+
+.perfis-matrix-cell.is-label {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+}
+
+.perfis-matrix-head .perfis-matrix-cell.is-acao {
+  flex-direction: column;
+  gap: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.65rem;
+}
+
+.perfis-acao-txt {
+  line-height: 1;
+}
+
+.perfis-matrix-row:hover {
   background: #FAFBFC;
 }
 
-.perfis-row.is-on {
-  background: #FFF8F2;
+.perfis-matrix-cell.is-acao {
+  cursor: pointer;
+  margin: 0;
 }
 
-.perfis-row input {
-  margin-top: 0.2rem;
+.perfis-matrix-cell.is-acao input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.perfis-check {
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid #C5CDD6;
+  border-radius: 4px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.perfis-matrix-cell.is-on .perfis-check {
+  background: #22A06B;
+  border-color: #1F8F5F;
+}
+
+.perfis-matrix-cell.is-on .perfis-check::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.perfis-matrix-cell.is-acao:hover .perfis-check {
+  border-color: #22A06B;
+}
+
+.perfis-matrix-cell.is-na {
+  color: var(--border-strong);
+  cursor: default;
+  font-weight: 500;
 }
 
 .perfis-row-name {
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 650;
   color: var(--ink);
   line-height: 1.25;
@@ -160,14 +291,13 @@
 
 .perfis-row-desc {
   display: block;
-  margin-top: 0.12rem;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--ink-muted);
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .perfis-mod[hidden],
-.perfis-row[hidden] {
+.perfis-matrix-row[hidden] {
   display: none !important;
 }
 
@@ -190,6 +320,15 @@
   .perfis-form-top {
     grid-template-columns: 1fr 1fr;
   }
+
+  .perfis-matrix-head,
+  .perfis-matrix-row {
+    grid-template-columns: minmax(120px, 1.3fr) repeat(5, minmax(44px, 1fr));
+  }
+
+  .perfis-acao-txt {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {
@@ -197,7 +336,15 @@
     grid-template-columns: 1fr;
   }
 
-  .perfis-row {
-    padding-left: 0.9rem;
+  .perfis-modules {
+    padding: 0.4rem;
+  }
+
+  .perfis-matrix-cell.is-label {
+    padding-left: 0.65rem;
+  }
+
+  .perfis-row-desc {
+    display: none;
   }
 }

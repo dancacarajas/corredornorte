@@ -186,8 +186,12 @@ final class ContaController
             $usuarioId = (int) Auth::id();
         }
 
-        // Só o próprio usuário ou quem gerencia usuários pode ver avatar de terceiros
-        if ($usuarioId !== (int) Auth::id() && !Auth::can('usuarios.gerenciar')) {
+        // Próprio usuário, gestão de usuários ou painel de atividade podem ver avatar de terceiros
+        if (
+            $usuarioId !== (int) Auth::id()
+            && !Auth::can('usuarios.gerenciar')
+            && !Auth::can('atividade.ver')
+        ) {
             http_response_code(403);
             exit;
         }

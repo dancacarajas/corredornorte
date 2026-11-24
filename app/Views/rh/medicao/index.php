@@ -163,6 +163,7 @@ $statusLabel = static function (string $status): string {
         'fechado' => 'Fechado',
         'enviado' => 'Enviado',
         'assinado' => 'Assinado',
+        'em_divergencia' => 'Em divergência',
         default => $status !== '' ? $status : '—',
     };
 };
@@ -800,8 +801,8 @@ foreach ($loteBotoes as $b) {
                         $raAssinado = $raDocSt === 'assinado';
                         $elegivelAtual = match ($filtro) {
                             'preencher_previstos' => (int) ($c['batidas_pendentes'] ?? 0) > 0 && empty($etapas['fechado']),
-                            'conferir' => empty($etapas['tratado']) && empty($c['he_pendente']) && (int) ($c['batidas_pendentes'] ?? 0) === 0,
-                            'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']) && empty($c['he_pendente']) && (int) ($c['batidas_pendentes'] ?? 0) === 0,
+                            'conferir' => empty($etapas['tratado']) && empty($c['he_pendente']) && empty($c['em_divergencia']) && (int) ($c['batidas_pendentes'] ?? 0) === 0,
+                            'fechar' => !empty($etapas['tratado']) && empty($etapas['fechado']) && empty($c['he_pendente']) && empty($c['em_divergencia']) && (int) ($c['batidas_pendentes'] ?? 0) === 0,
                             'pdf' => !empty($etapas['fechado']) && empty($etapas['pdf']),
                             'link' => !empty($etapas['pdf']) && empty($etapas['link']),
                             'email' => $modoConsultaEmail
@@ -851,11 +852,14 @@ foreach ($loteBotoes as $b) {
                                 </td>
                             <?php else: ?>
                                 <td>
-                                    <span class="badge <?= in_array($stEsp, ['fechado', 'enviado', 'assinado', 'conferido'], true) ? 'badge-aprovada' : 'badge-pendente' ?>">
+                                    <span class="badge <?= $stEsp === 'em_divergencia' ? 'badge-pendente' : (in_array($stEsp, ['fechado', 'enviado', 'assinado', 'conferido'], true) ? 'badge-aprovada' : 'badge-pendente') ?>">
                                         <?= View::e($statusLabel($stEsp)) ?>
                                     </span>
+                                    <?php if (!empty($c['em_divergencia'])): ?>
+                                        <div class="muted text-sm" style="color:#B42318;font-weight:700;">Divergência — liberar no cartão e reconferir</div>
+                                    <?php endif; ?>
                                     <?php if (!empty($c['he_pendente'])): ?>
-                                        <div class="muted text-sm">HE pendente</div>
+                                        <div class="muted text-sm">HE pendente (RA ou anexo de autorização)</div>
                                     <?php endif; ?>
                                     <?php if ((int) ($c['batidas_pendentes'] ?? 0) > 0): ?>
                                         <div class="muted text-sm" style="color:#B45309;"><?= (int) $c['batidas_pendentes'] ?> dia(s) sem batida</div>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\Auth;
 use App\Helpers\View;
 
 /** @var bool $dbOk */
@@ -10,7 +11,11 @@ use App\Helpers\View;
 $msgs = [
     'criado' => 'Perfil criado.',
     'atualizado' => 'Perfil atualizado.',
+    'excluido' => 'Perfil excluído.',
 ];
+$podeCriar = Auth::canAny('perfis.criar', 'perfis.operar', 'perfis.gerenciar');
+$podeEditar = Auth::canAny('perfis.editar', 'perfis.operar', 'perfis.gerenciar');
+$podeExcluir = Auth::canAny('perfis.excluir', 'perfis.gerenciar');
 ?>
 
 <?php if (!$dbOk): ?>
@@ -33,7 +38,7 @@ $msgs = [
     <?php if ($perfis === []): ?>
         <div class="empty-state">
             <h3>Nenhum perfil</h3>
-            <a class="btn btn-primary" href="/rh/perfis/novo">Novo perfil</a>
+            <?php if ($podeCriar): ?><a class="btn btn-primary" href="/rh/perfis/novo">Novo perfil</a><?php endif; ?>
         </div>
     <?php else: ?>
         <div class="table-wrap">
@@ -67,11 +72,25 @@ $msgs = [
                             </span>
                         </td>
                         <td style="white-space:nowrap;">
+                            <?php if ($podeEditar): ?>
                             <a class="btn btn-ghost btn-sm" href="/rh/perfis/<?= (int) $p['id'] ?>/editar">Editar</a>
+                            <?php endif; ?>
+                            <?php if ($podeCriar): ?>
                             <button class="btn btn-ghost btn-sm" type="button"
                                     onclick="window.duplicarPerfil && window.duplicarPerfil(<?= (int) $p['id'] ?>, <?= json_encode((string) $p['codigo'], JSON_UNESCAPED_UNICODE) ?>, <?= json_encode((string) $p['nome'], JSON_UNESCAPED_UNICODE) ?>)">
                                 Duplicar
                             </button>
+                            <?php endif; ?>
+                            <?php if ($podeExcluir && empty($p['sistema'])): ?>
+                            <form method="post" action="/rh/perfis/<?= (int) $p['id'] ?>/excluir" style="display:inline;"
+                                  data-confirm-title="Excluir perfil?"
+                                  data-confirm="Remove ou inativa o perfil <?= View::e((string)$p['nome']) ?>."
+                                  data-confirm-ok="Excluir"
+                                  data-confirm-tone="danger">
+                                <?= \App\Helpers\Csrf::field() ?>
+                                <button class="btn btn-ghost btn-sm" type="submit" style="color:#B42318;">Excluir</button>
+                            </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endforeach; ?>

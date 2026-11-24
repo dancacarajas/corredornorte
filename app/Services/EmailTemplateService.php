@@ -76,22 +76,46 @@ final class EmailTemplateService
                 'trigger' => 'Colaborador conclui a assinatura eletrônica',
                 'vars' => ['nome', 'matricula', 'periodo', 'codigo', 'verificar_url', 'cta_bloco', 'link_fallback'],
             ],
-            'ra.cobranca_1' => [
-                'label' => 'Cobrança 1 — RA (dia 1)',
+            'ra.disponivel' => [
+                'label' => 'RA disponível para preenchimento',
+                'group' => 'Relatório de Atividades',
+                'trigger' => 'Ao gerar o período de ponto / criar RA em rascunho',
+                'vars' => ['nome', 'matricula', 'periodo', 'competencia', 'portal_url', 'matricula_linha', 'cta_bloco', 'link_fallback'],
+            ],
+            'ra.preenchimento_cobranca_1' => [
+                'label' => 'Cobrança 1 — Preencher RA (dia 1)',
                 'group' => 'Cobrança automática',
-                'trigger' => 'Cron manhã — 1º dia útil após fechamento (RA pendente)',
+                'trigger' => 'Cron manhã — 1º dia útil após fechamento (RA ainda em rascunho)',
+                'vars' => $cobrancaVars,
+            ],
+            'ra.preenchimento_cobranca_2' => [
+                'label' => 'Cobrança 2 — Preencher RA (dia 2 manhã)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron manhã — 2º dia útil (RA ainda em rascunho)',
+                'vars' => $cobrancaVars,
+            ],
+            'ra.preenchimento_cobranca_3' => [
+                'label' => 'Cobrança 3 — Preencher RA (prazo final)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron tarde — 2º dia útil (prazo final para preencher/enviar RA)',
+                'vars' => $cobrancaVars,
+            ],
+            'ra.cobranca_1' => [
+                'label' => 'Cobrança 1 — Assinar RA (dia 1)',
+                'group' => 'Cobrança automática',
+                'trigger' => 'Cron manhã — 1º dia útil após fechamento (RA enviado, assinatura pendente)',
                 'vars' => $cobrancaVars,
             ],
             'ra.cobranca_2' => [
-                'label' => 'Cobrança 2 — RA (dia 2 manhã)',
+                'label' => 'Cobrança 2 — Assinar RA (dia 2 manhã)',
                 'group' => 'Cobrança automática',
-                'trigger' => 'Cron manhã — 2º dia útil (RA pendente)',
+                'trigger' => 'Cron manhã — 2º dia útil (RA enviado, assinatura pendente)',
                 'vars' => $cobrancaVars,
             ],
             'ra.cobranca_3' => [
-                'label' => 'Cobrança 3 — RA (prazo final)',
+                'label' => 'Cobrança 3 — Assinar RA (prazo final)',
                 'group' => 'Cobrança automática',
-                'trigger' => 'Cron tarde — 2º dia útil (prazo final RA)',
+                'trigger' => 'Cron tarde — 2º dia útil (prazo final assinatura RA)',
                 'vars' => $cobrancaVars,
             ],
             'sistema.email_teste' => [
@@ -238,6 +262,63 @@ HTML,
 {{link_fallback}}
 HTML,
                 'rodape' => $rodapePadrao . ' Cobrança automática — prazo final (tarde).',
+            ],
+            'ra.disponivel' => [
+                'assunto' => 'Relatório de Atividades disponível — {{competencia}}',
+                'titulo' => 'RA disponível para preenchimento',
+                'texto' => "Oi {{nome}},\n\nSeu Relatório de Atividades do período {{periodo}} já está disponível no portal.\nPreencha as atividades do período e envie para assinatura.{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>Seu <strong>Relatório de Atividades</strong> do período <strong>{{periodo}}</strong> já está disponível no portal do colaborador.</p>
+{{matricula_linha}}
+<p>Preencha as atividades de cada dia e envie o relatório. A medição só libera o dossiê quando a folha e o RA estiverem assinados.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Aviso automático ao gerar o período.',
+            ],
+            'ra.preenchimento_cobranca_1' => [
+                'assunto' => 'Preencha seu Relatório de Atividades ({{competencia}})',
+                'titulo' => 'Preenchimento pendente — RA',
+                'texto' => "Oi {{nome}},\n\nO período {{periodo}} foi encerrado e seu Relatório de Atividades ainda não foi preenchido/enviado.\nPrazo: {{prazo_limite}}.{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p>O período <strong>{{periodo}}</strong> foi encerrado e seu <strong>Relatório de Atividades</strong> ainda está pendente de preenchimento/envio.</p>
+<p>O prazo máximo é <strong>{{prazo_limite}}</strong>. Sem o RA preenchido e assinado, a medição não libera o dossiê.</p>
+{{matricula_linha}}
+<p>Preencha e envie agora.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática de preenchimento RA — dia 1.',
+            ],
+            'ra.preenchimento_cobranca_2' => [
+                'assunto' => 'Urgente — preencha seu Relatório de Atividades hoje ({{competencia}})',
+                'titulo' => 'Último dia — preencher RA',
+                'texto' => "Oi {{nome}},\n\nHoje ({{prazo_limite}}) é o último dia do prazo para preencher/enviar seu Relatório de Atividades ({{periodo}}).{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p><strong>Hoje ({{prazo_limite}}) é o último dia</strong> para preencher e enviar seu Relatório de Atividades do período <strong>{{periodo}}</strong>.</p>
+{{matricula_linha}}
+<p>Sem o envio, a medição atrasa.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática de preenchimento RA — dia 2 (manhã).',
+            ],
+            'ra.preenchimento_cobranca_3' => [
+                'assunto' => 'PRAZO FINAL hoje — preencha o Relatório de Atividades ({{competencia}})',
+                'titulo' => 'Prazo final — preencher RA',
+                'texto' => "Oi {{nome}},\n\nPRAZO FINAL: preencha e envie seu Relatório de Atividades ({{periodo}}) ainda hoje ({{prazo_limite}}).{{portal_txt}}\nArcadis RH — Corredor Norte",
+                'corpo_html' => <<<'HTML'
+<p>Oi <strong>{{nome}}</strong>,</p>
+<p><strong>Prazo final hoje ({{prazo_limite}})</strong>: seu Relatório de Atividades do período <strong>{{periodo}}</strong> ainda não foi enviado.</p>
+{{matricula_linha}}
+<p>Preencha e envie agora para não atrasar a medição.</p>
+{{cta_bloco}}
+{{link_fallback}}
+HTML,
+                'rodape' => $rodapePadrao . ' Cobrança automática de preenchimento RA — prazo final (tarde).',
             ],
             'ra.cobranca_1' => [
                 'assunto' => 'Assinatura pendente — Relatório de Atividades ({{competencia}})',
@@ -535,6 +616,17 @@ HTML,
             'folha.cobranca_1',
             'folha.cobranca_2',
             'folha.cobranca_3' => $cobrancaSample,
+            'ra.disponivel' => array_merge($folhaSample, [
+                'portalUrl' => '#preview-ra-preencher',
+                'cta_label' => 'PREENCHER RELATÓRIO',
+            ]),
+            'ra.preenchimento_cobranca_1',
+            'ra.preenchimento_cobranca_2',
+            'ra.preenchimento_cobranca_3' => array_merge($cobrancaSample, [
+                'documento_tipo' => 'Relatório de Atividades (preenchimento)',
+                'portalUrl' => '#preview-ra-preencher',
+                'cta_label' => 'PREENCHER AGORA',
+            ]),
             'ra.cobranca_1',
             'ra.cobranca_2',
             'ra.cobranca_3' => array_merge($cobrancaSample, [

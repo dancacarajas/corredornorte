@@ -119,6 +119,27 @@ final class CobrancaAssinaturaService
                 }
             }
 
+            foreach ($this->pendentesRaPreenchimento((int) $periodo['id']) as $item) {
+                $r = $this->enviarUm(
+                    $mail,
+                    'ra_preenchimento',
+                    (int) $item['documento_id'],
+                    (int) $periodo['id'],
+                    $nivel,
+                    $item,
+                    $periodoLabel,
+                    $prazoLimite
+                );
+                $detalhes[] = $r;
+                if (($r['status'] ?? '') === 'enviado') {
+                    $enviados++;
+                } elseif (($r['status'] ?? '') === 'falha') {
+                    $falhas++;
+                } else {
+                    $ignorados++;
+                }
+            }
+
             foreach ($this->pendentesRa((int) $periodo['id']) as $item) {
                 $r = $this->enviarUm(
                     $mail,
@@ -242,6 +263,8 @@ final class CobrancaAssinaturaService
      */
     private function pendentesFolha(int $periodoId): array
     {
+        AssinaturaEletronicaService::ensureDivergenciaSchema($this->db);
+
         $st = $this->db->prepare(
             "SELECT d.id AS documento_id, d.portal_token, d.codigo_verificacao,
                     c.nome, c.matricula, c.email_corp,
@@ -252,6 +275,11 @@ final class CobrancaAssinaturaService
              INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
              WHERE pp.id = :pid
+               AND e.status IN ('fechado', 'enviado')
+               AND NOT EXISTS (
+                    SELECT 1 FROM ponto_divergencias pd
+                    WHERE pd.espelho_id = e.id AND pd.status IN ('aberta', 'em_analise')
+               )
                AND d.tipo = 'folha_ponto'
                AND d.status = 'enviado'
                AND d.portal_token IS NOT NULL
@@ -261,6 +289,77 @@ final class CobrancaAssinaturaService
                     WHERE ee.documento_id = d.id AND ee.status = 'enviado'
                )
              ORDER BY c.nome, d.id"
+        );
+        $st->execute(['pid' => $periodoId]);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows === []) {
+            return [];
+        }
+
+        // Alinha ao critério da Etapa 5 (MedicaoService::mapEmailsOkPorDocumento):
+        // só cobra documentos cujo envio anterior foi para destinatário entregável.
+        $docIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $r): int => (int) ($r['documento_id'] ?? 0),
+            $rows
+        ))));
+        if ($docIds === []) {
+            return [];
+        }
+
+        $in = implode(',', $docIds);
+        $envSt = $this->db->query(
+            "SELECT documento_id, destinatario
+             FROM emails_envios
+             WHERE documento_id IN ({$in}) AND status = 'enviado'
+             ORDER BY id DESC"
+        );
+        $entregaveis = [];
+        foreach ($envSt ? ($envSt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [] as $env) {
+            $docId = (int) $env['documento_id'];
+            if (isset($entregaveis[$docId])) {
+                continue;
+            }
+            $dest = (string) ($env['destinatario'] ?? '');
+            if (EmailDeliverability::isDeliverable($dest)) {
+                $entregaveis[$docId] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $rows,
+            static fn (array $r): bool => isset($entregaveis[(int) ($r['documento_id'] ?? 0)])
+        ));
+    }
+
+    /**
+     * RA em rascunho ou ainda não iniciado — cobrança de preenchimento/envio.
+     * Usa r.id como documento_id quando existe rascunho, ou e.id quando o RA ainda não foi criado.
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function pendentesRaPreenchimento(int $periodoId): array
+    {
+        if (!$this->tableExists('ra_relatorios')) {
+            return [];
+        }
+
+        $st = $this->db->prepare(
+            "SELECT COALESCE(r.id, e.id) AS documento_id,
+                    COALESCE(r.id, 0) AS relatorio_id,
+                    e.id AS espelho_id,
+                    '' AS portal_token,
+                    '' AS codigo_verificacao,
+                    c.nome, c.matricula, c.email_corp,
+                    SUBSTR(pp.data_inicio, 1, 7) AS competencia,
+                    pp.data_inicio, pp.data_fim
+             FROM ponto_espelhos e
+             INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
+             INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
+             LEFT JOIN ra_relatorios r
+                ON r.colaborador_id = e.colaborador_id AND r.periodo_id = e.periodo_id
+             WHERE e.periodo_id = :pid
+               AND (r.id IS NULL OR r.status = 'rascunho')
+             ORDER BY c.nome, e.id"
         );
         $st->execute(['pid' => $periodoId]);
 
@@ -334,12 +433,24 @@ final class CobrancaAssinaturaService
             return $meta + ['status' => 'falha', 'erro' => $check['erro']];
         }
 
-        $portalUrl = $this->portalUrl($tipo, (string) $item['portal_token']);
-        $tplKey = $tipo . '.cobranca_' . $nivel;
-        $cta = match ($nivel) {
-            1 => 'ASSINAR AGORA',
-            2 => 'ASSINAR HOJE',
+        $portalUrl = $this->portalUrl($tipo, (string) ($item['portal_token'] ?? ''), (int) ($item['relatorio_id'] ?? $documentoId));
+        $tplKey = match ($tipo) {
+            'ra_preenchimento' => 'ra.preenchimento_cobranca_' . $nivel,
+            'ra' => 'ra.cobranca_' . $nivel,
+            default => 'folha.cobranca_' . $nivel,
+        };
+        $cta = match (true) {
+            $tipo === 'ra_preenchimento' && $nivel === 1 => 'PREENCHER AGORA',
+            $tipo === 'ra_preenchimento' && $nivel === 2 => 'PREENCHER HOJE',
+            $tipo === 'ra_preenchimento' => 'PRAZO FINAL — PREENCHER',
+            $nivel === 1 => 'ASSINAR AGORA',
+            $nivel === 2 => 'ASSINAR HOJE',
             default => 'PRAZO FINAL — ASSINAR',
+        };
+        $docTipo = match ($tipo) {
+            'ra_preenchimento' => 'Relatório de Atividades (preenchimento)',
+            'ra' => 'Relatório de Atividades',
+            default => 'Folha de Ponto',
         };
 
         try {
@@ -353,7 +464,7 @@ final class CobrancaAssinaturaService
                 'cta_label' => $cta,
                 'prazo_limite' => $prazoLimite,
                 'nivel' => (string) $nivel,
-                'documento_tipo' => $tipo === 'ra' ? 'Relatório de Atividades' : 'Folha de Ponto',
+                'documento_tipo' => $docTipo,
             ], $this->db);
 
             $result = $mail->send(
@@ -432,9 +543,14 @@ final class CobrancaAssinaturaService
         ]);
     }
 
-    private function portalUrl(string $tipo, string $token): string
+    private function portalUrl(string $tipo, string $token, int $relatorioId = 0): string
     {
         $base = $this->baseUrl();
+        if ($tipo === 'ra_preenchimento') {
+            return $relatorioId > 0
+                ? ($base . '/he/relatorios/' . $relatorioId)
+                : ($base . '/he/relatorios');
+        }
 
         return $tipo === 'ra'
             ? $base . '/assinar-relatorio/' . $token
@@ -514,7 +630,7 @@ final class CobrancaAssinaturaService
         $this->db->exec(
             "CREATE TABLE IF NOT EXISTS cobranca_envios (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                tipo ENUM('folha','ra') NOT NULL,
+                tipo ENUM('folha','ra','ra_preenchimento') NOT NULL,
                 documento_id BIGINT UNSIGNED NOT NULL,
                 periodo_id BIGINT UNSIGNED NOT NULL,
                 nivel TINYINT UNSIGNED NOT NULL,
@@ -529,6 +645,24 @@ final class CobrancaAssinaturaService
                 KEY idx_cobranca_enviado (enviado_em)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
+
+        // Migra ENUM antigo (folha|ra) para incluir ra_preenchimento.
+        try {
+            $col = $this->db->query(
+                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = 'cobranca_envios'
+                   AND COLUMN_NAME = 'tipo'
+                 LIMIT 1"
+            )->fetchColumn();
+            if (is_string($col) && !str_contains($col, 'ra_preenchimento')) {
+                $this->db->exec(
+                    "ALTER TABLE cobranca_envios
+                     MODIFY COLUMN tipo ENUM('folha','ra','ra_preenchimento') NOT NULL"
+                );
+            }
+        } catch (Throwable) {
+        }
     }
 
     private function tableExists(string $table): bool

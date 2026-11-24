@@ -39,6 +39,7 @@ SIGNATURE_INK = HexColor("#18365C")
 MARGIN = 24
 SIGNATURE_CARD_WIDTH = 236
 SIGNATURE_CARD_HEIGHT = 46
+SUBJECT_FOLHA_V5 = "Arcadis RH | folha de ponto retrato v5"
 SIGNATURE_FIELD = "SeloArcadis"
 SIGNATURE_FONT = Path(__file__).resolve().parent / "assets" / "fonts" / "Allura-Regular.ttf"
 SEAL_LOGO = LOGO.with_name("selo-arcadis.png")
@@ -101,12 +102,16 @@ def draw_seal_icon(pdf: canvas.Canvas, x: float, y: float, size: float) -> None:
                   preserveAspectRatio=True, anchor="c", mask="auto")
 
 
-def make_signature_mark(audit: dict, url: str) -> PdfReader:
+def make_signature_mark(audit: dict, url: str, folha_v5: bool = False) -> PdfReader:
     stream = BytesIO()
     pdf = canvas.Canvas(stream, pagesize=letter)
     width, height = SIGNATURE_CARD_WIDTH, SIGNATURE_CARD_HEIGHT
-    x = EMPLOYEE_SIGNATURE_X + (SIGNATURE_LINE_WIDTH - width) / 2
-    y = SIGNATURE_LINE_Y + 2
+    if folha_v5:
+        x = 301 - width / 2
+        y = letter[1] - 654 - height
+    else:
+        x = EMPLOYEE_SIGNATURE_X + (SIGNATURE_LINE_WIDTH - width) / 2
+        y = SIGNATURE_LINE_Y + 2
 
     pdf.setFillColor(SURFACE)
     pdf.setStrokeColor(BORDER)
@@ -147,15 +152,16 @@ def make_signature_mark(audit: dict, url: str) -> PdfReader:
     pdf.drawString(text_x, y + 2.5, code)
 
     pdf.linkURL(url, (x, y, x + width, y + height), relative=0)
-    draw_validation_footer(pdf, audit, url)
+    draw_validation_footer(pdf, audit, url, folha_v5)
     pdf.save()
     return PdfReader(stream)
 
 
-def draw_validation_footer(pdf: canvas.Canvas, audit: dict, url: str) -> None:
-    x, y = MARGIN, 20
+def draw_validation_footer(pdf: canvas.Canvas, audit: dict, url: str, folha_v5: bool = False) -> None:
+    x = MARGIN
+    y = 5 if folha_v5 else 20
     width = letter[0] - 2 * MARGIN
-    height = 64
+    height = 54 if folha_v5 else 64
     pdf.setFillColor(SURFACE)
     pdf.setStrokeColor(BORDER)
     pdf.setLineWidth(.65)
@@ -167,7 +173,7 @@ def draw_validation_footer(pdf: canvas.Canvas, audit: dict, url: str) -> None:
     divider = x + 42
     pdf.line(divider, y + 5, divider, y + height - 5)
     text_x = divider + 7
-    qr_size = 56
+    qr_size = height - 8
     qr_x = x + width - qr_size - 5
     qr_y = y + (height - qr_size) / 2
     validator = "Validador"
@@ -176,10 +182,11 @@ def draw_validation_footer(pdf: canvas.Canvas, audit: dict, url: str) -> None:
     text_right = validator_right - stringWidth(validator, validator_font, validator_size) - 12
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica", 8.2)
-    pdf.drawString(text_x, y + 44, "Assinado com Assinatura Eletrônica")
+    center_y = y + height / 2
+    pdf.drawString(text_x, center_y + 12, "Assinado com Assinatura Eletrônica")
     for label, content, baseline in (
-        ("Hash SHA256 do original: ", value(audit, "sha256"), y + 32),
-        ("Link de validação: ", url, y + 20),
+        ("Hash SHA256 do original: ", value(audit, "sha256"), center_y),
+        ("Link de validação: ", url, center_y - 12),
     ):
         pdf.setFont("Helvetica", 8)
         pdf.drawString(text_x, baseline, label)
@@ -193,7 +200,7 @@ def draw_validation_footer(pdf: canvas.Canvas, audit: dict, url: str) -> None:
 
     pdf.setFont(validator_font, validator_size)
     pdf.setFillColor(MUTED)
-    pdf.drawRightString(validator_right, y + 30, validator)
+    pdf.drawRightString(validator_right, center_y - 2, validator)
     qr = QrCodeWidget(url, barWidth=qr_size, barHeight=qr_size, barBorder=4, barLevel="M")
     drawing = Drawing(qr_size, qr_size)
     drawing.add(qr)
@@ -218,10 +225,11 @@ def build(original: Path, out: Path, audit: dict) -> Path:
         raise ValueError("Gere o cartão de ponto em uma página para assinar.")
     page = reader.pages[0]
     standard_box = (0, 0, *letter)
+    subject = reader.metadata.subject if reader.metadata is not None else None
     has_signature_line = (
-        reader.metadata is not None
-        and reader.metadata.subject in (
+        subject in (
             SUBJECT,
+            SUBJECT_FOLHA_V5,
             "Arcadis RH | folha de ponto retrato v4",
             "Arcadis RH | folha de ponto retrato v2",
             "Arcadis RH | folha de ponto retrato v1",
@@ -233,7 +241,7 @@ def build(original: Path, out: Path, audit: dict) -> Path:
         raise ValueError("Gere o cartão de ponto no modelo em retrato para assinar.")
     writer = PdfWriter()
     page_with_signature = writer.add_page(page)
-    mark = make_signature_mark(audit, url)
+    mark = make_signature_mark(audit, url, folha_v5=subject == SUBJECT_FOLHA_V5)
     page_with_signature.merge_page(mark.pages[0])
 
     unsigned = BytesIO()

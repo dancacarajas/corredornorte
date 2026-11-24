@@ -41,7 +41,7 @@ final class EfetivoController
                   cc.id AS centro_custo_id, cc.codigo AS cc_codigo,
                   os.id AS ordem_servico_id, os.codigo AS os_codigo,
                   loc.id AS localidade_id, loc.municipio, loc.uf,
-                  j.codigo AS jornada_codigo, e.codigo AS escala_codigo
+                  h.codigo AS horario_codigo
                 FROM rh_colaboradores c
                 LEFT JOIN rh_colaborador_lotacoes cl
                   ON cl.colaborador_id = c.id AND cl.vigencia_fim IS NULL
@@ -50,8 +50,7 @@ final class EfetivoController
                 LEFT JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
                 LEFT JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
                 LEFT JOIN rh_localidades loc ON loc.id = l.localidade_id
-                LEFT JOIN rh_jornadas j ON j.id = l.jornada_id
-                LEFT JOIN rh_escalas e ON e.id = l.escala_id
+                LEFT JOIN rh_horarios h ON h.id = l.horario_id
                 WHERE 1=1
             SQL;
             $params = [];
@@ -84,6 +83,9 @@ final class EfetivoController
             if ($filters['status'] !== '') {
                 $sql .= ' AND c.status = :status';
                 $params['status'] = $filters['status'];
+            } else {
+                // Exclusão = desligado: some da lista padrão (ainda filtrável em Status).
+                $sql .= " AND c.status <> 'desligado'";
             }
             $sql .= ' ORDER BY c.nome LIMIT 500';
             $stmt = $pdo->prepare($sql);
@@ -93,11 +95,23 @@ final class EfetivoController
 
         $exportQs = http_build_query(array_filter($filters, static fn ($v) => $v !== '' && $v !== 0));
         $exportUrl = '/rh/efetivo/exportar' . ($exportQs !== '' ? '?' . View::e($exportQs) : '');
-        $topbarActions = '<a class="btn btn-secondary btn-sm" href="' . $exportUrl . '">Exportar efetivo</a>'
-            . '<a class="btn btn-secondary btn-sm" href="/rh/importacoes/modelo">Baixar modelo matriz</a>'
-            . '<a class="btn btn-secondary btn-sm" href="/rh/calendarios">Feriados</a>'
-            . '<a class="btn btn-secondary btn-sm" href="/rh/importacoes/nova">Importar Excel</a>'
-            . '<a class="btn btn-primary btn-sm" href="/rh/colaboradores/novo">Novo colaborador</a>';
+        $podeCriar = Auth::canAny('efetivo.criar', 'efetivo.operar');
+        $podeEditar = Auth::canAny('efetivo.editar', 'efetivo.operar');
+        $podeExcluir = Auth::can('efetivo.excluir');
+        $podeOperar = Auth::canAny('efetivo.operar', 'importacoes.operar', 'importacoes.gerenciar');
+        $parts = [];
+        if (Auth::canAny('efetivo.ver', 'efetivo.editar', 'efetivo.criar', 'efetivo.operar', 'importacoes.gerenciar', 'importacoes.operar')) {
+            $parts[] = '<a class="btn btn-secondary btn-sm" href="' . $exportUrl . '">Exportar efetivo</a>';
+            $parts[] = '<a class="btn btn-secondary btn-sm" href="/rh/importacoes/modelo">Baixar modelo matriz</a>';
+        }
+        $parts[] = '<a class="btn btn-secondary btn-sm" href="/rh/calendarios">Feriados</a>';
+        if ($podeOperar) {
+            $parts[] = '<a class="btn btn-secondary btn-sm" href="/rh/importacoes/nova">Importar Excel</a>';
+        }
+        if ($podeCriar) {
+            $parts[] = '<a class="btn btn-primary btn-sm" href="/rh/colaboradores/novo">Novo colaborador</a>';
+        }
+        $topbarActions = implode('', $parts);
 
         View::render('rh/efetivo/index', [
             'pageTitle' => 'Efetivo',
@@ -110,13 +124,25 @@ final class EfetivoController
             'filters' => $filters,
             'lookups' => $lookups,
             'exportQuery' => $exportQs,
+            'podeCriar' => $podeCriar,
+            'podeEditar' => $podeEditar,
+            'podeExcluir' => $podeExcluir,
+            'podeOperar' => $podeOperar,
+            'flashOk' => $_GET['ok'] ?? null,
         ]);
     }
 
     public function exportar(): void
     {
         Auth::requireLogin();
-        if (!Auth::canAny('efetivo.ver', 'efetivo.editar', 'importacoes.gerenciar')) {
+        if (!Auth::canAny(
+            'efetivo.ver',
+            'efetivo.editar',
+            'efetivo.criar',
+            'efetivo.operar',
+            'importacoes.gerenciar',
+            'importacoes.operar'
+        )) {
             Auth::requirePermission('efetivo.ver');
         }
         $pdo = Db::tryConnection();

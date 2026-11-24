@@ -25,11 +25,19 @@ final class AlertaController
         $usuarioId = (int) (Auth::id() ?? 0);
 
         $periodosGerados = [];
-        $dataInicio = isset($_GET['data_inicio']) ? (string) $_GET['data_inicio'] : '';
-        $dataFim = isset($_GET['data_fim']) ? (string) $_GET['data_fim'] : '';
+        $periodoSel = isset($_GET['periodo_sel']) ? (string) $_GET['periodo_sel'] : null;
+        $todosPeriodos = $periodoSel === '|'
+            || (string) ($_GET['todos_periodos'] ?? '') === '1';
+        $dataInicio = isset($_GET['data_inicio']) ? trim((string) $_GET['data_inicio']) : '';
+        $dataFim = isset($_GET['data_fim']) ? trim((string) $_GET['data_fim']) : '';
+        if ($todosPeriodos) {
+            $dataInicio = '';
+            $dataFim = '';
+        }
         if ($pdo instanceof PDO) {
             $periodosGerados = (new MedicaoService($pdo))->listarPeriodosGerados(12);
-            if (($dataInicio === '' || $dataFim === '') && $periodosGerados !== []) {
+            // Sem escolha explícita de período → mesmo default do badge: período gerado mais recente.
+            if (!$todosPeriodos && ($dataInicio === '' || $dataFim === '') && $periodosGerados !== []) {
                 $dataInicio = (string) $periodosGerados[0]['data_inicio'];
                 $dataFim = (string) $periodosGerados[0]['data_fim'];
             }
@@ -48,6 +56,7 @@ final class AlertaController
             'periodo_inicio' => $dataInicio !== '' ? $dataInicio : null,
             'periodo_fim' => $dataFim !== '' ? $dataFim : null,
             'somente_nao_lidos' => $status === 'nao_lidos',
+            'ignorar_periodo' => $todosPeriodos,
         ];
 
         $itens = [];
@@ -60,18 +69,33 @@ final class AlertaController
             'cobrancas' => 0,
             'meus' => 0,
         ];
+        $outrosPeriodosNaoLidos = 0;
         $usuariosAtribuicao = [];
         $tiposCatalogo = [];
         $erro = null;
+        $alertasBadge = 0;
         if ($pdo instanceof PDO && $usuarioId > 0) {
             try {
                 $svc = new AlertasService($pdo);
                 $itens = $svc->listar($usuarioId, $filtros);
                 $contadores = $svc->contarResumo($usuarioId, [
+                    'periodo_inicio' => $todosPeriodos ? '' : $dataInicio,
+                    'periodo_fim' => $todosPeriodos ? '' : $dataFim,
+                ]);
+                $naoLidos = $contadores['nao_lidos'];
+                // Badge do menu = não lidos do período padrão (ou da visão atual se "todos").
+                $alertasBadge = $svc->contarNaoLidos($usuarioId, false, [
+                    'todos_periodos' => $todosPeriodos,
                     'periodo_inicio' => $dataInicio,
                     'periodo_fim' => $dataFim,
                 ]);
-                $naoLidos = $contadores['nao_lidos'];
+                if (!$todosPeriodos && $dataInicio !== '' && $dataFim !== '') {
+                    $todosResumo = $svc->contarResumo($usuarioId, [
+                        'periodo_inicio' => '',
+                        'periodo_fim' => '',
+                    ]);
+                    $outrosPeriodosNaoLidos = max(0, (int) $todosResumo['nao_lidos'] - (int) $contadores['nao_lidos']);
+                }
                 $usuariosAtribuicao = $svc->listarUsuariosAtribuicao();
                 $tiposCatalogo = $svc->listarTipos();
             } catch (\Throwable $e) {
@@ -99,21 +123,25 @@ final class AlertaController
                 ? 'Auditoria de alertas resolvidos e arquivados nos últimos 30 dias'
                 : 'Pendências operacionais que exigem decisão para destravar o fechamento',
             'activeMenu' => 'alertas',
-            'extraCss' => ['css/alertas.css?v=20261116'],
-            'extraJs' => ['js/alertas.js?v=20261116'],
+            'extraCss' => ['css/alertas.css?v=20261116b'],
+            'extraJs' => ['js/alertas.js?v=20261116b'],
             'itens' => $itens,
             'naoLidos' => $naoLidos,
             'contadores' => $contadores,
+            'alertasBadge' => $alertasBadge,
             'filtros' => $filtros,
             'periodosGerados' => $periodosGerados,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
+            'todosPeriodos' => $todosPeriodos,
+            'outrosPeriodosNaoLidos' => $outrosPeriodosNaoLidos,
             'periodoLabel' => $periodoLabel,
             'usuariosAtribuicao' => $usuariosAtribuicao,
             'tiposCatalogo' => $tiposCatalogo,
             'usuarioId' => $usuarioId,
             'isHistorico' => $isHistorico,
-            'podeConfigurar' => Auth::can('alertas.gerenciar'),
+            'podeConfigurar' => Auth::canAny('alertas.gerenciar', 'alertas_config.ver', 'alertas_config.editar', 'alertas_config.operar'),
+            'podeOperar' => Auth::canAny('alertas.operar', 'alertas.ver'),
             'flashOk' => isset($_GET['ok']) ? trim((string) $_GET['ok']) : null,
             'erro' => $erro,
             'dbOk' => $pdo instanceof PDO,
@@ -122,9 +150,7 @@ final class AlertaController
 
     public function sincronizar(): void
     {
-        if (!Auth::canAny('alertas.ver', 'dashboard.ver')) {
-            Auth::requirePermission('alertas.ver');
-        }
+        Auth::requirePermission('alertas.operar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         $dataInicio = trim((string) ($_POST['data_inicio'] ?? ''));
@@ -149,9 +175,7 @@ final class AlertaController
 
     public function marcarLido(string $id = ''): void
     {
-        if (!Auth::canAny('alertas.ver', 'dashboard.ver')) {
-            Auth::requirePermission('alertas.ver');
-        }
+        Auth::requirePermission('alertas.operar');
         Csrf::requireValid();
         $alertaId = (int) $id;
         $usuarioId = (int) (Auth::id() ?? 0);
@@ -164,24 +188,28 @@ final class AlertaController
 
     public function marcarTodosLidos(): void
     {
-        if (!Auth::canAny('alertas.ver', 'dashboard.ver')) {
-            Auth::requirePermission('alertas.ver');
-        }
+        Auth::requirePermission('alertas.operar');
         Csrf::requireValid();
         $usuarioId = (int) (Auth::id() ?? 0);
         $pdo = Db::tryConnection();
         $n = 0;
         if ($pdo instanceof PDO && $usuarioId > 0) {
-            $n = (new AlertasService($pdo))->marcarTodosLidos($usuarioId);
+            $todos = (string) ($_POST['todos_periodos'] ?? '') === '1'
+                || (string) ($_POST['periodo_sel'] ?? '') === '|';
+            $pi = trim((string) ($_POST['data_inicio'] ?? ''));
+            $pf = trim((string) ($_POST['data_fim'] ?? ''));
+            $n = (new AlertasService($pdo))->marcarTodosLidos($usuarioId, [
+                'todos_periodos' => $todos,
+                'periodo_inicio' => $pi,
+                'periodo_fim' => $pf,
+            ]);
         }
         $this->jsonOrRedirect(true, ['marcados' => $n]);
     }
 
     public function dispensar(string $id = ''): void
     {
-        if (!Auth::canAny('alertas.ver', 'dashboard.ver')) {
-            Auth::requirePermission('alertas.ver');
-        }
+        Auth::requirePermission('alertas.operar');
         Csrf::requireValid();
         $alertaId = (int) $id;
         $usuarioId = (int) (Auth::id() ?? 0);
@@ -195,9 +223,7 @@ final class AlertaController
 
     public function atribuir(string $id = ''): void
     {
-        if (!Auth::canAny('alertas.ver', 'dashboard.ver')) {
-            Auth::requirePermission('alertas.ver');
-        }
+        Auth::requirePermission('alertas.operar');
         Csrf::requireValid();
         $alertaId = (int) $id;
         $atorId = (int) (Auth::id() ?? 0);

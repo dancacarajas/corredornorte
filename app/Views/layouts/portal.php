@@ -20,13 +20,10 @@ $currentUser = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="<?= View::e(Csrf::token()) ?>">
     <title><?= View::e($pageTitle) ?> · Portal</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=csrf-he-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=csrf-he-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=he-home-hist-20261114">
+    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=brand-20261118b">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
     <?php endforeach; ?>
@@ -52,7 +49,7 @@ $currentUser = [
         </main>
     </div>
 </div>
-<script src="<?= View::asset('js/app.js') ?>?v=csrf-he-20261114"></script>
+<script src="<?= View::asset('js/app.js') ?>?v=confirm-submit-20261116"></script>
 <?php foreach (($extraJs ?? []) as $jsFile): ?>
     <script src="<?= View::asset($jsFile) ?>" defer></script>
 <?php endforeach; ?>

@@ -18,7 +18,7 @@
 }
 .portal-kpi strong {
   font-size: 1.55rem;
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-display);
 }
 
 .portal-home {
@@ -45,7 +45,7 @@
   margin-bottom: .2rem;
 }
 .portal-home-summary-item strong {
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-display);
   font-size: 1.55rem;
   letter-spacing: -.02em;
 }
@@ -61,7 +61,7 @@
 }
 .portal-home-head h2 {
   margin: .15rem 0 .25rem;
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(1.2rem, 2vw, 1.45rem);
   letter-spacing: -.02em;
 }
@@ -125,7 +125,7 @@
 .portal-task-title {
   margin: 0 0 .25rem;
   font-size: 1.05rem;
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-display);
   letter-spacing: -.01em;
 }
 .portal-task-desc {
@@ -190,7 +190,7 @@
 }
 .portal-home-empty-compact h3 {
   margin: 0 0 .35rem;
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-display);
 }
 .portal-home-empty-compact .portal-home-empty-badge {
   width: 40px;
@@ -212,7 +212,7 @@
 }
 .portal-home-empty h2 {
   margin: 0 0 .4rem;
-  font-family: "Plus Jakarta Sans", sans-serif;
+  font-family: var(--font-display);
 }
 .portal-home-empty p {
   margin: 0 auto 1.1rem;
@@ -259,7 +259,7 @@
 .ra-table th {
   position: sticky;
   top: 0;
-  background: var(--canvas, #F3F4F6);
+  background: var(--canvas);
   z-index: 1;
   font-size: .72rem;
   text-transform: uppercase;
@@ -289,7 +289,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: .2rem .35rem;
-  background: var(--canvas, #F3F4F6);
+  background: var(--canvas);
   white-space: nowrap;
 }
 .ra-counters {
@@ -343,8 +343,8 @@
   font-size: .72rem;
   font-weight: 700;
   letter-spacing: .01em;
-  background: #F3F4F6;
-  color: #4B5563;
+  background: var(--canvas);
+  color: var(--ink-muted);
   vertical-align: middle;
 }
 .ra-status-rascunho { color: #B54708; background: #FFFAEB; }
@@ -380,7 +380,7 @@
   text-decoration: none;
   font-size: .88rem;
 }
-.ra-more-menu a:hover { background: var(--canvas, #F3F4F6); }
+.ra-more-menu a:hover { background: var(--canvas); }
 
 .ra-steps {
   display: grid;
@@ -398,7 +398,7 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #FAFAFA;
-  color: #6B7280;
+  color: var(--ink-subtle);
   font-size: .84rem;
   font-weight: 600;
 }
@@ -410,8 +410,8 @@
   place-items: center;
   font-size: .72rem;
   font-weight: 800;
-  background: #E5E7EB;
-  color: #4B5563;
+  background: var(--border);
+  color: var(--ink-muted);
   flex: 0 0 auto;
 }
 .ra-step-label {
@@ -458,7 +458,7 @@
 .ra-progress-track {
   height: .7rem;
   border-radius: 999px;
-  background: #E5E7EB;
+  background: var(--border);
   overflow: hidden;
 }
 .ra-progress-fill {
@@ -565,12 +565,12 @@
   cursor: pointer;
   font-weight: 700;
   font-size: .92rem;
-  color: var(--ink, #111111);
+  color: var(--ink);
 }
 .ra-counters .pill {
   border-radius: 999px;
   padding: .28rem .65rem;
-  background: #F3F4F6;
+  background: var(--canvas);
 }
 
 /* Barra rápida de preenchimento em lote */
@@ -636,6 +636,35 @@
   align-items: center;
   gap: .45rem;
   flex-wrap: wrap;
+  margin-left: auto;
+}
+.ra-he-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.ra-he-qty {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
+  color: #C2410C;
+  white-space: nowrap;
+}
+.ra-he-qty.is-empty {
+  display: none;
+}
+@media (max-width: 640px) {
+  .ra-he-top {
+    align-items: center;
+  }
+  .ra-he-qty {
+    font-size: 1.55rem;
+  }
 }
 .ra-day-body {
   padding: .9rem .95rem;
@@ -667,7 +696,7 @@
   border-radius: 8px;
   font: inherit;
   background: #fff;
-  color: var(--ink, #111111);
+  color: var(--ink);
 }
 .ra-field-box textarea {
   min-height: 54px;
@@ -830,7 +859,7 @@
   padding: 1.25rem;
   margin-bottom: 1rem;
 }
-.he-card h2 { margin: 0 0 .85rem; font-size: 1.1rem; font-family: "Plus Jakarta Sans", sans-serif; }
+.he-card h2 { margin: 0 0 .85rem; font-size: 1.1rem; font-family: var(--font-display); }
 .he-grid { display: grid; gap: .85rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 700px) { .he-grid { grid-template-columns: 1fr; } }
 .he-grid .span-2 { grid-column: 1 / -1; }
@@ -840,7 +869,7 @@ table.he-table th, table.he-table td {
 }
 .badge {
   display: inline-block; padding: .15rem .5rem; border-radius: 999px;
-  font-size: .75rem; font-weight: 700; background: var(--canvas, #F3F4F6);
+  font-size: .75rem; font-weight: 700; background: var(--canvas);
 }
 .badge-pendente { color: #9a6700; background: #fff4ce; }
 .badge-aprovada { color: #0f6b3a; background: #d9f5e5; }
@@ -849,6 +878,6 @@ table.he-table th, table.he-table td {
 .modalidade-row label {
   display: inline-flex; align-items: center; gap: .4rem;
   border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: .55rem .8rem; cursor: pointer; background: var(--canvas, #F3F4F6);
+  padding: .55rem .8rem; cursor: pointer; background: var(--canvas);
 }
 .modalidade-row input { accent-color: var(--brand-primary, #EA580C); }

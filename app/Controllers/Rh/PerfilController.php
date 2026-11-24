@@ -15,7 +15,7 @@ final class PerfilController
 {
     public function index(): void
     {
-        Auth::requirePermission('perfis.gerenciar');
+        Auth::requirePermission('perfis.ver');
         $pdo = Db::tryConnection();
         $perfis = [];
         $dbOk = $pdo instanceof PDO;
@@ -23,17 +23,20 @@ final class PerfilController
             $perfis = (new PerfilService($pdo))->listar();
         }
 
+        $podeCriar = Auth::canAny('perfis.criar', 'perfis.operar', 'perfis.gerenciar');
         ob_start();
-        ?>
+        if ($podeCriar) {
+            ?>
         <a class="btn btn-primary btn-sm" href="/rh/perfis/novo">Novo perfil</a>
-        <?php
+            <?php
+        }
         $topbarActions = ob_get_clean() ?: '';
 
         View::render('rh/perfis/index', [
             'pageTitle' => 'Perfis',
-            'pageSubtitle' => 'Papéis e permissões de acesso',
+            'pageSubtitle' => 'Gestão 360° — Ver, Criar, Editar, Excluir e Operar por tela',
             'activeMenu' => 'perfis',
-            'extraCss' => ['css/perfis.css?v=perfis-list-20261114'],
+            'extraCss' => ['css/perfis.css?v=perfis-360-20261116'],
             'topbarActions' => $topbarActions,
             'dbOk' => $dbOk,
             'perfis' => $perfis,
@@ -44,13 +47,13 @@ final class PerfilController
 
     public function createForm(): void
     {
-        Auth::requirePermission('perfis.gerenciar');
+        Auth::requirePermission('perfis.criar');
         $this->form(null);
     }
 
     public function editForm(string $id = ''): void
     {
-        Auth::requirePermission('perfis.gerenciar');
+        Auth::requirePermission('perfis.editar');
         $pdo = Db::tryConnection();
         $perfil = null;
         if ($pdo instanceof PDO) {
@@ -64,27 +67,27 @@ final class PerfilController
     }
 
     /** @param ?array<string,mixed> $perfil */
-    private function form(?array $perfil): void
+    private function form(?array $perfil, ?string $error = null): void
     {
         $pdo = Db::tryConnection();
-        $permissoes = [];
+        $matriz = [];
         if ($pdo instanceof PDO) {
-            $permissoes = (new PerfilService($pdo))->catalogoPermissoes();
+            $matriz = (new PerfilService($pdo))->matrizParaUi();
         }
         View::render('rh/perfis/form', [
             'pageTitle' => $perfil ? 'Editar perfil' : 'Novo perfil',
-            'pageSubtitle' => $perfil ? (string) $perfil['codigo'] : 'Defina o papel e as permissões',
+            'pageSubtitle' => $perfil ? (string) ($perfil['codigo'] ?? '') : 'Matriz 360° de acesso',
             'activeMenu' => 'perfis',
-            'extraCss' => ['css/perfis.css?v=perfis-list-20261114'],
+            'extraCss' => ['css/perfis.css?v=perfis-360-20261116'],
             'perfil' => $perfil,
-            'permissoes' => $permissoes,
-            'error' => null,
+            'matriz' => $matriz,
+            'error' => $error,
         ]);
     }
 
     public function duplicar(string $id = ''): void
     {
-        Auth::requirePermission('perfis.gerenciar');
+        Auth::requirePermission('perfis.criar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
             header('Location: /rh/perfis?erro=' . rawurlencode('MySQL indisponível'));
@@ -102,15 +105,32 @@ final class PerfilController
         exit;
     }
 
+    public function excluir(string $id = ''): void
+    {
+        Auth::requirePermission('perfis.excluir');
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            header('Location: /rh/perfis?erro=' . rawurlencode('MySQL indisponível'));
+            exit;
+        }
+        try {
+            (new PerfilService($pdo))->excluir((int) $id, Auth::id());
+            header('Location: /rh/perfis?ok=excluido');
+        } catch (Throwable $e) {
+            header('Location: /rh/perfis?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
     public function store(): void
     {
-        Auth::requirePermission('perfis.gerenciar');
+        Auth::requirePermission('perfis.criar');
         $this->save(null);
     }
 
     public function update(string $id = ''): void
     {
-        Auth::requirePermission('perfis.gerenciar');
+        Auth::requirePermission('perfis.editar');
         $this->save((int) $id);
     }
 
@@ -141,7 +161,6 @@ final class PerfilController
                 header('Location: /rh/perfis?ok=atualizado');
             }
         } catch (Throwable $e) {
-            $permissoes = (new PerfilService($pdo))->catalogoPermissoes();
             $perfil = $id ? (new PerfilService($pdo))->buscar($id) : [
                 'codigo' => $data['codigo'],
                 'nome' => $data['nome'],
@@ -150,15 +169,7 @@ final class PerfilController
                 'sistema' => 0,
                 'permissao_ids' => $data['permissao_ids'],
             ];
-            View::render('rh/perfis/form', [
-                'pageTitle' => $id ? 'Editar perfil' : 'Novo perfil',
-                'pageSubtitle' => 'Corrija os dados e salve novamente',
-                'activeMenu' => 'perfis',
-                'extraCss' => ['css/perfis.css?v=perfis-list-20261114'],
-                'perfil' => $perfil,
-                'permissoes' => $permissoes,
-                'error' => $e->getMessage(),
-            ]);
+            $this->form($perfil, $e->getMessage());
             return;
         }
         exit;

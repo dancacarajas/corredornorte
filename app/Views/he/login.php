@@ -17,18 +17,18 @@ $next = HePortalAuth::safeNext(isset($next) ? (string) $next : (string) ($_GET['
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portal do Colaborador · Arcadis</title>
     <meta name="referrer" content="no-referrer">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>">
+    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/auth.css') ?>?v=brand-20261118b">
     <style>
         body {
             min-height: 100vh; display: grid; place-items: center; padding: 1.5rem;
             background:
-                radial-gradient(circle at top left, rgba(224,96,8,.18), transparent 40%),
-                radial-gradient(circle at bottom right, rgba(17,17,17,.08), transparent 35%),
+                radial-gradient(circle at top left, rgba(var(--brand-heritage-rgb), .16), transparent 42%),
+                radial-gradient(circle at bottom right, rgba(var(--brand-confidence-rgb), .08), transparent 36%),
                 var(--canvas);
+            font-family: var(--font-sans);
+            letter-spacing: var(--tracking);
         }
         .login-card {
             width: min(420px, 100%); background: var(--surface);
@@ -36,12 +36,12 @@ $next = HePortalAuth::safeNext(isset($next) ? (string) $next : (string) ($_GET['
             border: 1px solid var(--border); padding: 1.75rem;
         }
         .login-brand { text-align: center; margin-bottom: 1.25rem; }
-        .login-brand img { max-height: 64px; }
+        .login-brand img { min-width: var(--logo-min-width); max-height: 56px; }
         .login-card h1 {
-            margin: 0 0 .35rem; font-size: 1.2rem; text-align: center;
-            font-family: "Plus Jakarta Sans", sans-serif;
+            margin: 0 0 .35rem; font-size: var(--text-h1); text-align: center;
+            font-family: var(--font-display); font-weight: 700; letter-spacing: var(--tracking); color: var(--ink);
         }
-        .login-card p { text-align: center; color: var(--ink-muted); margin: 0 0 1.25rem; font-size: .92rem; }
+        .login-card p { text-align: center; color: var(--ink-muted); margin: 0 0 1.25rem; font-size: var(--text-sm); }
     </style>
 </head>
 <body>

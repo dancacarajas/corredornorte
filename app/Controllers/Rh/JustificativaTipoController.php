@@ -17,7 +17,9 @@ final class JustificativaTipoController
 {
     public function index(): void
     {
-        Auth::requirePermission('ponto.ver');
+        if (!Auth::canAny('justificativa_tipos.ver', 'justificativa_tipos.criar', 'justificativa_tipos.editar', 'ponto.ver', 'ponto.editar')) {
+            Auth::requirePermission('justificativa_tipos.ver');
+        }
         $pdo = Db::tryConnection();
         $tipos = [];
         $erro = null;
@@ -35,9 +37,11 @@ final class JustificativaTipoController
             }
         }
 
-        $podeEditar = Auth::can('ponto.editar');
+        $podeCriar = Auth::canAny('justificativa_tipos.criar', 'justificativa_tipos.editar', 'ponto.editar');
+        $podeEditar = Auth::canAny('justificativa_tipos.editar', 'ponto.editar');
+        $podeExcluir = Auth::canAny('justificativa_tipos.excluir', 'ponto.editar');
         $topbarActions = '';
-        if ($podeEditar) {
+        if ($podeCriar) {
             $topbarActions = '<a class="btn btn-primary btn-sm" href="#novoTipo">Novo tipo</a>';
         }
 
@@ -46,7 +50,9 @@ final class JustificativaTipoController
             'pageSubtitle' => 'Definem se a justificativa abona falta no cartão',
             'activeMenu' => 'justificativa-tipos',
             'tipos' => $tipos,
-            'podeEditar' => $podeEditar,
+            'podeEditar' => $podeEditar || $podeCriar,
+            'podeCriar' => $podeCriar,
+            'podeExcluir' => $podeExcluir,
             'topbarActions' => $topbarActions,
             'flashOk' => $_GET['ok'] ?? null,
             'flashErro' => $_GET['erro'] ?? $erro,
@@ -57,7 +63,7 @@ final class JustificativaTipoController
 
     public function store(): void
     {
-        Auth::requirePermission('ponto.editar');
+        Auth::requirePermission('justificativa_tipos.criar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -82,7 +88,7 @@ final class JustificativaTipoController
 
     public function update(string $id = '0'): void
     {
-        Auth::requirePermission('ponto.editar');
+        Auth::requirePermission('justificativa_tipos.editar');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         $tipoId = (int) $id;
@@ -123,7 +129,7 @@ final class JustificativaTipoController
 
     public function excluir(string $id = '0'): void
     {
-        Auth::requirePermission('ponto.editar');
+        Auth::requirePermission('justificativa_tipos.excluir');
         Csrf::requireValid();
         $pdo = Db::tryConnection();
         $tipoId = (int) $id;

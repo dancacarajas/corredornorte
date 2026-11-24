@@ -6,6 +6,8 @@ use App\Helpers\View;
 /** @var array<string,mixed>|null $lotacaoAtual */
 /** @var list<array<string,mixed>> $historico */
 /** @var list<array<string,mixed>> $lotacoes */
+$podeEditar = !empty($podeEditar);
+$podeOperar = !empty($podeOperar);
 ?>
 
 <?php if (!empty($flash)): ?>
@@ -31,7 +33,9 @@ use App\Helpers\View;
             <h2 class="card-title">Dados cadastrais</h2>
             <p class="card-subtitle">Identificação do colaborador</p>
         </div>
+        <?php if ($podeEditar): ?>
         <a class="btn btn-primary btn-sm" href="/rh/colaboradores/<?= (int)$colaborador['id'] ?>/editar">Editar dados</a>
+        <?php endif; ?>
     </div>
     <div class="card-body form-grid cols-3">
         <div><div class="text-xs muted">Nome</div><div class="fw-700"><?= View::e((string)$colaborador['nome']) ?></div></div>
@@ -65,11 +69,11 @@ use App\Helpers\View;
         <div class="kpi-meta neutral"><?= View::e((string) ($lotacaoAtual['localidade_nome'] ?? '')) ?></div>
     </article>
     <article class="card kpi-card">
-        <div class="kpi-label">Jornada / Escala</div>
+        <div class="kpi-label">Horário</div>
         <div class="kpi-value" style="font-size:1.2rem;">
-            <?= View::e((string) ($lotacaoAtual['jornada_codigo'] ?? '—')) ?>
+            <?= View::e((string) ($lotacaoAtual['horario_codigo'] ?? '—')) ?>
         </div>
-        <div class="kpi-meta neutral"><?= View::e((string) ($lotacaoAtual['escala_codigo'] ?? '')) ?></div>
+        <div class="kpi-meta neutral"><?= View::e((string) ($lotacaoAtual['horario_nome'] ?? '')) ?></div>
     </article>
 </section>
 
@@ -115,6 +119,7 @@ use App\Helpers\View;
                 </div>
                 <div style="grid-column:1/-1;">
                     <form method="post" action="/rh/colaboradores/<?= (int) $colaborador['id'] ?>/percentual-he" class="form-grid cols-3" style="align-items:end;">
+                        <?= \App\Helpers\Csrf::field() ?>
                         <div class="form-field">
                             <label class="form-label">% HE deste colaborador</label>
                             <input class="form-control" type="number" name="percentual_he" min="1" max="200" step="1"
@@ -142,15 +147,11 @@ use App\Helpers\View;
     <div class="card-body form-grid cols-3">
         <?php
         $heranca = [
-            'Jornada' => $lotacaoAtual['jornada_codigo'] ?? '—',
-            'Escala' => $lotacaoAtual['escala_codigo'] ?? '—',
+            'Horário' => $lotacaoAtual['horario_codigo'] ?? '—',
+            'Tipo' => $lotacaoAtual['horario_cadastro_tipo'] ?? ($lotacaoAtual['horario_tipo'] ?? '—'),
             'Entrada' => isset($lotacaoAtual['entrada']) ? substr((string)$lotacaoAtual['entrada'],0,5) : '—',
             'Intervalo' => trim(substr((string)($lotacaoAtual['intervalo_inicio']??''),0,5).'-'.substr((string)($lotacaoAtual['intervalo_fim']??''),0,5),'-') ?: '—',
             'Saída' => isset($lotacaoAtual['saida']) ? substr((string)$lotacaoAtual['saida'],0,5) : '—',
-            'Carga diária' => isset($lotacaoAtual['carga_diaria_min']) ? sprintf('%02d:%02d', intdiv((int)$lotacaoAtual['carga_diaria_min'], 60), ((int)$lotacaoAtual['carga_diaria_min']) % 60) : '—',
-            'Carga semanal' => isset($lotacaoAtual['carga_semanal_min']) ? sprintf('%02d:%02d', intdiv((int)$lotacaoAtual['carga_semanal_min'], 60), ((int)$lotacaoAtual['carga_semanal_min']) % 60) : '—',
-            'Sábado' => !empty($lotacaoAtual['trabalha_sabado']) ? 'Sim' : 'Não',
-            'Domingo' => !empty($lotacaoAtual['trabalha_domingo']) ? 'Sim' : 'Não',
             'Feriado' => !empty($lotacaoAtual['trabalha_feriado']) ? 'Sim' : 'Não',
             'Adicional noturno' => !empty($lotacaoAtual['adicional_noturno']) ? 'Sim' : 'Não',
             '% Hora extra' => ((int) ($lotacaoAtual['percentual_he'] ?? 50)) . '%',
@@ -175,13 +176,12 @@ use App\Helpers\View;
     <?php else: ?>
         <div class="table-wrap">
             <table class="table">
-                <thead><tr><th>Período</th><th>Jornada</th><th>Escala</th><th>Obs.</th></tr></thead>
+                <thead><tr><th>Período</th><th>Horário</th><th>Obs.</th></tr></thead>
                 <tbody>
                 <?php foreach ($excecoes as $x): ?>
                     <tr>
                         <td><?= View::e($x['vigencia_inicio'].' → '.$x['vigencia_fim']) ?></td>
-                        <td><?= View::e((string)($x['jornada_codigo'] ?? '—')) ?></td>
-                        <td><?= View::e((string)($x['escala_codigo'] ?? '—')) ?></td>
+                        <td><?= View::e((string)($x['horario_codigo'] ?? '—')) ?></td>
                         <td><?= View::e((string)($x['observacao'] ?? '')) ?></td>
                     </tr>
                 <?php endforeach; ?>
@@ -240,7 +240,7 @@ use App\Helpers\View;
     <div class="card-header">
         <div>
             <h2 class="card-title">Auditoria de alterações</h2>
-            <p class="card-subtitle">Histórico técnico de mudanças do colaborador</p>
+            <p class="card-subtitle">Histórico das mudanças feitas neste colaborador</p>
         </div>
     </div>
     <?php if (empty($auditoria)): ?>
@@ -251,10 +251,24 @@ use App\Helpers\View;
                 <thead><tr><th>Quando</th><th>Ação</th><th>Detalhe</th></tr></thead>
                 <tbody>
                 <?php foreach ($auditoria as $a): ?>
+                    <?php
+                    $acaoLabel = (string) ($a['acao_label'] ?? $a['acao'] ?? '');
+                    $quando = (string) ($a['quando'] ?? $a['created_at'] ?? '');
+                    $linhas = $a['detalhe_linhas'] ?? [];
+                    if (!is_array($linhas) || $linhas === []) {
+                        $linhas = ['Sem detalhes adicionais.'];
+                    }
+                    ?>
                     <tr>
-                        <td><?= View::e((string)$a['created_at']) ?></td>
-                        <td><span class="pill pill-neutral"><?= View::e((string)$a['acao']) ?></span></td>
-                        <td class="text-xs"><?= View::e((string)($a['depois_json'] ?? '')) ?></td>
+                        <td><?= View::e($quando) ?></td>
+                        <td><span class="pill pill-neutral"><?= View::e($acaoLabel) ?></span></td>
+                        <td>
+                            <ul class="audit-detail-list">
+                                <?php foreach ($linhas as $linha): ?>
+                                    <li><?= View::e((string) $linha) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -266,6 +280,7 @@ use App\Helpers\View;
 <div class="modal-backdrop" id="transferModal">
     <div class="modal">
         <form method="post" action="/rh/colaboradores/<?= (int) $colaborador['id'] ?>/transferir">
+            <?= \App\Helpers\Csrf::field() ?>
             <div class="modal-header">
                 <h3 class="card-title">Transferir lotação</h3>
                 <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
@@ -305,21 +320,15 @@ use App\Helpers\View;
 <div class="modal-backdrop" id="excecaoModal">
     <div class="modal modal-lg">
         <form method="post" action="/rh/colaboradores/<?= (int)$colaborador['id'] ?>/excecoes">
+            <?= \App\Helpers\Csrf::field() ?>
             <div class="modal-header"><h3 class="card-title">Exceção individual</h3><button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button></div>
             <div class="modal-body form-grid cols-2">
                 <div class="form-field"><label class="form-label">Início</label><input class="form-control" type="date" name="vigencia_inicio" required value="<?= date('Y-m-d') ?>"></div>
                 <div class="form-field"><label class="form-label">Fim</label><input class="form-control" type="date" name="vigencia_fim" required></div>
-                <div class="form-field"><label class="form-label">Jornada especial</label>
-                    <select class="form-control" name="jornada_id"><option value="">Manter lotação</option>
-                        <?php foreach (($jornadas ?? []) as $j): ?>
-                            <option value="<?= (int)$j['id'] ?>"><?= View::e($j['codigo'].' — '.$j['nome']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-field"><label class="form-label">Escala especial</label>
-                    <select class="form-control" name="escala_id"><option value="">Manter lotação</option>
-                        <?php foreach (($escalas ?? []) as $es): ?>
-                            <option value="<?= (int)$es['id'] ?>"><?= View::e($es['codigo'].' — '.$es['nome']) ?></option>
+                <div class="form-field"><label class="form-label">Horário especial</label>
+                    <select class="form-control" name="horario_id"><option value="">Manter lotação</option>
+                        <?php foreach (($horarios ?? []) as $h): ?>
+                            <option value="<?= (int)$h['id'] ?>"><?= View::e($h['codigo'].' — '.$h['nome']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>

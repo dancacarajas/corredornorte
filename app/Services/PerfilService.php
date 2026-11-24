@@ -9,49 +9,256 @@ use RuntimeException;
 
 final class PerfilService
 {
+    public const ACOES = ['ver', 'criar', 'editar', 'excluir', 'operar'];
+
     public function __construct(private PDO $db)
     {
     }
 
     /**
-     * Catálogo canônico — fonte da verdade para a matriz de acesso.
+     * Mapa 360° do sistema — espelha o menu. Cada item declara quais ações existem.
+     * Códigos gerados: {recurso}.{acao}
      *
+     * @return list<array{
+     *   grupo:string,
+     *   itens:list<array{recurso:string,label:string,menu:string,acoes:list<string>,slug?:string}>
+     * }>
+     */
+    public static function mapaAcesso360(): array
+    {
+        $cad = static function (string $recurso, string $label, string $grupoPath, string $slug): array {
+            return [
+                'recurso' => $recurso,
+                'label' => $label,
+                'menu' => $grupoPath . ' → ' . $label,
+                'slug' => $slug,
+                'acoes' => ['ver', 'criar', 'editar', 'excluir'],
+            ];
+        };
+
+        return [
+            [
+                'grupo' => 'Principal',
+                'itens' => [
+                    ['recurso' => 'dashboard', 'label' => 'Visão geral', 'menu' => 'Principal → Visão geral', 'acoes' => ['ver']],
+                    ['recurso' => 'alertas', 'label' => 'Central de Alertas', 'menu' => 'Principal → Central de Alertas', 'acoes' => ['ver', 'operar']],
+                    ['recurso' => 'mapa', 'label' => 'Mapa do sistema', 'menu' => 'Principal → Mapa do sistema', 'acoes' => ['ver']],
+                ],
+            ],
+            [
+                'grupo' => 'Efetivo',
+                'itens' => [
+                    ['recurso' => 'efetivo', 'label' => 'Efetivo', 'menu' => 'RH → Efetivo', 'acoes' => ['ver', 'criar', 'editar', 'excluir', 'operar']],
+                ],
+            ],
+            [
+                'grupo' => 'Organização',
+                'itens' => [
+                    $cad('empresas', 'Empresas', 'RH → Organização', 'empresas'),
+                    $cad('contratos', 'Contratos', 'RH → Organização', 'contratos'),
+                    $cad('centros_custo', 'Centros de Custo', 'RH → Organização', 'centros-custo'),
+                    $cad('ordens_servico', 'Ordens de Serviço', 'RH → Organização', 'ordens-servico'),
+                    $cad('localidades', 'Localidades', 'RH → Organização', 'localidades'),
+                ],
+            ],
+            [
+                'grupo' => 'Horários e calendário',
+                'itens' => [
+                    $cad('horarios', 'Horários', 'RH → Horários e calendário', 'horarios'),
+                    $cad('calendarios', 'Feriados', 'RH → Horários e calendário', 'calendarios'),
+                ],
+            ],
+            [
+                'grupo' => 'Pessoas e papéis',
+                'itens' => [
+                    $cad('lotacoes', 'Lotações', 'RH → Pessoas e papéis', 'lotacoes'),
+                    $cad('cargos', 'Cargo', 'RH → Pessoas e papéis', 'cargos'),
+                    $cad('funcoes', 'Função', 'RH → Pessoas e papéis', 'funcoes'),
+                    $cad('gestores_arcadis', 'Gestor Arcadis', 'RH → Pessoas e papéis', 'gestores-arcadis'),
+                    $cad('gestores_cliente', 'Gestor Cliente', 'RH → Pessoas e papéis', 'gestores-cliente'),
+                    $cad('supervisores', 'Supervisor', 'RH → Pessoas e papéis', 'supervisores'),
+                ],
+            ],
+            [
+                'grupo' => 'Medição e ponto',
+                'itens' => [
+                    ['recurso' => 'ponto', 'label' => 'Gestão de Ponto', 'menu' => 'RH → Medição e ponto → Gestão de Ponto', 'acoes' => ['ver', 'editar', 'excluir', 'operar']],
+                    ['recurso' => 'justificativa_tipos', 'label' => 'Tipos de justificativa', 'menu' => 'RH → Medição e ponto → Tipos de justificativa', 'acoes' => ['ver', 'criar', 'editar', 'excluir']],
+                    ['recurso' => 'medicao', 'label' => 'Medição', 'menu' => 'RH → Medição e ponto → Medição', 'acoes' => ['ver', 'operar']],
+                    ['recurso' => 'he_relatorio', 'label' => 'Relatório de HE', 'menu' => 'RH → Medição e ponto → Relatório de HE', 'acoes' => ['ver', 'operar']],
+                    ['recurso' => 'ra', 'label' => 'Relatórios de Atividades', 'menu' => 'RH → Medição e ponto → Relatórios de Atividades', 'acoes' => ['ver', 'editar', 'operar']],
+                    ['recurso' => 'folha', 'label' => 'Folha de ponto', 'menu' => 'RH → Medição e ponto → Folha', 'acoes' => ['ver', 'operar']],
+                ],
+            ],
+            [
+                'grupo' => 'Vale Refeição',
+                'itens' => [
+                    ['recurso' => 'vr', 'label' => 'Configuração VR', 'menu' => 'RH → Vale Refeição → Configuração', 'acoes' => ['ver', 'criar', 'editar', 'excluir']],
+                    ['recurso' => 'vr_relatorio', 'label' => 'Gerar relatório VR', 'menu' => 'RH → Vale Refeição → Gerar relatório', 'acoes' => ['ver', 'operar']],
+                ],
+            ],
+            [
+                'grupo' => 'TI / Equipamentos',
+                'itens' => [
+                    ['recurso' => 'entregas', 'label' => 'Entrega de Equipamentos', 'menu' => 'RH → Entrega de Equipamentos', 'acoes' => ['ver', 'operar']],
+                ],
+            ],
+            [
+                'grupo' => 'Sistema',
+                'itens' => [
+                    ['recurso' => 'usuarios', 'label' => 'Usuários', 'menu' => 'Sistema → Usuários', 'acoes' => ['ver', 'criar', 'editar', 'excluir', 'operar']],
+                    ['recurso' => 'atividade', 'label' => 'Atividade', 'menu' => 'Sistema → Atividade', 'acoes' => ['ver']],
+                    ['recurso' => 'perfis', 'label' => 'Perfis', 'menu' => 'Sistema → Perfis', 'acoes' => ['ver', 'criar', 'editar', 'excluir', 'operar']],
+                    ['recurso' => 'email', 'label' => 'Conta de e-mail', 'menu' => 'Sistema → Conta de e-mail', 'acoes' => ['ver', 'operar']],
+                    ['recurso' => 'alertas_config', 'label' => 'Configurar alertas', 'menu' => 'Sistema → Configurar alertas', 'acoes' => ['ver', 'editar', 'operar']],
+                    ['recurso' => 'importacoes', 'label' => 'Importações', 'menu' => 'Sistema → Importações', 'acoes' => ['ver', 'operar']],
+                ],
+            ],
+        ];
+    }
+
+    /** @return list<string> */
+    public static function ordemGruposMenu(): array
+    {
+        return array_map(static fn (array $g): string => $g['grupo'], self::mapaAcesso360());
+    }
+
+    /**
+     * Slug de rota de cadastro → recurso.
+     *
+     * @return array<string, string>
+     */
+    public static function slugParaRecurso(): array
+    {
+        $out = [];
+        foreach (self::mapaAcesso360() as $grupo) {
+            foreach ($grupo['itens'] as $item) {
+                if (!empty($item['slug'])) {
+                    $out[(string) $item['slug']] = (string) $item['recurso'];
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** Compat: mapa antigo usado pelo sidebar/gate. */
+    public static function mapaCadastrosMenu(): array
+    {
+        $out = [];
+        foreach (self::mapaAcesso360() as $grupo) {
+            foreach ($grupo['itens'] as $item) {
+                if (empty($item['slug'])) {
+                    continue;
+                }
+                $r = (string) $item['recurso'];
+                $out[(string) $item['slug']] = [
+                    'ver' => $r . '.ver',
+                    'editar' => $r . '.editar',
+                    'criar' => $r . '.criar',
+                    'excluir' => $r . '.excluir',
+                    'grupo' => $grupo['grupo'],
+                    'menu' => (string) $item['menu'],
+                    'label' => (string) $item['label'],
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /** @return list<string> */
+    public static function codigosCadastrosVer(): array
+    {
+        return array_values(array_map(static fn (array $m): string => $m['ver'], self::mapaCadastrosMenu()));
+    }
+
+    /** @return list<string> */
+    public static function codigosCadastrosEditar(): array
+    {
+        return array_values(array_map(static fn (array $m): string => $m['editar'], self::mapaCadastrosMenu()));
+    }
+
+    /** @return list<string> */
+    public static function codigosCadastrosCriar(): array
+    {
+        return array_values(array_map(static fn (array $m): string => $m['criar'], self::mapaCadastrosMenu()));
+    }
+
+    /** @return list<string> */
+    public static function codigosCadastrosExcluir(): array
+    {
+        return array_values(array_map(static fn (array $m): string => $m['excluir'], self::mapaCadastrosMenu()));
+    }
+
+    /**
      * @return list<array{codigo:string,nome:string,grupo:string,descricao:string}>
      */
     public static function catalogoDefinicao(): array
     {
-        return [
-            ['codigo' => 'dashboard.ver', 'nome' => 'Ver visão geral', 'grupo' => 'Principal', 'descricao' => 'Acesso à home / dashboard'],
-            ['codigo' => 'alertas.ver', 'nome' => 'Ver central de alertas', 'grupo' => 'Principal', 'descricao' => 'Inbox de bloqueios e atrasos do fechamento'],
-            ['codigo' => 'alertas.gerenciar', 'nome' => 'Configurar alertas', 'grupo' => 'Sistema', 'descricao' => 'Catálogo, destinatários, digest e operação em massa'],
-
-            ['codigo' => 'efetivo.ver', 'nome' => 'Ver efetivo', 'grupo' => 'Efetivo', 'descricao' => 'Listar colaboradores e estrutura'],
-            ['codigo' => 'efetivo.editar', 'nome' => 'Editar efetivo', 'grupo' => 'Efetivo', 'descricao' => 'Criar e editar colaboradores e lotações'],
-
-            ['codigo' => 'cadastros.ver', 'nome' => 'Ver cadastros', 'grupo' => 'Organização / Escalas / Pessoas', 'descricao' => 'Empresas, contratos, jornadas, escalas, cargos, gestores…'],
-            ['codigo' => 'cadastros.editar', 'nome' => 'Editar cadastros', 'grupo' => 'Organização / Escalas / Pessoas', 'descricao' => 'Alterar cadastros estruturais'],
-
-            ['codigo' => 'ponto.ver', 'nome' => 'Ver gestão de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Consultar espelhos e batidas'],
-            ['codigo' => 'ponto.editar', 'nome' => 'Editar gestão de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Gerar período, ajustar batidas e fechar'],
-            ['codigo' => 'ponto.excluir_periodo', 'nome' => 'Excluir período de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Apagar definitivamente um período gerado (cartões, PDFs, RA, anexos)'],
-            ['codigo' => 'folha.ver', 'nome' => 'Ver folha de ponto', 'grupo' => 'Medição e ponto', 'descricao' => 'Consultar folhas e PDFs'],
-            ['codigo' => 'folha.enviar', 'nome' => 'Enviar / assinar folha', 'grupo' => 'Medição e ponto', 'descricao' => 'E-mail, link e lembretes de assinatura'],
-            ['codigo' => 'medicao.ver', 'nome' => 'Ver medição', 'grupo' => 'Medição e ponto', 'descricao' => 'Painel da jornada de medição e dossiê'],
-            ['codigo' => 'medicao.editar', 'nome' => 'Operar medição', 'grupo' => 'Medição e ponto', 'descricao' => 'Ações em lote da medição (conferir, PDF, e-mail…)'],
-            ['codigo' => 'ra.ver', 'nome' => 'Ver relatórios de atividades', 'grupo' => 'Medição e ponto', 'descricao' => 'Consultar RA no RH'],
-            ['codigo' => 'ra.editar', 'nome' => 'Aprovar / reabrir RA', 'grupo' => 'Medição e ponto', 'descricao' => 'Aprovar ou reabrir relatório de atividades'],
-            ['codigo' => 'vr.ver', 'nome' => 'Ver vale refeição', 'grupo' => 'Vale Refeição', 'descricao' => 'Ver configurações e gerar relatório de VR'],
-            ['codigo' => 'vr.editar', 'nome' => 'Editar vale refeição', 'grupo' => 'Vale Refeição', 'descricao' => 'Criar e alterar regras de VR'],
-
-            ['codigo' => 'email.gerenciar', 'nome' => 'Conta de e-mail', 'grupo' => 'Sistema', 'descricao' => 'Conectar SMTP/OAuth e templates'],
-            ['codigo' => 'importacoes.gerenciar', 'nome' => 'Importações', 'grupo' => 'Sistema', 'descricao' => 'Importar planilha de efetivo'],
-            ['codigo' => 'usuarios.gerenciar', 'nome' => 'Gerenciar usuários', 'grupo' => 'Sistema', 'descricao' => 'Criar e editar usuários'],
-            ['codigo' => 'atividade.ver', 'nome' => 'Atividade de usuários', 'grupo' => 'Sistema', 'descricao' => 'Ver online, histórico de login/logout e gráficos de uso'],
-            ['codigo' => 'perfis.gerenciar', 'nome' => 'Gerenciar perfis', 'grupo' => 'Sistema', 'descricao' => 'Criar perfis e marcar permissões'],
+        $acaoNome = [
+            'ver' => 'Ver',
+            'criar' => 'Criar',
+            'editar' => 'Editar',
+            'excluir' => 'Excluir',
+            'operar' => 'Operar',
         ];
+        $rows = [];
+        foreach (self::mapaAcesso360() as $grupo) {
+            foreach ($grupo['itens'] as $item) {
+                foreach ($item['acoes'] as $acao) {
+                    $rows[] = [
+                        'codigo' => $item['recurso'] . '.' . $acao,
+                        'nome' => $acaoNome[$acao] . ' · ' . $item['label'],
+                        'grupo' => $grupo['grupo'],
+                        'descricao' => $item['menu'] . ' — ' . $acaoNome[$acao],
+                    ];
+                }
+            }
+        }
+
+        // Aliases legado (Auth ainda honra; UI da matriz não exibe).
+        $legado = [
+            ['codigo' => 'cadastros.ver', 'nome' => '[Legado] Ver cadastros', 'grupo' => 'Legado', 'descricao' => 'Atalho antigo'],
+            ['codigo' => 'cadastros.editar', 'nome' => '[Legado] Editar cadastros', 'grupo' => 'Legado', 'descricao' => 'Atalho antigo'],
+            ['codigo' => 'usuarios.gerenciar', 'nome' => '[Legado] Gerenciar usuários', 'grupo' => 'Legado', 'descricao' => 'Equivale a todas as ações de Usuários'],
+            ['codigo' => 'perfis.gerenciar', 'nome' => '[Legado] Gerenciar perfis', 'grupo' => 'Legado', 'descricao' => 'Equivale a todas as ações de Perfis'],
+            ['codigo' => 'email.gerenciar', 'nome' => '[Legado] Conta de e-mail', 'grupo' => 'Legado', 'descricao' => 'Equivale a Ver+Operar e-mail'],
+            ['codigo' => 'importacoes.gerenciar', 'nome' => '[Legado] Importações', 'grupo' => 'Legado', 'descricao' => 'Equivale a Ver+Operar importações'],
+            ['codigo' => 'alertas.gerenciar', 'nome' => '[Legado] Configurar alertas', 'grupo' => 'Legado', 'descricao' => 'Equivale a Ver+Editar+Operar config alertas'],
+            ['codigo' => 'ponto.excluir_periodo', 'nome' => '[Legado] Excluir período', 'grupo' => 'Legado', 'descricao' => 'Equivale a ponto.excluir'],
+            ['codigo' => 'folha.enviar', 'nome' => '[Legado] Enviar folha', 'grupo' => 'Legado', 'descricao' => 'Equivale a folha.operar'],
+            ['codigo' => 'medicao.editar', 'nome' => '[Legado] Operar medição', 'grupo' => 'Legado', 'descricao' => 'Equivale a medicao.operar'],
+            ['codigo' => 'vr.editar', 'nome' => '[Legado] Editar VR', 'grupo' => 'Legado', 'descricao' => 'Equivale a criar/editar/excluir VR'],
+            ['codigo' => 'dashboard.ver', 'nome' => '[Compat] dashboard.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto pelo mapa'],
+            ['codigo' => 'alertas.ver', 'nome' => '[Compat] alertas.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto pelo mapa'],
+            ['codigo' => 'efetivo.ver', 'nome' => '[Compat] efetivo.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'efetivo.editar', 'nome' => '[Compat] efetivo.editar', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'ponto.ver', 'nome' => '[Compat] ponto.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'ponto.editar', 'nome' => '[Compat] ponto.editar', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'folha.ver', 'nome' => '[Compat] folha.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'medicao.ver', 'nome' => '[Compat] medicao.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'ra.ver', 'nome' => '[Compat] ra.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'ra.editar', 'nome' => '[Compat] ra.editar', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'vr.ver', 'nome' => '[Compat] vr.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'atividade.ver', 'nome' => '[Compat] atividade.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+            ['codigo' => 'entregas.gerir', 'nome' => '[Compat] entregas.gerir', 'grupo' => 'Legado', 'descricao' => 'Equivale a entregas.operar'],
+            ['codigo' => 'entregas.ver', 'nome' => '[Compat] entregas.ver', 'grupo' => 'Legado', 'descricao' => 'Já coberto'],
+        ];
+
+        // Evita duplicar códigos já gerados pelo mapa.
+        $seen = [];
+        $final = [];
+        foreach (array_merge($rows, $legado) as $row) {
+            $c = $row['codigo'];
+            if (isset($seen[$c])) {
+                continue;
+            }
+            $seen[$c] = true;
+            $final[] = $row;
+        }
+
+        return $final;
     }
 
-    /** Garante permissões no banco e concede novas ao perfil admin (sem reativar removidas). */
     public function ensureCatalog(): void
     {
         $ins = $this->db->prepare(
@@ -76,7 +283,6 @@ final class PerfilService
                 'd' => $row['descricao'],
             ]);
 
-            // Novas permissões entram automaticamente no admin (sem reabrir as que o RH removeu).
             if ($antes === false && $adminId > 0) {
                 $permId = (int) $this->db->query(
                     'SELECT id FROM permissoes WHERE codigo = ' . $this->db->quote($row['codigo'])
@@ -87,7 +293,6 @@ final class PerfilService
             }
         }
 
-        // Cura legado: admin sem nenhuma permissão marcada (antes o Auth liberava tudo sozinho).
         if ($adminId > 0) {
             $qtd = (int) $this->db->query(
                 'SELECT COUNT(*) FROM perfil_permissoes WHERE perfil_id = ' . $adminId
@@ -103,6 +308,121 @@ final class PerfilService
                 }
             }
         }
+
+        $this->expandirLegadoPara360();
+    }
+
+    /** Propaga atalhos antigos para o mapa 360° completo. */
+    public function expandirLegadoPara360(): void
+    {
+        $link = $this->db->prepare(
+            'INSERT IGNORE INTO perfil_permissoes (perfil_id, permissao_id) VALUES (:p, :m)'
+        );
+        $grant = function (int $perfilId, array $codigos) use ($link): void {
+            foreach ($codigos as $codigo) {
+                $permId = (int) $this->db->query(
+                    'SELECT id FROM permissoes WHERE codigo = ' . $this->db->quote($codigo)
+                )->fetchColumn();
+                if ($permId > 0) {
+                    $link->execute(['p' => $perfilId, 'm' => $permId]);
+                }
+            }
+        };
+
+        $mapas = [
+            'cadastros.ver' => self::codigosCadastrosVer(),
+            'cadastros.editar' => array_merge(
+                self::codigosCadastrosVer(),
+                self::codigosCadastrosCriar(),
+                self::codigosCadastrosEditar(),
+                self::codigosCadastrosExcluir()
+            ),
+            'usuarios.gerenciar' => ['usuarios.ver', 'usuarios.criar', 'usuarios.editar', 'usuarios.excluir', 'usuarios.operar'],
+            'perfis.gerenciar' => ['perfis.ver', 'perfis.criar', 'perfis.editar', 'perfis.excluir', 'perfis.operar'],
+            'email.gerenciar' => ['email.ver', 'email.operar'],
+            'importacoes.gerenciar' => ['importacoes.ver', 'importacoes.operar'],
+            'alertas.gerenciar' => ['alertas_config.ver', 'alertas_config.editar', 'alertas_config.operar'],
+            'ponto.excluir_periodo' => ['ponto.excluir'],
+            'folha.enviar' => ['folha.operar'],
+            'medicao.editar' => ['medicao.operar', 'he_relatorio.ver', 'he_relatorio.operar'],
+            'medicao.operar' => ['he_relatorio.ver', 'he_relatorio.operar'],
+            'medicao.ver' => ['he_relatorio.ver'],
+            'vr.editar' => ['vr.criar', 'vr.editar', 'vr.excluir', 'vr_relatorio.operar'],
+            'efetivo.editar' => ['efetivo.criar', 'efetivo.editar', 'efetivo.excluir', 'efetivo.operar'],
+            'ponto.editar' => ['ponto.editar', 'ponto.operar', 'justificativa_tipos.ver', 'justificativa_tipos.criar', 'justificativa_tipos.editar', 'justificativa_tipos.excluir'],
+            'ra.editar' => ['ra.editar', 'ra.operar'],
+            'dashboard.ver' => ['dashboard.ver', 'mapa.ver'],
+            'alertas.ver' => ['alertas.ver', 'alertas.operar'],
+        ];
+
+        // Também: quem tem X.editar ganha X.criar (cadastros granulares já existentes).
+        foreach (self::mapaCadastrosMenu() as $meta) {
+            $mapas[$meta['editar']] = array_merge(
+                $mapas[$meta['editar']] ?? [],
+                [$meta['ver'], $meta['criar'], $meta['editar'], $meta['excluir']]
+            );
+        }
+
+        foreach ($mapas as $origem => $destinos) {
+            $idOrigem = (int) $this->db->query(
+                'SELECT id FROM permissoes WHERE codigo = ' . $this->db->quote($origem) . ' LIMIT 1'
+            )->fetchColumn();
+            if ($idOrigem <= 0) {
+                continue;
+            }
+            $perfis = $this->db->query(
+                'SELECT DISTINCT perfil_id FROM perfil_permissoes WHERE permissao_id = ' . $idOrigem
+            )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            foreach ($perfis as $perfilId) {
+                $grant((int) $perfilId, $destinos);
+            }
+        }
+    }
+
+    /** Compatível com nome antigo. */
+    public function expandirCadastrosLegado(): void
+    {
+        $this->expandirLegadoPara360();
+    }
+
+    /**
+     * Estrutura pronta para a UI matriz (com IDs do banco).
+     *
+     * @return list<array{grupo:string,itens:list<array{recurso:string,label:string,menu:string,celulas:array<string,?array{id:int,codigo:string}>}>}>
+     */
+    public function matrizParaUi(): array
+    {
+        $this->ensureCatalog();
+        $byCode = [];
+        foreach ($this->db->query('SELECT id, codigo FROM permissoes')->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            $byCode[(string) $row['codigo']] = (int) $row['id'];
+        }
+
+        $out = [];
+        foreach (self::mapaAcesso360() as $grupo) {
+            $itens = [];
+            foreach ($grupo['itens'] as $item) {
+                $celulas = [];
+                foreach (self::ACOES as $acao) {
+                    if (!in_array($acao, $item['acoes'], true)) {
+                        $celulas[$acao] = null;
+                        continue;
+                    }
+                    $codigo = $item['recurso'] . '.' . $acao;
+                    $id = $byCode[$codigo] ?? 0;
+                    $celulas[$acao] = $id > 0 ? ['id' => $id, 'codigo' => $codigo] : null;
+                }
+                $itens[] = [
+                    'recurso' => $item['recurso'],
+                    'label' => $item['label'],
+                    'menu' => $item['menu'],
+                    'celulas' => $celulas,
+                ];
+            }
+            $out[] = ['grupo' => $grupo['grupo'], 'itens' => $itens];
+        }
+
+        return $out;
     }
 
     /** @return list<array<string,mixed>> */
@@ -144,10 +464,29 @@ final class PerfilService
     public function catalogoPermissoes(): array
     {
         $this->ensureCatalog();
+        $rows = $this->db->query('SELECT * FROM permissoes')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $ordem = array_flip(array_merge(self::ordemGruposMenu(), ['Legado']));
+        usort($rows, static function (array $a, array $b) use ($ordem): int {
+            $ga = (string) ($a['grupo'] ?? '');
+            $gb = (string) ($b['grupo'] ?? '');
+            $oa = $ordem[$ga] ?? 999;
+            $ob = $ordem[$gb] ?? 999;
+            if ($oa !== $ob) {
+                return $oa <=> $ob;
+            }
+            return strcasecmp((string) ($a['nome'] ?? ''), (string) ($b['nome'] ?? ''));
+        });
 
-        return $this->db->query(
-            'SELECT * FROM permissoes ORDER BY grupo, nome'
-        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        return $rows;
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function catalogoPermissoesMapa(): array
+    {
+        return array_values(array_filter(
+            $this->catalogoPermissoes(),
+            static fn (array $p): bool => (string) ($p['grupo'] ?? '') !== 'Legado'
+        ));
     }
 
     /**
@@ -219,13 +558,10 @@ final class PerfilService
         if ($permIds === []) {
             throw new RuntimeException('Marque ao menos uma permissão para o perfil.');
         }
-        // Evita auto-lockout: quem edita admin precisa manter gerenciar perfis OU o actor não é o único admin.
         if (!empty($atual['sistema']) || (string) ($atual['codigo'] ?? '') === 'admin') {
-            $perfisGerenciarId = (int) $this->db->query(
-                "SELECT id FROM permissoes WHERE codigo = 'perfis.gerenciar' LIMIT 1"
-            )->fetchColumn();
-            if ($perfisGerenciarId > 0 && !in_array($perfisGerenciarId, $permIds, true)) {
-                throw new RuntimeException('O perfil Administrador precisa manter a permissão “Gerenciar perfis”.');
+            $idsObrigatorios = $this->idsPorCodigos(['perfis.gerenciar', 'perfis.operar', 'perfis.editar']);
+            if ($idsObrigatorios !== [] && count(array_intersect($idsObrigatorios, $permIds)) === 0) {
+                throw new RuntimeException('O perfil Administrador precisa manter acesso a Perfis (Operar/Editar).');
             }
         }
 
@@ -252,7 +588,6 @@ final class PerfilService
         }
     }
 
-    /** Duplica perfil com novo código (facilita criar variações). */
     public function duplicar(int $id, string $novoCodigo, string $novoNome, ?int $actorId = null): int
     {
         $origem = $this->buscar($id);
@@ -267,6 +602,63 @@ final class PerfilService
             'status' => 'ativo',
             'permissao_ids' => array_map('intval', $origem['permissao_ids'] ?? []),
         ], $actorId);
+    }
+
+    /** Exclui perfil não-sistema (inativa se ainda houver usuários vinculados). */
+    public function excluir(int $id, ?int $actorId = null): void
+    {
+        $atual = $this->buscar($id);
+        if ($atual === null) {
+            throw new RuntimeException('Perfil não encontrado.');
+        }
+        if (!empty($atual['sistema']) || (string) ($atual['codigo'] ?? '') === 'admin') {
+            throw new RuntimeException('O perfil Administrador não pode ser excluído.');
+        }
+
+        $usuarios = (int) $this->db->query(
+            'SELECT COUNT(*) FROM usuario_perfis WHERE perfil_id = ' . (int) $id
+        )->fetchColumn();
+
+        if ($usuarios > 0) {
+            if ((string) ($atual['status'] ?? '') === 'inativo') {
+                throw new RuntimeException('Perfil já inativo e ainda vinculado a usuários.');
+            }
+            $this->db->prepare("UPDATE perfis SET status = 'inativo' WHERE id = :id")->execute(['id' => $id]);
+            $this->audit($id, 'excluir', [
+                'status' => $atual['status'], 'usuarios' => $usuarios,
+            ], [
+                'status' => 'inativo', 'usuarios' => $usuarios,
+            ], $actorId);
+            return;
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $this->db->prepare('DELETE FROM perfil_permissoes WHERE perfil_id = :id')->execute(['id' => $id]);
+            $this->db->prepare('DELETE FROM perfis WHERE id = :id')->execute(['id' => $id]);
+            $this->audit($id, 'excluir', [
+                'codigo' => $atual['codigo'], 'nome' => $atual['nome'],
+            ], null, $actorId);
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    /** @param list<string> $codigos @return list<int> */
+    private function idsPorCodigos(array $codigos): array
+    {
+        $ids = [];
+        foreach ($codigos as $codigo) {
+            $id = (int) $this->db->query(
+                'SELECT id FROM permissoes WHERE codigo = ' . $this->db->quote($codigo) . ' LIMIT 1'
+            )->fetchColumn();
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        return $ids;
     }
 
     /** @param list<int|string> $permIds @return list<int> */

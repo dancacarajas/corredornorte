@@ -1074,19 +1074,46 @@ final class AlertasService
         }
     }
 
-    public function contarNaoLidos(?int $usuarioId = null, bool $sincronizar = false): int
+    /**
+     * Contagem do badge do menu — alinhada à Central de Alertas.
+     * Por padrão usa o período gerado mais recente (mesmo default do painel).
+     *
+     * @param array{periodo_inicio?:?string,periodo_fim?:?string,todos_periodos?:bool} $opcoes
+     */
+    public function contarNaoLidos(?int $usuarioId = null, bool $sincronizar = false, array $opcoes = []): int
     {
         $usuarioId ??= Auth::id();
         if ($usuarioId === null || $usuarioId <= 0) {
             return 0;
         }
         try {
-            if ($sincronizar) {
-                $this->sincronizarOperacional();
+            $todos = !empty($opcoes['todos_periodos']);
+            $pi = trim((string) ($opcoes['periodo_inicio'] ?? ''));
+            $pf = trim((string) ($opcoes['periodo_fim'] ?? ''));
+
+            if (!$todos && ($pi === '' || $pf === '')) {
+                $periodo = $this->periodoPadraoPainel();
+                $pi = $periodo['data_inicio'] ?? '';
+                $pf = $periodo['data_fim'] ?? '';
             }
+
+            if ($sincronizar) {
+                $this->sincronizarOperacional(
+                    $pi !== '' ? $pi : null,
+                    $pf !== '' ? $pf : null
+                );
+            }
+
             $escopo = EscopoAcesso::contratoIds($usuarioId);
             $params = ['uid' => $usuarioId];
             $where = "e.status = 'aberto' AND ue.dispensado_em IS NULL AND ue.lido_em IS NULL";
+
+            if (!$todos && $pi !== '' && $pf !== '') {
+                $where .= ' AND (e.periodo_inicio IS NULL OR (e.periodo_inicio = :pi_f AND e.periodo_fim = :pf_f))';
+                $params['pi_f'] = $pi;
+                $params['pf_f'] = $pf;
+            }
+
             if ($escopo !== null && $escopo !== []) {
                 $ph = [];
                 foreach (array_values($escopo) as $i => $cid) {
@@ -1119,6 +1146,23 @@ final class AlertasService
         }
     }
 
+    /** @return array{data_inicio:string,data_fim:string}|array{} */
+    public function periodoPadraoPainel(): array
+    {
+        try {
+            $periodos = (new MedicaoService($this->db))->listarPeriodosGerados(1);
+            if ($periodos === []) {
+                return [];
+            }
+            return [
+                'data_inicio' => (string) $periodos[0]['data_inicio'],
+                'data_fim' => (string) $periodos[0]['data_fim'],
+            ];
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     public function marcarLido(int $usuarioId, int $alertaId): void
     {
         $this->db->prepare(
@@ -1128,9 +1172,28 @@ final class AlertasService
         )->execute(['u' => $usuarioId, 'a' => $alertaId]);
     }
 
-    public function marcarTodosLidos(int $usuarioId): int
+    /**
+     * @param array{periodo_inicio?:?string,periodo_fim?:?string,todos_periodos?:bool} $filtros
+     */
+    public function marcarTodosLidos(int $usuarioId, array $filtros = []): int
     {
-        $itens = $this->listar($usuarioId, ['somente_nao_lidos' => true]);
+        $todos = !empty($filtros['todos_periodos']);
+        $pi = trim((string) ($filtros['periodo_inicio'] ?? ''));
+        $pf = trim((string) ($filtros['periodo_fim'] ?? ''));
+        if (!$todos && ($pi === '' || $pf === '')) {
+            $periodo = $this->periodoPadraoPainel();
+            $pi = $periodo['data_inicio'] ?? '';
+            $pf = $periodo['data_fim'] ?? '';
+        }
+
+        $itens = $this->listar($usuarioId, [
+            'status' => 'nao_lidos',
+            'somente_nao_lidos' => true,
+            'periodo_inicio' => $todos ? null : ($pi !== '' ? $pi : null),
+            'periodo_fim' => $todos ? null : ($pf !== '' ? $pf : null),
+            'ignorar_periodo' => $todos,
+            'sincronizar' => false,
+        ]);
         foreach ($itens as $item) {
             $this->marcarLido($usuarioId, (int) $item['id']);
         }

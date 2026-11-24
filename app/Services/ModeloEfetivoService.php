@@ -38,6 +38,9 @@ final class ModeloEfetivoService
         ['campo' => 'centro_custo', 'coluna' => 'Centro de Custo', 'aliases' => ['centro de custo', 'cc', 'centro_custo']],
         ['campo' => 'os', 'coluna' => 'OS', 'aliases' => ['os', 'ordem de servico', 'ordem de serviço']],
         ['campo' => 'localidade', 'coluna' => 'Localidade', 'aliases' => ['localidade', 'cidade', 'municipio', 'município']],
+        ['campo' => 'he_fluxo', 'coluna' => 'Fluxo HE', 'aliases' => ['fluxo he', 'he_fluxo', 'fluxo de he', 'regra he']],
+        ['campo' => 'percentual_he', 'coluna' => 'Percentual HE', 'aliases' => ['percentual he', 'percentual_he', '% he', 'adicional he']],
+        ['campo' => 'gestor_cliente', 'coluna' => 'Gestor Cliente', 'aliases' => ['gestor cliente', 'gestor_cliente', 'fiscal cliente']],
     ];
 
     /** @return list<string> */
@@ -130,8 +133,8 @@ final class ModeloEfetivoService
               loc.municipio, loc.nome AS localidade_nome
             FROM rh_colaboradores c
             INNER JOIN rh_empresas emp ON emp.id = c.empresa_id
-            LEFT JOIN rh_colaboradores g ON g.id = c.gestor_id
-            LEFT JOIN rh_colaboradores s ON s.id = c.supervisor_id
+            LEFT JOIN rh_gestores_arcadis g ON g.id = c.gestor_id
+            LEFT JOIN rh_supervisores s ON s.id = c.supervisor_id
             LEFT JOIN rh_colaborador_lotacoes cl
               ON cl.colaborador_id = c.id AND cl.vigencia_fim IS NULL
             LEFT JOIN rh_lotacoes lot ON lot.id = cl.lotacao_id
@@ -170,6 +173,9 @@ final class ModeloEfetivoService
         if ($status !== '') {
             $sql .= ' AND c.status = :status';
             $params['status'] = $status;
+        } else {
+            // Mesmo default da lista do Efetivo: ocultar desligados.
+            $sql .= " AND c.status <> 'desligado'";
         }
         $sql .= ' ORDER BY c.nome LIMIT 10000';
 

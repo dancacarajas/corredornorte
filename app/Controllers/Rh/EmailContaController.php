@@ -17,7 +17,7 @@ final class EmailContaController
 {
     public function index(): void
     {
-        Auth::requirePermission('email.gerenciar');
+        Auth::requirePermission('email.ver');
         $pdo = Db::tryConnection();
         $contas = [];
         $gmail = null;
@@ -29,6 +29,7 @@ final class EmailContaController
         $erro = $_GET['erro'] ?? null;
         $ok = $_GET['ok'] ?? null;
         $editKey = trim((string) ($_GET['tpl'] ?? ''));
+        $podeOperar = Auth::canAny('email.operar', 'email.gerenciar');
 
         if ($dbOk) {
             try {
@@ -68,11 +69,13 @@ final class EmailContaController
             'templateEdit' => $templateEdit,
             'flashOk' => $ok,
             'flashErro' => $erro,
+            'podeOperar' => $podeOperar,
         ]);
     }
 
     public function conectarSmtp(): void
     {
+        Auth::requirePermission('email.operar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
             header('Location: /rh/email?erro=' . rawurlencode('MySQL indisponível'));
@@ -273,7 +276,7 @@ final class EmailContaController
 
     public function previewTemplate(): void
     {
-        Auth::requirePermission('email.gerenciar');
+        Auth::requirePermission('email.operar');
         $pdo = Db::tryConnection();
         $chave = trim((string) ($_GET['chave'] ?? ''));
         try {
@@ -295,7 +298,7 @@ final class EmailContaController
 
     public function salvarTemplate(): void
     {
-        Auth::requirePermission('email.gerenciar');
+        Auth::requirePermission('email.operar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
             header('Location: /rh/email?erro=' . rawurlencode('MySQL indisponível'));
@@ -319,7 +322,7 @@ final class EmailContaController
 
     public function resetTemplate(): void
     {
-        Auth::requirePermission('email.gerenciar');
+        Auth::requirePermission('email.operar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
             header('Location: /rh/email?erro=' . rawurlencode('MySQL indisponível'));

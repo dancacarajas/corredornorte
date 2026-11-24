@@ -204,7 +204,7 @@ final class HeAutorizacaoService
     }
 
     /**
-     * Ajusta o cartão (sai2 + ocorrência HE). Não chamar dentro de outra transação
+     * Ajusta o cartão (batidas + ocorrência HE). Não chamar dentro de outra transação
      * (garantirPontoDia pode gerar espelho com transação própria).
      * @return array{ponto_dia_id:int,sai2_anterior:?string}
      */
@@ -213,17 +213,19 @@ final class HeAutorizacaoService
         string $data,
         string $horaFinal,
         int $minutos,
-        string $observacao
+        string $observacao,
+        ?string $horaInicial = null
     ): array {
         $horaFinalNorm = $this->normHora($horaFinal);
         if ($horaFinalNorm === null) {
             throw new RuntimeException('Hora final inválida.');
         }
+        $horaInicialNorm = $horaInicial !== null ? $this->normHora($horaInicial) : null;
         if ($minutos <= 0) {
             throw new RuntimeException('Minutos de HE inválidos.');
         }
         $pontoDiaId = $this->garantirPontoDia($colaboradorId, $data);
-        return $this->gravarExtraNoDia($pontoDiaId, $horaFinalNorm, $minutos, $observacao);
+        return $this->gravarExtraNoDia($pontoDiaId, $horaFinalNorm, $minutos, $observacao, $horaInicialNorm);
     }
 
     /**
@@ -233,12 +235,132 @@ final class HeAutorizacaoService
         int $pontoDiaId,
         string $horaFinalNorm,
         int $minutos,
-        string $observacao
+        string $observacao,
+        ?string $horaInicialNorm = null,
+        bool $recalcularEspelho = true
     ): array {
         $batidas = $this->batidasAtuais($pontoDiaId);
         $sai2Anterior = $batidas['sai2'];
+        $batidas = $this->calcularBatidasComHe($batidas, $horaInicialNorm, $horaFinalNorm, $minutos);
+        $this->calc->salvarBatidas($pontoDiaId, $batidas, 'manual', $recalcularEspelho);
+        $this->registrarOcorrenciaHe($pontoDiaId, $minutos, $observacao);
+
+        return [
+            'ponto_dia_id' => $pontoDiaId,
+            'sai2_anterior' => $sai2Anterior,
+        ];
+    }
+
+    /**
+     * Calcula as novas batidas do dia ao aplicar uma HE, tratando:
+     * (1) Folga/feriado sem batidas: grava ent1=he_ini e sai1=he_fim.
+     * (2) HE pré-expediente: ajusta ent1 (ou par adicional) sem inverter ent2 > sai2.
+     * (3) HE pós-expediente: estende sai2/sai1 apenas se contígua; com lacuna, soma exatamente $minutos
+     *     ou utiliza o segundo par (ent2/sai2) quando livre, sem absorver intervalo não trabalhado.
+     *
+     * @param array{ent1:?string,sai1:?string,ent2:?string,sai2:?string} $batidas
+     * @return array{ent1:?string,sai1:?string,ent2:?string,sai2:?string}
+     */
+    private function calcularBatidasComHe(
+        array $batidas,
+        ?string $horaInicialNorm,
+        string $horaFinalNorm,
+        int $minutos
+    ): array {
+        $semBatidas = $batidas['ent1'] === null
+            && $batidas['sai1'] === null
+            && $batidas['ent2'] === null
+            && $batidas['sai2'] === null;
+
+        // Cenário 3: folga/feriado (ou dia sem nenhuma batida)
+        if ($semBatidas) {
+            $fimMin = $this->toMin($horaFinalNorm);
+            $iniNorm = $horaInicialNorm ?? $this->minToHora(($fimMin - $minutos + 1440) % 1440);
+            return [
+                'ent1' => $iniNorm,
+                'sai1' => $horaFinalNorm,
+                'ent2' => null,
+                'sai2' => null,
+            ];
+        }
+
+        $heIniMin = $horaInicialNorm !== null ? $this->toMin($horaInicialNorm) : null;
+        $heFimMin = $this->toMin($horaFinalNorm);
+        $ent1Min = $batidas['ent1'] !== null ? $this->toMin($batidas['ent1']) : null;
+
+        // Cenário 2: HE pré-expediente (termina até a entrada do turno, sem cruzar meia-noite)
+        if ($heIniMin !== null && $ent1Min !== null && $heIniMin < $heFimMin && $heFimMin <= $ent1Min) {
+            $soPrimeiroPar = $batidas['sai1'] !== null && $batidas['ent2'] === null && $batidas['sai2'] === null;
+            if ($heFimMin === $ent1Min) {
+                $batidas['ent1'] = $horaInicialNorm;
+                return $batidas;
+            }
+            if ($soPrimeiroPar) {
+                return [
+                    'ent1' => $horaInicialNorm,
+                    'sai1' => $horaFinalNorm,
+                    'ent2' => $batidas['ent1'],
+                    'sai2' => $batidas['sai1'],
+                ];
+            }
+            $batidas['ent1'] = $this->minToHora(($ent1Min - $minutos + 1440) % 1440);
+            return $batidas;
+        }
+
+        // Cenário 1: HE pós-expediente
+        $soPrimeiroPar = $batidas['ent1'] !== null
+            && $batidas['sai1'] !== null
+            && $batidas['ent2'] === null
+            && $batidas['sai2'] === null;
+
+        if ($soPrimeiroPar) {
+            $sai1Min = $this->toMin((string) $batidas['sai1']);
+            if ($heIniMin !== null) {
+                if ($heIniMin === $sai1Min) {
+                    $batidas['sai1'] = $horaFinalNorm;
+                    return $batidas;
+                }
+                $batidas['ent2'] = $horaInicialNorm;
+                $batidas['sai2'] = $horaFinalNorm;
+                return $batidas;
+            }
+            $batidas['sai1'] = $this->minToHora(($sai1Min + $minutos) % 1440);
+            return $batidas;
+        }
+
+        $sai2Ref = $batidas['sai2'] ?? $batidas['sai1'];
+        if ($sai2Ref !== null) {
+            $sai2Min = $this->toMin($sai2Ref);
+            if ($heIniMin !== null && $heIniMin === $sai2Min) {
+                $batidas['sai2'] = $horaFinalNorm;
+                return $batidas;
+            }
+            // Com lacuna pós-expediente (ou segunda HE no mesmo dia): avança exatamente $minutos
+            // para não contabilizar o intervalo não trabalhado como HE.
+            $batidas['sai2'] = $this->minToHora(($sai2Min + $minutos) % 1440);
+            return $batidas;
+        }
+
         $batidas['sai2'] = $horaFinalNorm;
-        $this->calc->salvarBatidas($pontoDiaId, $batidas, 'manual', true);
+        return $batidas;
+    }
+
+    private function registrarOcorrenciaHe(int $pontoDiaId, int $minutos, string $observacao): void
+    {
+        $chk = $this->db->prepare(
+            "SELECT id FROM ponto_ocorrencias
+             WHERE ponto_dia_id = :dia AND tipo = 'hora_extra' AND observacao = :obs
+             LIMIT 1"
+        );
+        $chk->execute(['dia' => $pontoDiaId, 'obs' => $observacao]);
+        $existenteId = $chk->fetchColumn();
+        if ($existenteId !== false) {
+            $this->db->prepare(
+                'UPDATE ponto_ocorrencias SET minutos = :min WHERE id = :id'
+            )->execute(['min' => $minutos, 'id' => (int) $existenteId]);
+            return;
+        }
+
         $this->db->prepare(
             "INSERT INTO ponto_ocorrencias (ponto_dia_id, tipo, minutos, observacao)
              VALUES (:dia, 'hora_extra', :min, :obs)"
@@ -247,11 +369,6 @@ final class HeAutorizacaoService
             'min' => $minutos,
             'obs' => $observacao,
         ]);
-
-        return [
-            'ponto_dia_id' => $pontoDiaId,
-            'sai2_anterior' => $sai2Anterior,
-        ];
     }
 
     public function aprovar(int $solicitacaoId, int $gestorId): void
@@ -269,8 +386,10 @@ final class HeAutorizacaoService
 
         $colaboradorId = (int) $sol['colaborador_id'];
         $data = (string) $sol['data'];
+        $horaInicial = substr((string) ($sol['hora_inicial'] ?? ''), 0, 8);
         $horaFinal = substr((string) $sol['hora_final'], 0, 8);
         $minutos = (int) $sol['minutos_he'];
+        $horaInicialNorm = $horaInicial !== '' ? $this->normHora($horaInicial) : null;
         $horaFinalNorm = $this->normHora($horaFinal);
         if ($horaFinalNorm === null) {
             throw new RuntimeException('Hora final inválida.');
@@ -289,7 +408,8 @@ final class HeAutorizacaoService
                 $pontoDiaId,
                 $horaFinalNorm,
                 $minutos,
-                'HE autorizada #' . $solicitacaoId . ' — saída ajustada para ' . substr($horaFinalNorm, 0, 5)
+                'HE autorizada #' . $solicitacaoId . ' — ' . ($horaInicialNorm !== null ? substr($horaInicialNorm, 0, 5) . ' às ' : 'saída ') . substr($horaFinalNorm, 0, 5),
+                $horaInicialNorm
             );
 
             $this->db->prepare(
@@ -364,12 +484,13 @@ final class HeAutorizacaoService
     }
 
     /**
-     * Reaplica HE aprovadas no espelho (após regeneração / horário britânico).
+     * Reaplica HE aprovadas no espelho (após regeneração / horário britânico),
+     * cobrindo tanto he_solicitacoes (status = 'aprovada') quanto ra_dias (he_status = 'aplicada', fluxo HE Cliente).
      */
     public function reaplicarAprovadasNoEspelho(int $espelhoId): void
     {
         $meta = $this->db->prepare(
-            'SELECT e.colaborador_id, pp.data_inicio, pp.data_fim
+            'SELECT e.colaborador_id, e.periodo_id, pp.data_inicio, pp.data_fim
              FROM ponto_espelhos e
              INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
              WHERE e.id = :id'
@@ -381,6 +502,7 @@ final class HeAutorizacaoService
         }
 
         $colaboradorId = (int) $row['colaborador_id'];
+        $periodoId = (int) $row['periodo_id'];
         $inicio = (string) $row['data_inicio'];
         $fim = (string) $row['data_fim'];
 
@@ -393,20 +515,105 @@ final class HeAutorizacaoService
         );
         $stmt->execute(['c' => $colaboradorId, 'ini' => $inicio, 'fim' => $fim]);
         $sols = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        if ($sols === []) {
+
+        $raHes = [];
+        if ($this->temColunasRaHe()) {
+            $stRa = $this->db->prepare(
+                "SELECT d.id AS ra_dia_id, d.data, d.he_hora_inicio, d.he_hora_fim, r.id AS relatorio_id
+                 FROM ra_dias d
+                 INNER JOIN ra_relatorios r ON r.id = d.relatorio_id
+                 WHERE (r.espelho_id = :e OR (r.colaborador_id = :c AND r.periodo_id = :p))
+                   AND d.he_status = 'aplicada'
+                   AND d.he_hora_inicio IS NOT NULL
+                   AND d.he_hora_fim IS NOT NULL
+                   AND d.data BETWEEN :ini AND :fim
+                 ORDER BY d.data, d.id"
+            );
+            $stRa->execute([
+                'e' => $espelhoId,
+                'c' => $colaboradorId,
+                'p' => $periodoId,
+                'ini' => $inicio,
+                'fim' => $fim,
+            ]);
+            $raHes = $stRa->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        if ($sols === [] && $raHes === []) {
             return;
         }
 
+        $aplicou = false;
+
         foreach ($sols as $sol) {
-            $this->aplicarSai2NoDia(
+            $horaIni = $this->normHora(substr((string) ($sol['hora_inicial'] ?? ''), 0, 8));
+            $horaFim = $this->normHora(substr((string) ($sol['hora_final'] ?? ''), 0, 8));
+            if ($horaFim === null) {
+                continue;
+            }
+            $minutos = (int) ($sol['minutos_he'] ?? 0);
+            if ($minutos <= 0 && $horaIni !== null) {
+                $minutos = $this->diffMinutos($horaIni, $horaFim, true);
+            }
+            if ($minutos <= 0) {
+                continue;
+            }
+            $obs = 'HE autorizada #' . (int) $sol['id']
+                . ' — ' . ($horaIni !== null ? substr($horaIni, 0, 5) . ' às ' : 'saída ') . substr($horaFim, 0, 5);
+            $diaId = $this->reaplicarExtraNoDia(
                 $espelhoId,
                 (string) $sol['data'],
-                substr((string) $sol['hora_final'], 0, 8),
-                (int) $sol['id']
+                $horaIni,
+                $horaFim,
+                $minutos,
+                $obs
             );
+            if ($diaId !== null) {
+                $this->db->prepare(
+                    'UPDATE he_solicitacoes SET ponto_dia_id = :dia WHERE id = :id'
+                )->execute(['dia' => $diaId, 'id' => (int) $sol['id']]);
+                $aplicou = true;
+            }
         }
 
-        $this->calc->atualizarTotaisEspelho($espelhoId);
+        $seenRa = [];
+        foreach ($raHes as $ra) {
+            $raDiaId = (int) $ra['ra_dia_id'];
+            if (isset($seenRa[$raDiaId])) {
+                continue;
+            }
+            $seenRa[$raDiaId] = true;
+
+            $horaIni = $this->normHora(substr((string) ($ra['he_hora_inicio'] ?? ''), 0, 8));
+            $horaFim = $this->normHora(substr((string) ($ra['he_hora_fim'] ?? ''), 0, 8));
+            if ($horaIni === null || $horaFim === null) {
+                continue;
+            }
+            $minutos = $this->diffMinutos($horaIni, $horaFim, true);
+            if ($minutos <= 0) {
+                continue;
+            }
+            $obs = 'HE Cliente (RA #' . (int) $ra['relatorio_id'] . ') — '
+                . substr($horaIni, 0, 5) . ' às ' . substr($horaFim, 0, 5);
+            $diaId = $this->reaplicarExtraNoDia(
+                $espelhoId,
+                (string) $ra['data'],
+                $horaIni,
+                $horaFim,
+                $minutos,
+                $obs
+            );
+            if ($diaId !== null) {
+                $this->db->prepare(
+                    'UPDATE ra_dias SET he_ponto_dia_id = :dia WHERE id = :id'
+                )->execute(['dia' => $diaId, 'id' => $raDiaId]);
+                $aplicou = true;
+            }
+        }
+
+        if ($aplicou) {
+            $this->calc->atualizarTotaisEspelho($espelhoId);
+        }
     }
 
     /** @return list<array<string,mixed>> */
@@ -593,24 +800,49 @@ final class HeAutorizacaoService
         ];
     }
 
-    private function aplicarSai2NoDia(int $espelhoId, string $data, string $horaFinal, int $solicitacaoId): void
-    {
+    private function reaplicarExtraNoDia(
+        int $espelhoId,
+        string $data,
+        ?string $horaInicialNorm,
+        string $horaFinalNorm,
+        int $minutos,
+        string $observacao
+    ): ?int {
         $stmt = $this->db->prepare(
             'SELECT id FROM ponto_dias WHERE espelho_id = :e AND data = :d LIMIT 1'
         );
         $stmt->execute(['e' => $espelhoId, 'd' => $data]);
         $diaId = (int) $stmt->fetchColumn();
         if ($diaId <= 0) {
-            return;
+            return null;
         }
 
-        $batidas = $this->batidasAtuais($diaId);
-        $batidas['sai2'] = $horaFinal;
-        $this->calc->salvarBatidas($diaId, $batidas, 'manual', false);
+        $this->gravarExtraNoDia($diaId, $horaFinalNorm, $minutos, $observacao, $horaInicialNorm, false);
+        return $diaId;
+    }
 
-        $this->db->prepare(
-            'UPDATE he_solicitacoes SET ponto_dia_id = :dia WHERE id = :id'
-        )->execute(['dia' => $diaId, 'id' => $solicitacaoId]);
+    private function temColunasRaHe(): bool
+    {
+        try {
+            $driver = (string) $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if ($driver === 'sqlite') {
+                $cols = $this->db->query('PRAGMA table_info(ra_dias)')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                $names = array_column($cols, 'name');
+                return in_array('he_hora_inicio', $names, true)
+                    && in_array('he_hora_fim', $names, true)
+                    && in_array('he_status', $names, true);
+            }
+            $st = $this->db->prepare(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = 'ra_dias'
+                   AND COLUMN_NAME IN ('he_hora_inicio','he_hora_fim','he_status')"
+            );
+            $st->execute();
+            return (int) $st->fetchColumn() === 3;
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     private function normHora(string $hora): ?string
@@ -625,12 +857,25 @@ final class HeAutorizacaoService
         return null;
     }
 
-    private function diffMinutos(string $ini, string $fim): int
+    /**
+     * Calcula duração em minutos entre $ini e $fim.
+     * Não soma 24h incondicionalmente quando $fim < $ini: só aceita virada de meia-noite
+     * plausível (ex.: início >= 18:00, fim <= 06:00 e duração <= 12h) ou quando explicitamente permitido.
+     */
+    private function diffMinutos(string $ini, string $fim, bool $permiteVirada = false): int
     {
         $a = $this->toMin($ini);
         $b = $this->toMin($fim);
+        if ($b === $a) {
+            return 0;
+        }
         if ($b < $a) {
-            $b += 1440;
+            $duracaoVirada = ($b + 1440) - $a;
+            $viradaPlausivel = ($a >= 18 * 60 && $b <= 6 * 60 && $duracaoVirada <= 12 * 60);
+            if ($viradaPlausivel || ($permiteVirada && $duracaoVirada <= 12 * 60)) {
+                return $duracaoVirada;
+            }
+            return $b - $a;
         }
         return $b - $a;
     }
@@ -639,5 +884,11 @@ final class HeAutorizacaoService
     {
         $p = array_map('intval', explode(':', substr($hora, 0, 8)));
         return ($p[0] ?? 0) * 60 + ($p[1] ?? 0);
+    }
+
+    private function minToHora(int $min): string
+    {
+        $min = (($min % 1440) + 1440) % 1440;
+        return sprintf('%02d:%02d:00', intdiv($min, 60), $min % 60);
     }
 }

@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Controllers\Rh;
 
+use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\Db;
 use App\Helpers\View;
 use PDO;
+use RuntimeException;
 use Throwable;
 
 final class CadastroController
@@ -53,38 +56,16 @@ final class CadastroController
             'columns' => ['nome', 'municipio', 'uf', 'status'],
             'fields' => ['nome' => 'text', 'municipio' => 'text', 'uf' => 'text', 'status' => 'status'],
         ],
-        'jornadas' => [
-            'table' => 'rh_jornadas',
-            'title' => 'Jornadas',
-            'menu' => 'jornadas',
-            'subtitle' => 'Horários contratuais reutilizáveis',
-            'columns' => ['codigo', 'nome', 'entrada', 'saida', 'status'],
-            'fields' => [
-                'codigo' => 'text', 'nome' => 'text',
-                'entrada' => 'time', 'intervalo_inicio' => 'time', 'intervalo_fim' => 'time', 'saida' => 'time',
-                'carga_diaria_min' => 'hours', 'carga_semanal_min' => 'hours',
-                'trabalha_sabado' => 'bool', 'trabalha_domingo' => 'bool', 'trabalha_feriado' => 'bool', 'adicional_noturno' => 'bool',
-                'status' => 'status',
-            ],
-        ],
-        'escalas' => [
-            'table' => 'rh_escalas',
-            'title' => 'Escalas',
-            'menu' => 'escalas',
-            'subtitle' => 'Inclui escalas por ciclo',
-            'columns' => ['codigo', 'nome', 'tipo', 'status'],
-            'fields' => ['codigo' => 'text', 'nome' => 'text', 'tipo' => 'escala_tipo', 'status' => 'status'],
-        ],
         'lotacoes' => [
             'table' => 'rh_lotacoes',
             'title' => 'Lotações',
             'menu' => 'lotacoes',
-            'subtitle' => 'Pacote operacional: CC + OS + Localidade + Jornada + Escala + % HE',
+            'subtitle' => 'Pacote operacional: CC + OS + Localidade + Horário + % HE',
             'columns' => ['codigo', 'nome', 'percentual_he', 'status'],
             'fields' => [
                 'codigo' => 'text', 'nome' => 'text',
                 'contrato_id' => 'contrato', 'centro_custo_id' => 'centro_custo', 'ordem_servico_id' => 'ordem_servico',
-                'localidade_id' => 'localidade', 'jornada_id' => 'jornada', 'escala_id' => 'escala', 'calendario_id' => 'calendario',
+                'localidade_id' => 'localidade', 'horario_id' => 'horario', 'calendario_id' => 'calendario',
                 'percentual_he' => 'percentual_he',
                 'status' => 'status',
             ],
@@ -154,8 +135,6 @@ final class CadastroController
     public function centrosCusto(): void { $this->list('centros-custo'); }
     public function ordensServico(): void { $this->list('ordens-servico'); }
     public function localidades(): void { $this->list('localidades'); }
-    public function jornadas(): void { $this->list('jornadas'); }
-    public function escalas(): void { $this->list('escalas'); }
     public function lotacoes(): void { $this->list('lotacoes'); }
     public function cargos(): void { $this->list('cargos'); }
     public function funcoes(): void { $this->list('funcoes'); }
@@ -165,6 +144,12 @@ final class CadastroController
 
     public function createForm(string $entity = ''): void
     {
+        $mapaCad = \App\Services\PerfilService::mapaCadastrosMenu()[$entity] ?? null;
+        if ($mapaCad !== null) {
+            Auth::requirePermission($mapaCad['criar']);
+        } else {
+            Auth::requirePermission('cadastros.editar');
+        }
         $meta = $this->entities[$entity] ?? null;
         if ($meta === null) {
             http_response_code(404);
@@ -193,6 +178,12 @@ final class CadastroController
 
     public function editForm(string $entity = '', string $id = '0'): void
     {
+        $mapaCad = \App\Services\PerfilService::mapaCadastrosMenu()[$entity] ?? null;
+        if ($mapaCad !== null) {
+            Auth::requirePermission($mapaCad['editar']);
+        } else {
+            Auth::requirePermission('cadastros.editar');
+        }
         $meta = $this->entities[$entity] ?? null;
         $pdo = Db::tryConnection();
         if ($meta === null || !$pdo instanceof PDO) {
@@ -226,6 +217,55 @@ final class CadastroController
         $this->save($entity, (int) $id);
     }
 
+    public function destroy(string $entity = '', string $id = '0'): void
+    {
+        Csrf::requireValid();
+        $meta = $this->entities[$entity] ?? null;
+        $pdo = Db::tryConnection();
+        $mapaCad = \App\Services\PerfilService::mapaCadastrosMenu()[$entity] ?? null;
+        if ($mapaCad !== null) {
+            Auth::requirePermission($mapaCad['excluir']);
+        } else {
+            Auth::requirePermission('cadastros.editar');
+        }
+
+        if ($meta === null || !$pdo instanceof PDO) {
+            header('Location: /rh/efetivo?erro=' . rawurlencode('Cadastro indisponível'));
+            exit;
+        }
+
+        $rowId = (int) $id;
+        try {
+            if ($rowId <= 0) {
+                throw new RuntimeException('Registro inválido.');
+            }
+            $st = $pdo->prepare('SELECT * FROM ' . $meta['table'] . ' WHERE id = :id LIMIT 1');
+            $st->execute(['id' => $rowId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                throw new RuntimeException('Registro não encontrado.');
+            }
+
+            // Soft delete quando há status; senão tenta hard delete.
+            if (array_key_exists('status', $row)) {
+                $pdo->prepare(
+                    'UPDATE ' . $meta['table'] . " SET status = 'inativo' WHERE id = :id"
+                )->execute(['id' => $rowId]);
+            } else {
+                try {
+                    $pdo->prepare('DELETE FROM ' . $meta['table'] . ' WHERE id = :id')->execute(['id' => $rowId]);
+                } catch (Throwable $e) {
+                    throw new RuntimeException('Não foi possível excluir: registro em uso por outros módulos.');
+                }
+            }
+
+            header('Location: /rh/' . $entity . '?ok=excluido');
+        } catch (Throwable $e) {
+            header('Location: /rh/' . $entity . '?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
     private function list(string $entity): void
     {
         $meta = $this->entities[$entity];
@@ -235,7 +275,16 @@ final class CadastroController
             $rows = $pdo->query('SELECT * FROM ' . $meta['table'] . ' ORDER BY id DESC LIMIT 200')->fetchAll();
         }
 
-        $topbarActions = '<a class="btn btn-primary btn-sm" href="/rh/' . htmlspecialchars($entity, ENT_QUOTES) . '/novo">Novo</a>';
+        $mapaCad = \App\Services\PerfilService::mapaCadastrosMenu()[$entity] ?? null;
+        $podeCriar = $mapaCad
+            ? Auth::canAny($mapaCad['criar'], $mapaCad['editar'], 'cadastros.editar')
+            : Auth::can('cadastros.editar');
+        $podeExcluir = $mapaCad
+            ? Auth::canAny($mapaCad['excluir'], 'cadastros.editar')
+            : Auth::can('cadastros.editar');
+        $topbarActions = $podeCriar
+            ? '<a class="btn btn-primary btn-sm" href="/rh/' . htmlspecialchars($entity, ENT_QUOTES) . '/novo">Novo</a>'
+            : '';
 
         View::render('rh/cadastros/list', [
             'pageTitle' => $meta['title'],
@@ -247,11 +296,20 @@ final class CadastroController
             'rows' => $rows,
             'entityLabel' => $meta['title'],
             'entity' => $entity,
+            'podeExcluir' => $podeExcluir,
+            'flashOk' => $_GET['ok'] ?? null,
+            'flashErro' => $_GET['erro'] ?? null,
         ]);
     }
 
     private function save(string $entity, ?int $id): void
     {
+        $mapaCad = \App\Services\PerfilService::mapaCadastrosMenu()[$entity] ?? null;
+        if ($mapaCad !== null) {
+            Auth::requirePermission($id === null ? $mapaCad['criar'] : $mapaCad['editar']);
+        } else {
+            Auth::requirePermission('cadastros.editar');
+        }
         $meta = $this->entities[$entity] ?? null;
         $pdo = Db::tryConnection();
         if ($meta === null || !$pdo instanceof PDO) {
@@ -282,10 +340,13 @@ final class CadastroController
                 $data[$field] = $val === '' ? null : $val;
             }
 
-            if ($entity === 'jornadas') {
-                $cargas = $this->calcularCargasJornada($data);
-                $data['carga_diaria_min'] = $cargas['diaria'];
-                $data['carga_semanal_min'] = $cargas['semanal'];
+            if ($entity === 'lotacoes') {
+                (new \App\Services\HorarioService($pdo))->ensureSchema();
+                if (empty($data['horario_id'])) {
+                    throw new RuntimeException('Selecione o horário da lotação.');
+                }
+                $data['jornada_id'] = null;
+                $data['escala_id'] = null;
             }
 
             if ($id === null) {
@@ -334,60 +395,6 @@ final class CadastroController
         return 0;
     }
 
-    /** @param array<string,mixed> $data */
-    private function calcularCargasJornada(array $data): array
-    {
-        $toMin = static function (?string $v): ?int {
-            if ($v === null || $v === '') {
-                return null;
-            }
-            if (preg_match('/^(\d{1,2}):(\d{2})(?::\d{2})?$/', trim($v), $m) !== 1) {
-                return null;
-            }
-
-            return ((int) $m[1]) * 60 + (int) $m[2];
-        };
-
-        $entrada = $toMin(isset($data['entrada']) ? (string) $data['entrada'] : null);
-        $saida = $toMin(isset($data['saida']) ? (string) $data['saida'] : null);
-        if ($entrada === null || $saida === null) {
-            return [
-                'diaria' => (int) ($data['carga_diaria_min'] ?? 0),
-                'semanal' => (int) ($data['carga_semanal_min'] ?? 0),
-            ];
-        }
-
-        if ($saida <= $entrada) {
-            $saida += 24 * 60;
-        }
-        $diaria = $saida - $entrada;
-
-        $ii = $toMin(isset($data['intervalo_inicio']) ? (string) $data['intervalo_inicio'] : null);
-        $iff = $toMin(isset($data['intervalo_fim']) ? (string) $data['intervalo_fim'] : null);
-        if ($ii !== null && $iff !== null && $iff > $ii) {
-            $diaria -= ($iff - $ii);
-        }
-        $diaria = max(0, $diaria);
-
-        $dias = 5.0;
-        $sab = !empty($data['trabalha_sabado']);
-        $dom = !empty($data['trabalha_domingo']);
-        if ($sab) {
-            $dias += 1;
-        }
-        if ($dom) {
-            $dias += 1;
-        }
-        if ($sab && $dom) {
-            $dias = 3.5; // média semanal de plantão (ex.: 12x36)
-        }
-
-        return [
-            'diaria' => $diaria,
-            'semanal' => (int) round($diaria * $dias),
-        ];
-    }
-
     /**
      * @return array<string,list<array<string,mixed>>>
      */
@@ -402,9 +409,22 @@ final class CadastroController
             'centro_custo' => $pdo->query("SELECT id, contrato_id, CONCAT(codigo,' — ',nome) AS label FROM rh_centros_custo WHERE status='ativo' ORDER BY codigo")->fetchAll(),
             'ordem_servico' => $pdo->query("SELECT os.id, os.centro_custo_id, cc.contrato_id, CONCAT(os.codigo,' — ',os.nome) AS label FROM rh_ordens_servico os LEFT JOIN rh_centros_custo cc ON cc.id = os.centro_custo_id WHERE os.status='ativo' ORDER BY os.codigo")->fetchAll(),
             'localidade' => $pdo->query("SELECT id, CONCAT(municipio,'/',uf,' — ',nome) AS label FROM rh_localidades WHERE status='ativo' ORDER BY municipio")->fetchAll(),
-            'jornada' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_jornadas WHERE status='ativo' ORDER BY codigo")->fetchAll(),
-            'escala' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_escalas WHERE status='ativo' ORDER BY codigo")->fetchAll(),
+            'horario' => $this->lookupHorarios($pdo),
             'calendario' => $pdo->query("SELECT id, CONCAT(codigo,' — ',nome) AS label FROM rh_calendarios WHERE status='ativo' ORDER BY codigo")->fetchAll(),
         ];
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function lookupHorarios(PDO $pdo): array
+    {
+        try {
+            (new \App\Services\HorarioService($pdo))->ensureSchema();
+            return $pdo->query(
+                "SELECT id, CONCAT(codigo,' — ',nome,' (',tipo,')') AS label
+                 FROM rh_horarios WHERE status='ativo' ORDER BY codigo"
+            )->fetchAll() ?: [];
+        } catch (Throwable) {
+            return [];
+        }
     }
 }

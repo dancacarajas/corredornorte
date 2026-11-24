@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Config\Database;
+use App\Helpers\AppUrl;
 use App\Helpers\DiaUtil;
 use App\Helpers\EmailDeliverability;
+use App\Helpers\EscopoAcesso;
 use App\Helpers\WhatsApp;
 use App\Services\EmailOAuth\EmailAccountService;
 use DateTimeImmutable;
@@ -211,6 +213,7 @@ final class PainelExcecoesService
         string $dataFim,
         array $comEspelho
     ): array {
+        $escopo = EscopoAcesso::sqlFiltroColaborador('c');
         $st = $db->prepare(
             "SELECT c.id, c.matricula, c.nome, l.codigo AS lotacao_codigo, loc.municipio, loc.uf
              FROM rh_colaboradores c
@@ -222,10 +225,11 @@ final class PainelExcecoesService
              )
              LEFT JOIN rh_lotacoes l ON l.id = cl.lotacao_id
              LEFT JOIN rh_localidades loc ON loc.id = l.localidade_id
-             WHERE c.status = 'ativo'
-             ORDER BY c.nome, c.id"
+             WHERE c.status = 'ativo'"
+            . $escopo['sql']
+            . ' ORDER BY c.nome, c.id'
         );
-        $st->execute(['inicio' => $dataInicio, 'fim' => $dataFim]);
+        $st->execute(array_merge(['inicio' => $dataInicio, 'fim' => $dataFim], $escopo['params']));
 
         $faltantes = [];
         foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
@@ -248,19 +252,56 @@ final class PainelExcecoesService
     /** @return array<string,mixed> */
     private function resolverDivergencias(string $dataInicio, string $dataFim, string $qs): array
     {
-        $todas = AssinaturaEletronicaService::listarDivergenciasAbertas($this->db, 100);
-        $itensPeriodo = [];
+        $escopo = EscopoAcesso::sqlFiltroColaborador('c');
+        $rowsPeriodo = [];
         $outrasPeriodos = 0;
+
+        try {
+            $st = $this->db->prepare(
+                "SELECT d.id, d.espelho_id, d.data_ocorrencia, d.motivo, d.created_at,
+                        c.nome AS colaborador_nome, c.matricula,
+                        p.data_inicio, p.data_fim
+                 FROM ponto_divergencias d
+                 INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                 INNER JOIN ponto_periodos p ON p.id = e.periodo_id
+                 INNER JOIN rh_colaboradores c ON c.id = d.colaborador_id
+                 WHERE d.status IN ('aberta', 'em_analise')
+                   AND p.data_inicio = :ini
+                   AND p.data_fim = :fim"
+                . $escopo['sql']
+                . ' ORDER BY d.created_at ASC, d.id ASC'
+            );
+            $st->execute(array_merge(['ini' => $dataInicio, 'fim' => $dataFim], $escopo['params']));
+            $rowsPeriodo = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            $stOutras = $this->db->prepare(
+                "SELECT COUNT(*)
+                 FROM ponto_divergencias d
+                 INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                 INNER JOIN ponto_periodos p ON p.id = e.periodo_id
+                 INNER JOIN rh_colaboradores c ON c.id = d.colaborador_id
+                 WHERE d.status IN ('aberta', 'em_analise')
+                   AND (p.data_inicio <> :ini OR p.data_fim <> :fim)"
+                . $escopo['sql']
+            );
+            $stOutras->execute(array_merge(['ini' => $dataInicio, 'fim' => $dataFim], $escopo['params']));
+            $outrasPeriodos = (int) $stOutras->fetchColumn();
+        } catch (Throwable) {
+            $rowsPeriodo = [];
+            $outrasPeriodos = 0;
+        }
+
+        $itensPeriodo = [];
         $agoraTs = time();
 
-        foreach ($todas as $div) {
+        foreach ($rowsPeriodo as $div) {
             $createdTs = !empty($div['created_at']) ? (strtotime((string) $div['created_at']) ?: $agoraTs) : $agoraTs;
             $horas = max(0, (int) floor(($agoraTs - $createdTs) / 3600));
             $dias = (int) floor($horas / 24);
             $idadeLabel = $dias >= 1 ? ($dias . 'd') : ($horas >= 1 ? ($horas . 'h') : 'Agora');
             $critico = $horas >= 48;
 
-            $item = [
+            $itensPeriodo[] = [
                 'id' => (int) ($div['id'] ?? 0),
                 'espelho_id' => (int) ($div['espelho_id'] ?? 0),
                 'colaborador_nome' => (string) ($div['colaborador_nome'] ?? ''),
@@ -274,12 +315,6 @@ final class PainelExcecoesService
                 'idade_label' => $idadeLabel,
                 'sla_critico' => $critico,
             ];
-
-            if ($item['data_inicio'] === $dataInicio && $item['data_fim'] === $dataFim) {
-                $itensPeriodo[] = $item;
-            } else {
-                $outrasPeriodos++;
-            }
         }
 
         // Mais antigas primeiro (maior risco SLA no topo)
@@ -319,8 +354,20 @@ final class PainelExcecoesService
         $totalDias = 0;
         $totalMin = 0;
 
-        if ($this->hasColumn('ra_dias', 'he_status')) {
+        $espelhoIds = [];
+        foreach ($colaboradores as $c) {
+            if (empty($c['he_pendente'])) {
+                continue;
+            }
+            $eid = (int) ($c['espelho_id'] ?? 0);
+            if ($eid > 0) {
+                $espelhoIds[$eid] = $eid;
+            }
+        }
+
+        if ($espelhoIds !== [] && $this->hasColumn('ra_dias', 'he_status')) {
             try {
+                $in = implode(',', array_values($espelhoIds));
                 $st = $this->db->prepare(
                     "SELECT e.id AS espelho_id, d.data, d.he_hora_inicio, d.he_hora_fim
                      FROM ponto_espelhos e
@@ -329,6 +376,7 @@ final class PainelExcecoesService
                         ON r.colaborador_id = e.colaborador_id AND r.periodo_id = e.periodo_id
                      INNER JOIN ra_dias d ON d.relatorio_id = r.id
                      WHERE pp.data_inicio = :ini AND pp.data_fim = :fim
+                       AND e.id IN ({$in})
                        AND d.he_status = 'declarada'
                      ORDER BY d.data"
                 );
@@ -342,8 +390,6 @@ final class PainelExcecoesService
                     $detalhes[$eid] ??= ['qtd_dias' => 0, 'minutos' => 0, 'primeira_data' => (string) $row['data']];
                     $detalhes[$eid]['qtd_dias']++;
                     $detalhes[$eid]['minutos'] += $min;
-                    $totalDias++;
-                    $totalMin += $min;
                 }
             } catch (Throwable) {
                 $detalhes = [];
@@ -356,15 +402,21 @@ final class PainelExcecoesService
                 continue;
             }
             $eid = (int) $c['espelho_id'];
-            $info = $detalhes[$eid] ?? ['qtd_dias' => 1, 'minutos' => 0, 'primeira_data' => null];
+            $temHeDeclarada = isset($detalhes[$eid]) && (int) $detalhes[$eid]['qtd_dias'] > 0;
+            $qtdDias = $temHeDeclarada ? (int) $detalhes[$eid]['qtd_dias'] : 0;
+            $minutos = $temHeDeclarada ? (int) $detalhes[$eid]['minutos'] : 0;
+            $totalDias += $qtdDias;
+            $totalMin += $minutos;
+
             $itens[] = [
                 'espelho_id' => $eid,
                 'colaborador_id' => (int) $c['colaborador_id'],
                 'nome' => (string) $c['nome'],
                 'matricula' => (string) $c['matricula'],
-                'qtd_dias' => (int) $info['qtd_dias'],
-                'minutos' => (int) $info['minutos'],
-                'horas_fmt' => $info['minutos'] > 0 ? $this->fmtMin((int) $info['minutos']) : null,
+                'motivo_bloqueio' => $temHeDeclarada ? 'he_declarada' : 'anexo_pendente',
+                'qtd_dias' => $qtdDias,
+                'minutos' => $minutos,
+                'horas_fmt' => $minutos > 0 ? $this->fmtMin($minutos) : null,
             ];
         }
 
@@ -509,6 +561,12 @@ final class PainelExcecoesService
         $emJanelaAtraso = in_array($fase, ['du1', 'du2', 'vencido'], true);
 
         $cobrancaPorDoc = $this->carregarNiveisCobranca($dataInicio, $dataFim);
+        $relatorioIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $c): int => (int) ($c['relatorio_id'] ?? 0),
+            $colaboradores
+        ))));
+        $raDocsPorRelatorio = $this->carregarRaDocsPorRelatorio($relatorioIds);
+        $baseUrl = rtrim(AppUrl::base(dirname(__DIR__, 2)), '/');
         $itens = [];
         $folhasPendentes = 0;
         $rasPendentesAssinatura = 0;
@@ -523,43 +581,71 @@ final class PainelExcecoesService
             $folhaAssinada = ($c['folha_status'] ?? '') === 'assinado';
             $raAssinado = ($c['ra_doc_status'] ?? '') === 'assinado';
             $raStatus = (string) ($c['ra_status'] ?? 'rascunho');
+            $raEmRascunho = in_array($raStatus, ['rascunho', ''], true);
 
             if (!$folhaAssinada) {
                 $folhasPendentes++;
             }
             if (!$raAssinado) {
-                if (in_array($raStatus, ['rascunho', ''], true)) {
+                if ($raEmRascunho) {
                     $rasRascunho++;
                 } else {
                     $rasPendentesAssinatura++;
                 }
             }
 
+            $espelhoId = (int) $c['espelho_id'];
             $docId = (int) ($c['documento_id'] ?? 0);
-            $nivelFolha = $docId > 0 ? (int) ($cobrancaPorDoc['folha:' . $docId] ?? 0) : 0;
-            $nivelMax = max($nivelMax, $nivelFolha);
+            $relId = (int) ($c['relatorio_id'] ?? 0);
+            $raDoc = $relId > 0 ? ($raDocsPorRelatorio[$relId] ?? null) : null;
+            $raDocId = is_array($raDoc) ? (int) ($raDoc['id'] ?? 0) : 0;
+            $raToken = is_array($raDoc) ? trim((string) ($raDoc['portal_token'] ?? '')) : '';
+            $raPortalUrl = (!$raEmRascunho && $raToken !== '')
+                ? ($baseUrl . '/assinar-relatorio/' . $raToken)
+                : null;
+
+            $nivelCobranca = 0;
+            if (!$folhaAssinada && $docId > 0) {
+                $nivelCobranca = max($nivelCobranca, (int) ($cobrancaPorDoc['folha:' . $docId] ?? 0));
+            }
+            if (!$raAssinado) {
+                if ($raEmRascunho) {
+                    $chaveRaPreench = $relId > 0 ? $relId : $espelhoId;
+                    if ($chaveRaPreench > 0) {
+                        $nivelCobranca = max(
+                            $nivelCobranca,
+                            (int) ($cobrancaPorDoc['ra_preenchimento:' . $chaveRaPreench] ?? 0)
+                        );
+                    }
+                } elseif ($raDocId > 0) {
+                    $nivelCobranca = max($nivelCobranca, (int) ($cobrancaPorDoc['ra:' . $raDocId] ?? 0));
+                }
+            }
+            $nivelMax = max($nivelMax, $nivelCobranca);
 
             $pendencias = [];
             if (!$folhaAssinada) {
                 $pendencias[] = 'Folha';
             }
             if (!$raAssinado) {
-                $pendencias[] = in_array($raStatus, ['rascunho', ''], true) ? 'RA (rascunho)' : 'RA';
+                $pendencias[] = $raEmRascunho ? 'RA (rascunho)' : 'RA';
             }
 
             $itens[] = [
-                'espelho_id' => (int) $c['espelho_id'],
+                'espelho_id' => $espelhoId,
                 'colaborador_id' => (int) $c['colaborador_id'],
                 'nome' => (string) $c['nome'],
                 'matricula' => (string) $c['matricula'],
                 'relatorio_id' => $c['relatorio_id'] ?? null,
+                'ra_doc_id' => $raDocId > 0 ? $raDocId : null,
                 'folha_assinada' => $folhaAssinada,
                 'ra_assinado' => $raAssinado,
                 'ra_status' => $raStatus,
                 'pendencia_label' => implode(' + ', $pendencias),
-                'nivel_cobranca' => $nivelFolha,
+                'nivel_cobranca' => $nivelCobranca,
                 'telefone' => $c['telefone'] ?? null,
                 'portal_url' => $c['portal_url'] ?? null,
+                'ra_portal_url' => $raPortalUrl,
                 'em_atraso' => $emJanelaAtraso,
             ];
         }
@@ -604,6 +690,43 @@ final class PainelExcecoesService
             $map = [];
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
                 $map[(string) $row['tipo'] . ':' . (int) $row['documento_id']] = (int) $row['max_nivel'];
+            }
+            return $map;
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * Carrega o documento de RA mais recente (não invalidado) por relatorio_id.
+     *
+     * @param list<int> $relatorioIds
+     * @return array<int,array{id:int,portal_token:string}>
+     */
+    private function carregarRaDocsPorRelatorio(array $relatorioIds): array
+    {
+        if ($relatorioIds === [] || !$this->tableExists('ra_documentos')) {
+            return [];
+        }
+        try {
+            $in = implode(',', array_map('intval', $relatorioIds));
+            $st = $this->db->query(
+                "SELECT id, relatorio_id, portal_token
+                 FROM ra_documentos
+                 WHERE relatorio_id IN ({$in})
+                   AND status <> 'invalidado'
+                 ORDER BY id DESC"
+            );
+            $map = [];
+            foreach ($st ? ($st->fetchAll(PDO::FETCH_ASSOC) ?: []) : [] as $row) {
+                $rid = (int) $row['relatorio_id'];
+                if (isset($map[$rid])) {
+                    continue;
+                }
+                $map[$rid] = [
+                    'id' => (int) $row['id'],
+                    'portal_token' => (string) ($row['portal_token'] ?? ''),
+                ];
             }
             return $map;
         } catch (Throwable) {
@@ -683,7 +806,7 @@ final class PainelExcecoesService
                 'subtitulo' => 'Todos os ' . $total . ' colaboradores concluíram cartão de ponto e RA assinados.',
                 'quantidade' => $concluidos,
                 'metric_label' => 'de ' . $total . ' prontos para o dossiê',
-                'progresso_label' => '7 etapas concluídas · 100%',
+                'progresso_label' => '6 etapas concluídas · 100%',
                 'cta_label' => 'Baixar ZIP do Dossiê',
                 'cta_href' => '/rh/medicao/dossie?' . $qs,
                 'secondary_href' => '/rh/medicao?' . $qs,
@@ -713,20 +836,20 @@ final class PainelExcecoesService
             ],
             'pdf' => [
                 'kicker' => 'Gargalo atual · Etapa 4',
-                'titulo' => 'Emitir PDFs das folhas',
-                'cta' => 'Gerar PDFs',
-                'feito_label' => 'já com PDF',
+                'titulo' => 'Emitir PDFs e links das folhas',
+                'cta' => 'Gerar PDFs e links',
+                'feito_label' => 'já com PDF e link',
                 'pendente_label' => 'ainda nesta etapa',
             ],
             'link' => [
-                'kicker' => 'Gargalo atual · Etapa 5',
-                'titulo' => 'Gerar links de assinatura',
-                'cta' => 'Gerar links',
-                'feito_label' => 'já com link',
+                'kicker' => 'Gargalo atual · Etapa 4',
+                'titulo' => 'Emitir PDFs e links das folhas',
+                'cta' => 'Gerar PDFs e links',
+                'feito_label' => 'já com PDF e link',
                 'pendente_label' => 'ainda nesta etapa',
             ],
             'email' => [
-                'kicker' => 'Gargalo atual · Etapa 6',
+                'kicker' => 'Gargalo atual · Etapa 5',
                 'titulo' => 'Enviar folhas por e-mail',
                 'cta' => 'Enviar e-mails',
                 'feito_label' => 'já enviados',
@@ -783,7 +906,7 @@ final class PainelExcecoesService
                     $ctaSecHref = $bloqueioHref;
                 } elseif ((int) $emailSemEntrega['total'] > 0) {
                     $bloqueados = (int) $emailSemEntrega['total'];
-                    $bloqueioNota = $bloqueados . ' terão problema na Etapa 6 (e-mail inválido ou falha).';
+                    $bloqueioNota = $bloqueados . ' terão problema na Etapa 5 (e-mail inválido ou falha).';
                     $bloqueioHref = (string) $emailSemEntrega['href'];
                     $ctaSecLabel = 'Corrigir e-mails (' . $bloqueados . ')';
                     $ctaSecHref = $bloqueioHref;
@@ -911,7 +1034,7 @@ final class PainelExcecoesService
             $contagemEmail = $this->contarFilaEmail($colaboradores);
             return $this->montarHeroPayload([
                 'chave' => 'email',
-                'kicker' => 'Bloqueio na Etapa 6',
+                'kicker' => 'Bloqueio na Etapa 5',
                 'titulo' => 'Corrigir e-mails que não entregam',
                 'subtitulo' => $qtd . ' colaborador(es) sem e-mail válido ou com falha de disparo.',
                 'quantidade' => $qtd,
@@ -949,11 +1072,70 @@ final class PainelExcecoesService
             ], $barra);
         }
 
-        $faltamAss = max(0, $total - $concluidos);
+        $bloqueadosDivergencia = 0;
+        $bloqueadosBatidas = 0;
+        foreach ($colaboradores as $c) {
+            if (!empty($c['concluido'])) {
+                continue;
+            }
+            if (!empty($c['em_divergencia'])) {
+                $bloqueadosDivergencia++;
+            } elseif (!empty($c['batidas_pendentes']) && empty($c['etapas']['fechado'])) {
+                $bloqueadosBatidas++;
+            }
+        }
+
+        if ($bloqueadosDivergencia > 0) {
+            $feitosEtapa = (int) ($feitos['tratado'] ?? 0);
+            return $this->montarHeroPayload([
+                'chave' => 'divergencias',
+                'kicker' => 'Bloqueio na Etapa 2',
+                'titulo' => 'Resolver divergências de ponto',
+                'subtitulo' => $bloqueadosDivergencia . ' colaborador(es) com revisão de ponto aberta impedindo conferência e fechamento.',
+                'quantidade' => $bloqueadosDivergencia,
+                'metric_label' => 'em divergência aberta',
+                'progresso_label' => $feitosEtapa . ' de ' . $total . ' já conferidos · faltam '
+                    . max(0, $total - $feitosEtapa),
+                'cta_label' => 'Ver revisões (' . $bloqueadosDivergencia . ')',
+                'cta_href' => '/rh/ponto?' . $qs . '&filtro=divergencia',
+                'secondary_href' => '/rh/medicao?' . $qs,
+                'tom' => 'danger',
+                'total' => $total,
+                'concluidos' => $concluidos,
+                'pct' => $pct,
+                'pronto_dossie' => false,
+                'etapa_atual' => 'tratado',
+            ], $barra);
+        }
+
+        if ($bloqueadosBatidas > 0) {
+            $feitosEtapa = (int) ($feitos['tratado'] ?? 0);
+            return $this->montarHeroPayload([
+                'chave' => 'batidas_pendentes',
+                'kicker' => 'Bloqueio na Etapa 2',
+                'titulo' => 'Regularizar batidas pendentes',
+                'subtitulo' => $bloqueadosBatidas . ' colaborador(es) com dias úteis sem marcação completa impedindo conferência e fechamento.',
+                'quantidade' => $bloqueadosBatidas,
+                'metric_label' => 'com batidas pendentes',
+                'progresso_label' => $feitosEtapa . ' de ' . $total . ' já conferidos · faltam '
+                    . max(0, $total - $feitosEtapa),
+                'cta_label' => 'Abrir ponto (' . $bloqueadosBatidas . ')',
+                'cta_href' => '/rh/ponto?' . $qs,
+                'secondary_href' => '/rh/medicao?' . $qs,
+                'tom' => 'warning',
+                'total' => $total,
+                'concluidos' => $concluidos,
+                'pct' => $pct,
+                'pronto_dossie' => false,
+                'etapa_atual' => 'tratado',
+            ], $barra);
+        }
+
+        $faltamAss = (int) ($assinaturas['total'] ?? 0);
         $feitosEtapa = (int) ($feitos['assinaturas'] ?? 0);
         return $this->montarHeroPayload([
             'chave' => 'assinaturas',
-            'kicker' => 'Reta final · Etapa 7',
+            'kicker' => 'Reta final · Etapa 6',
             'titulo' => 'Aguardando assinaturas para o dossiê',
             'subtitulo' => (int) ($assinaturas['folhas_pendentes'] ?? 0) . ' folha(s) e '
                 . ((int) ($assinaturas['ras_pendentes'] ?? 0) + (int) ($assinaturas['ras_rascunho'] ?? 0))
@@ -1082,6 +1264,15 @@ final class PainelExcecoesService
                     $badge = 'Aguardando envio';
                     $badgeTom = 'warning';
                 }
+            } elseif ($chaveGargalo === 'divergencias') {
+                $detalhe = 'Divergência aberta no ponto — revisar e liberar espelho';
+                $badge = 'Em divergência';
+                $badgeTom = 'danger';
+            } elseif ($chaveGargalo === 'batidas_pendentes') {
+                $qtdBat = (int) ($c['batidas_pendentes'] ?? 0);
+                $detalhe = $qtdBat . ' dia(s) útil(eis) sem batidas completas no ponto';
+                $badge = 'Batidas pendentes';
+                $badgeTom = 'warning';
             } elseif ($chaveGargalo === 'conferir' || $chaveGargalo === 'he') {
                 $hePend = !empty($c['he_pendente']);
                 $detalhe = $hePend ? 'HE declarada no RA aguardando aplicação' : 'Pronto para conferir no ponto';
@@ -1105,7 +1296,7 @@ final class PainelExcecoesService
             }
 
             $ctaHref = match ($chaveGargalo) {
-                'conferir', 'fechar' => '/rh/ponto/' . $eid . '?' . $qs,
+                'conferir', 'fechar', 'divergencias', 'batidas_pendentes' => '/rh/ponto/' . $eid . '?' . $qs,
                 default => '/rh/medicao?' . $qs . '&filtro=' . urlencode(in_array($chaveGargalo, ['conferir', 'fechar', 'pdf', 'link', 'email', 'assinaturas'], true) ? $chaveGargalo : ''),
             };
             $gargaloItens[] = [
@@ -1114,7 +1305,7 @@ final class PainelExcecoesService
                 'detalhe' => $detalhe,
                 'badge' => $badge,
                 'badge_tom' => $badgeTom,
-                'cta_label' => in_array($chaveGargalo, ['conferir', 'fechar'], true) ? 'Abrir ponto' : 'Abrir na Medição',
+                'cta_label' => in_array($chaveGargalo, ['conferir', 'fechar', 'divergencias', 'batidas_pendentes'], true) ? 'Abrir ponto' : 'Abrir na Medição',
                 'cta_href' => $ctaHref,
             ];
         }
@@ -1137,7 +1328,11 @@ final class PainelExcecoesService
         // 3. HE bloqueando conferência
         $heItens = [];
         foreach ($heBloqueante['itens'] as $h) {
-            $extra = $h['qtd_dias'] . ' dia(s) com HE declarada' . (!empty($h['horas_fmt']) ? ' · ' . $h['horas_fmt'] : '');
+            if (($h['motivo_bloqueio'] ?? '') === 'anexo_pendente' || (int) ($h['qtd_dias'] ?? 0) === 0) {
+                $extra = 'HE no cartão sem anexo de autorização';
+            } else {
+                $extra = $h['qtd_dias'] . ' dia(s) com HE declarada' . (!empty($h['horas_fmt']) ? ' · ' . $h['horas_fmt'] : '');
+            }
             $heItens[] = [
                 'matricula' => (string) $h['matricula'],
                 'nome' => (string) $h['nome'],
@@ -1169,12 +1364,26 @@ final class PainelExcecoesService
         $assItens = [];
         foreach ($assinaturas['itens'] as $a) {
             $waHref = null;
-            if (!empty($a['portal_url']) && !empty($a['telefone'])) {
-                $wa = WhatsApp::chatPayload(
-                    (string) $a['telefone'],
-                    WhatsApp::mensagemLembreteFolha((string) $a['nome'], $periodoLabel, (string) $a['portal_url'])
-                );
-                $waHref = is_array($wa) ? (string) ($wa['url'] ?? '') : null;
+            if (!empty($a['telefone'])) {
+                if (empty($a['folha_assinada']) && !empty($a['portal_url'])) {
+                    $wa = WhatsApp::chatPayload(
+                        (string) $a['telefone'],
+                        WhatsApp::mensagemLembreteFolha((string) $a['nome'], $periodoLabel, (string) $a['portal_url'])
+                    );
+                    $waHref = is_array($wa) ? (string) ($wa['url'] ?? '') : null;
+                } elseif (!empty($a['folha_assinada']) && empty($a['ra_assinado']) && !empty($a['ra_portal_url'])) {
+                    $nomeColab = trim((string) $a['nome']) !== '' ? trim((string) $a['nome']) : 'colaborador(a)';
+                    $perTxt = trim($periodoLabel) !== '' ? trim($periodoLabel) : 'período atual';
+                    $msgRa = "Olá, *{$nomeColab}*!\n\n"
+                        . "*Lembrete — assinatura pendente*\n"
+                        . "Período: *{$perTxt}*\n\n"
+                        . "Seu Relatório de Atividades (RA) ainda aguarda sua assinatura eletrônica.\n\n"
+                        . "Acesse o link abaixo para concluir:\n"
+                        . (string) $a['ra_portal_url'] . "\n\n"
+                        . '_Arcadis RH — Corredor Norte_';
+                    $wa = WhatsApp::chatPayload((string) $a['telefone'], $msgRa);
+                    $waHref = is_array($wa) ? (string) ($wa['url'] ?? '') : null;
+                }
             }
             $nivel = (int) ($a['nivel_cobranca'] ?? 0);
             $badge = $nivel > 0 ? ('Cobrança ' . $nivel) : (!empty($a['em_atraso']) ? 'Em atraso' : 'Aguardando');
@@ -1229,6 +1438,8 @@ final class PainelExcecoesService
     {
         $et = $c['etapas'] ?? [];
         return match ($chave) {
+            'divergencias' => !empty($c['em_divergencia']),
+            'batidas_pendentes' => empty($et['fechado']) && !empty($c['batidas_pendentes']) && empty($c['em_divergencia']),
             'conferir', 'he' => empty($et['tratado']),
             'fechar' => !empty($et['tratado']) && empty($et['fechado']),
             'pdf' => !empty($et['fechado']) && empty($et['pdf']),

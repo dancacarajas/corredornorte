@@ -128,6 +128,19 @@ final class Installer
         $this->migrateAlertas($pdo);
         $messages[] = 'Migração: central de alertas';
 
+        $this->migrateEntregaEquipamentos($pdo);
+        $messages[] = 'Migração: entrega de equipamentos';
+
+        $this->migratePontoHeAutorizacoes($pdo);
+        $messages[] = 'Migração: anexos de autorização de HE no cartão';
+
+        $nHor = $this->migrateHorariosRhid($pdo);
+        $messages[] = 'Migração: horários RHiD (semanal/cíclico) — ' . $nHor . ' lotação(ões) vinculada(s)';
+
+        (new \App\Services\RelatorioAtividadesNotificacaoService($pdo))->ensureSchema();
+        (new \App\Services\CobrancaAssinaturaService($pdo));
+        $messages[] = 'Migração: e-mails RA disponível + cobrança preenchimento';
+
         $adminPassword = bin2hex(random_bytes(8)) . 'A1';
         $hash = password_hash($adminPassword, PASSWORD_BCRYPT);
         $stmt = $pdo->prepare(
@@ -168,6 +181,7 @@ final class Installer
                 PDO::MYSQL_ATTR_MULTI_STATEMENTS => true,
             ]);
             $pdo->exec("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+            $pdo->exec("SET time_zone = '-03:00'");
             return $pdo;
         } catch (PDOException $e) {
             throw new RuntimeException('Falha na conexão MySQL: ' . $e->getMessage(), previous: $e);
@@ -479,12 +493,17 @@ final class Installer
 
         $map = [
             'admin' => array_column(\App\Services\PerfilService::catalogoDefinicao(), 'codigo'),
-            'rh' => [
-                'dashboard.ver', 'alertas.ver', 'efetivo.ver', 'efetivo.editar', 'cadastros.ver', 'cadastros.editar',
-                'ponto.ver', 'ponto.editar', 'folha.ver', 'folha.enviar',
-                'medicao.ver', 'medicao.editar', 'ra.ver', 'ra.editar', 'vr.ver', 'vr.editar',
-                'email.gerenciar', 'importacoes.gerenciar',
-            ],
+            'rh' => array_values(array_unique(array_merge(
+                [
+                    'dashboard.ver', 'alertas.ver', 'efetivo.ver', 'efetivo.editar',
+                    'cadastros.ver', 'cadastros.editar',
+                    'ponto.ver', 'ponto.editar', 'folha.ver', 'folha.enviar',
+                    'medicao.ver', 'medicao.editar', 'ra.ver', 'ra.editar', 'vr.ver', 'vr.editar',
+                    'email.gerenciar', 'importacoes.gerenciar',
+                ],
+                \App\Services\PerfilService::codigosCadastrosVer(),
+                \App\Services\PerfilService::codigosCadastrosEditar()
+            ))),
             'gestor' => [
                 'dashboard.ver', 'alertas.ver', 'efetivo.ver', 'ponto.ver', 'folha.ver', 'medicao.ver', 'ra.ver', 'vr.ver',
             ],
@@ -725,6 +744,33 @@ final class Installer
         );
     }
 
+    public function migrateEntregaEquipamentos(PDO $pdo): void
+    {
+        (new \App\Services\EntregaEquipamentoService($pdo))->ensureSchema();
+        (new \App\Services\PerfilService($pdo))->ensureCatalog();
+        $dir = $this->root . '/storage/uploads/entregas';
+        if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+            throw new RuntimeException('Não foi possível criar storage/uploads/entregas');
+        }
+    }
+
+    public function migratePontoHeAutorizacoes(PDO $pdo): void
+    {
+        \App\Services\PontoHeAutorizacaoService::ensureSchema($pdo);
+        $dir = $this->root . '/storage/uploads/he_autorizacoes';
+        if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+            throw new RuntimeException('Não foi possível criar storage/uploads/he_autorizacoes');
+        }
+    }
+
+    public function migrateHorariosRhid(PDO $pdo): int
+    {
+        $svc = new \App\Services\HorarioService($pdo);
+        $svc->ensureSchema();
+        (new \App\Services\PerfilService($pdo))->ensureCatalog();
+        return $svc->migrarLote();
+    }
+
     public function migrateAlertas(PDO $pdo): void
     {
         (new \App\Services\AlertasService($pdo));
@@ -961,6 +1007,7 @@ final class Installer
         foreach ([
             'storage/uploads',
             'storage/uploads/avatars',
+            'storage/uploads/entregas',
             'storage/logs',
             'storage/assinaturas',
             'storage/tmp',
@@ -1013,7 +1060,7 @@ final class Installer
             'tagline' => 'RH Operacional',
             'env' => 'production',
             'url' => $appUrl,
-            'timezone' => 'America/Belem',
+            'timezone' => 'America/Sao_Paulo',
             'cron_secret' => $cronSecret,
         ];
         $export = var_export($data, true);

@@ -17,14 +17,14 @@ declare(strict_types=1);
  *   php scripts/cron_cobranca_assinatura.php tarde --agora="2026-11-16 09:05:00"
  */
 
+use App\Helpers\Db;
+use App\Services\CobrancaAssinaturaService;
+
 $root = dirname(__DIR__);
 require $root . '/vendor/autoload.php';
 
 $config = require $root . '/config/app.php';
-date_default_timezone_set((string) ($config['timezone'] ?? 'America/Belem'));
-
-use App\Helpers\Db;
-use App\Services\CobrancaAssinaturaService;
+date_default_timezone_set((string) ($config['timezone'] ?? 'America/Sao_Paulo'));
 
 $slot = 'auto';
 $agora = null;

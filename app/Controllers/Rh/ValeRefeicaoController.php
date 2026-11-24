@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers\Rh;
 
+use App\Helpers\Auth;
 use App\Helpers\Db;
 use App\Helpers\View;
 use App\Services\VrExcelExporter;
@@ -17,6 +18,7 @@ final class ValeRefeicaoController
 {
     public function index(): void
     {
+        Auth::requirePermission('vr.ver');
         $pdo = Db::tryConnection();
         $editarId = (int) ($_GET['editar'] ?? 0);
         $verId = (int) ($_GET['ver'] ?? 0);
@@ -48,6 +50,9 @@ final class ValeRefeicaoController
             'pageTitle' => 'Vale Refeição · Configuração',
             'pageSubtitle' => 'Cadastre regras gerais ou por contrato',
             'activeMenu' => 'vr-config',
+            'podeCriar' => Auth::canAny('vr.criar', 'vr.editar'),
+            'podeEditar' => Auth::can('vr.editar'),
+            'podeExcluir' => Auth::can('vr.excluir'),
             'extraCss' => ['css/vr.css?v=vr-ui-20261114'],
             'dbOk' => $dbOk,
             'configs' => $configs,
@@ -63,6 +68,7 @@ final class ValeRefeicaoController
 
     public function relatorio(): void
     {
+        Auth::requirePermission('vr_relatorio.ver');
         [$dataInicio, $dataFim] = $this->periodoPadrao();
         $dataInicio = (string) ($_GET['data_inicio'] ?? $dataInicio);
         $dataFim = (string) ($_GET['data_fim'] ?? $dataFim);
@@ -127,12 +133,13 @@ final class ValeRefeicaoController
 
     public function salvarConfig(): void
     {
+        $id = (int) ($_POST['id'] ?? 0);
+        Auth::requirePermission($id > 0 ? 'vr.editar' : 'vr.criar');
         $pdo = Db::tryConnection();
         try {
             if (!$pdo instanceof PDO) {
                 throw new RuntimeException('Banco indisponível.');
             }
-            $id = (int) ($_POST['id'] ?? 0);
             $nome = (string) ($_POST['nome'] ?? '');
             $valor = (float) str_replace(',', '.', (string) ($_POST['valor_dia'] ?? '0'));
             $tipo = (string) ($_POST['tipo'] ?? 'dias_trabalhados');
@@ -160,6 +167,7 @@ final class ValeRefeicaoController
 
     public function excluirConfig(string $id = '0'): void
     {
+        Auth::requirePermission('vr.excluir');
         $pdo = Db::tryConnection();
         try {
             if (!$pdo instanceof PDO) {
@@ -180,6 +188,7 @@ final class ValeRefeicaoController
 
     public function exportarPdf(): void
     {
+        Auth::requirePermission('vr_relatorio.operar');
         [$dataInicio, $dataFim, $calculo] = $this->carregarCalculoOuRedirecionar();
         $path = sys_get_temp_dir() . '/vr_' . bin2hex(random_bytes(6)) . '.pdf';
         try {
@@ -209,6 +218,7 @@ final class ValeRefeicaoController
 
     public function exportarExcel(): void
     {
+        Auth::requirePermission('vr_relatorio.operar');
         [$dataInicio, $dataFim, $calculo] = $this->carregarCalculoOuRedirecionar();
         try {
             $path = (new VrExcelExporter())->gerarArquivo($calculo, [

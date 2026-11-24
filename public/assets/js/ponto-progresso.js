@@ -86,13 +86,26 @@
     }
     const headers = { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
     if (csrf) headers['X-CSRF-Token'] = csrf;
-    const resposta = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      credentials: 'same-origin',
-      body,
-      redirect: 'follow',
-    });
+    const ac = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ac ? window.setTimeout(() => ac.abort(), 90000) : 0;
+    let resposta;
+    try {
+      resposta = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        credentials: 'same-origin',
+        body,
+        redirect: 'follow',
+        signal: ac?.signal,
+      });
+    } catch (erro) {
+      if (erro && (erro.name === 'AbortError' || /aborted/i.test(String(erro.message || '')))) {
+        throw new Error('A geração demorou demais em um lote. Recarregue a página e tente novamente.');
+      }
+      throw erro;
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
     if (resposta.redirected && new URL(resposta.url).pathname.endsWith('/login')) {
       throw new Error('Sessão expirada');
     }
@@ -136,6 +149,11 @@
 
       while (guard < 5000) {
         guard += 1;
+        exibirStatus(
+          phase === 'calculation'
+            ? 'Calculando totais de ponto…'
+            : (batchOffset > 0 ? `Gerando espelhos… (${batchOffset} concluídos)` : 'Gerando espelhos…')
+        );
         const eventoResp = await postGeracao(formulario, endpoint, {
           phase,
           batch_offset: batchOffset,

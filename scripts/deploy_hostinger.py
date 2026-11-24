@@ -172,6 +172,7 @@ def main() -> int:
             f"tar -xzf {remote_tar} -C {remote_root} && "
             f"rm -f {remote_tar} && "
             f"mkdir -p {remote_root}/storage/uploads {remote_root}/storage/uploads/avatars "
+            f"{remote_root}/storage/uploads/entregas "
             f"{remote_root}/storage/logs {remote_root}/storage/assinaturas "
             f"{remote_root}/storage/tmp {remote_root}/output && "
             f"chmod -R u+rwX,go+rX {remote_root}/public {remote_root}/app {remote_root}/config "
@@ -210,6 +211,10 @@ def main() -> int:
             # Remove scripts de diagnóstico e lixo tmp do servidor
             f"rm -f {remote_root}/scripts/_tmp_* {remote_root}/tmp/_wa_* 2>/dev/null; "
             f"find {remote_root}/tmp -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name '.gitkeep' -exec rm -rf {{}} + 2>/dev/null; "
+            # Força horário de negócio São Paulo / Brasil no app.local restaurado
+            f"if [ -f {remote_root}/config/app.local.php ]; then "
+            f"  sed -i \"s/America\\/Belem/America\\/Sao_Paulo/g\" {remote_root}/config/app.local.php; "
+            f"fi; "
             f"echo CONFIG_RESTORED",
         )
         # Orienta DocumentRoot ideal (= .../public) sem quebrar o rewrite atual

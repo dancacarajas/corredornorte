@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace App\Controllers\Rh;
 
+use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\Db;
 use App\Helpers\View;
 use PDO;
+use RuntimeException;
 use Throwable;
 
 final class CalendarioController
 {
     public function index(): void
     {
+        Auth::requirePermission('calendarios.ver');
         $pdo = Db::tryConnection();
         $nacional = null;
         $cidades = [];
@@ -39,6 +43,11 @@ final class CalendarioController
             )->fetchAll();
         }
 
+        $podeCriar = Auth::canAny('calendarios.criar', 'calendarios.editar', 'cadastros.editar');
+        $topbar = $podeCriar
+            ? '<a class="btn btn-secondary btn-sm" href="/rh/calendarios/novo">Novo calendário</a>'
+            : '';
+
         View::render('rh/calendarios/index', [
             'pageTitle' => 'Feriados',
             'pageSubtitle' => 'Nacionais + estaduais + municipais por cidade',
@@ -46,8 +55,40 @@ final class CalendarioController
             'dbOk' => $pdo instanceof PDO,
             'nacional' => $nacional,
             'cidades' => $cidades,
-            'topbarActions' => '<a class="btn btn-secondary btn-sm" href="/rh/calendarios/novo">Novo calendário</a>',
+            'podeCriar' => $podeCriar,
+            'podeEditar' => Auth::canAny('calendarios.editar', 'cadastros.editar'),
+            'podeExcluir' => Auth::canAny('calendarios.excluir', 'cadastros.editar'),
+            'topbarActions' => $topbar,
+            'flashOk' => $_GET['ok'] ?? null,
+            'flashErro' => $_GET['erro'] ?? null,
         ]);
+    }
+
+    public function destroy(string $id = '0'): void
+    {
+        Auth::requirePermission('calendarios.excluir');
+        Csrf::requireValid();
+        $pdo = Db::tryConnection();
+        $calId = (int) $id;
+        try {
+            if (!$pdo instanceof PDO || $calId <= 0) {
+                throw new RuntimeException('Calendário inválido.');
+            }
+            $st = $pdo->prepare('SELECT id, escopo, status FROM rh_calendarios WHERE id = :id LIMIT 1');
+            $st->execute(['id' => $calId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                throw new RuntimeException('Calendário não encontrado.');
+            }
+            if ((string) ($row['escopo'] ?? '') === 'nacional') {
+                throw new RuntimeException('O calendário nacional não pode ser excluído.');
+            }
+            $pdo->prepare("UPDATE rh_calendarios SET status = 'inativo' WHERE id = :id")->execute(['id' => $calId]);
+            header('Location: /rh/calendarios?ok=excluido');
+        } catch (Throwable $e) {
+            header('Location: /rh/calendarios?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
     }
 
     public function porCidade(string $id = '0'): void
@@ -86,6 +127,7 @@ final class CalendarioController
 
     public function addFeriadoCidade(string $id = '0'): void
     {
+        Auth::requirePermission('calendarios.criar');
         $pdo = Db::tryConnection();
         $localidadeId = (int) $id;
         if (!$pdo instanceof PDO || $localidadeId <= 0) {
@@ -126,6 +168,7 @@ final class CalendarioController
 
     public function deleteFeriadoCidade(string $id = '0', string $feriadoId = '0'): void
     {
+        Auth::requirePermission('calendarios.excluir');
         $pdo = Db::tryConnection();
         $localidadeId = (int) $id;
         if ($pdo instanceof PDO && $localidadeId > 0) {
@@ -149,6 +192,7 @@ final class CalendarioController
 
     public function create(): void
     {
+        Auth::requirePermission('calendarios.criar');
         $pdo = Db::tryConnection();
         View::render('rh/calendarios/form', [
             'pageTitle' => 'Novo calendário',
@@ -164,6 +208,7 @@ final class CalendarioController
 
     public function store(): void
     {
+        Auth::requirePermission('calendarios.criar');
         $this->save(null);
     }
 
@@ -220,11 +265,13 @@ final class CalendarioController
 
     public function update(string $id = '0'): void
     {
+        Auth::requirePermission('calendarios.editar');
         $this->save((int) $id);
     }
 
     public function addFeriado(string $id = '0'): void
     {
+        Auth::requirePermission('calendarios.criar');
         $pdo = Db::tryConnection();
         $calId = (int) $id;
         if (!$pdo instanceof PDO || $calId <= 0) {
@@ -251,6 +298,7 @@ final class CalendarioController
 
     public function deleteFeriado(string $id = '0', string $feriadoId = '0'): void
     {
+        Auth::requirePermission('calendarios.excluir');
         $pdo = Db::tryConnection();
         if ($pdo instanceof PDO) {
             $pdo->prepare('DELETE FROM rh_feriados WHERE id = :id AND calendario_id = :c')

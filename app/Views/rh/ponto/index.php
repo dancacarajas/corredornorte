@@ -107,36 +107,117 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
 </section>
 
 <?php if ($podeExcluirPeriodo && $periodoJaGerado): ?>
-<div class="modal-backdrop" id="excluirPeriodoModal">
-    <div class="modal" role="dialog" aria-labelledby="excluirPeriodoTitulo">
-        <form method="post" action="/rh/ponto/periodo/excluir">
+<div class="modal-backdrop" id="excluirPeriodoModal" data-excluir-periodo-modal>
+    <div class="modal modal-danger-confirm" role="dialog" aria-modal="true" aria-labelledby="excluirPeriodoTitulo" aria-describedby="excluirPeriodoDesc">
+        <form method="post" action="/rh/ponto/periodo/excluir" id="excluirPeriodoForm" autocomplete="off">
             <?= Csrf::field() ?>
             <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
             <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
-            <div class="modal-header">
-                <h3 class="card-title" id="excluirPeriodoTitulo">Excluir período definitivamente</h3>
-                <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
-            </div>
-            <div class="modal-body">
-                <div class="alert alert-danger">
-                    Esta ação apaga <strong>tudo</strong> gerado em
-                    <strong><?= View::e($rotuloPeriodo) ?></strong>:
-                    cartões de ponto, batidas, justificativas e anexos, PDFs/folha,
-                    e-mails, links de assinatura, RA e arquivos em disco.
-                    Não há recuperação.
+
+            <div class="modal-header modal-danger-confirm-header">
+                <div class="modal-danger-confirm-heading">
+                    <span class="modal-danger-confirm-icon" aria-hidden="true">!</span>
+                    <div>
+                        <p class="modal-danger-confirm-kicker">Ação irreversível</p>
+                        <h3 class="card-title" id="excluirPeriodoTitulo">Excluir período</h3>
+                    </div>
                 </div>
-                <div class="form-field">
-                    <label class="form-label" for="confirmTextoExcluir">Digite <strong>EXCLUIR</strong> para confirmar</label>
-                    <input class="form-control" id="confirmTextoExcluir" name="confirm_texto" required autocomplete="off" placeholder="EXCLUIR">
+                <button class="btn btn-ghost btn-sm" type="button" data-modal-close aria-label="Fechar">Fechar</button>
+            </div>
+
+            <div class="modal-body modal-danger-confirm-body">
+                <p class="modal-danger-confirm-lead" id="excluirPeriodoDesc">
+                    Vai apagar <strong>tudo</strong> gerado neste período. Não há como desfazer.
+                </p>
+
+                <div class="modal-danger-period" role="group" aria-label="Período selecionado">
+                    <span class="modal-danger-period-label">Período</span>
+                    <strong class="modal-danger-period-value"><?= View::e($rotuloPeriodo) ?></strong>
+                    <?php if (!empty($resumo['total'])): ?>
+                        <span class="modal-danger-period-meta"><?= (int) $resumo['total'] ?> cartão(ões) de ponto</span>
+                    <?php endif; ?>
+                </div>
+
+                <div class="modal-danger-list-wrap">
+                    <p class="modal-danger-list-title">O que será removido</p>
+                    <ul class="modal-danger-list">
+                        <li>Cartões de ponto, batidas e justificativas (com anexos)</li>
+                        <li>PDFs de folha, e-mails e links de assinatura</li>
+                        <li>Relatórios de atividade (RA) e arquivos em disco</li>
+                    </ul>
+                </div>
+
+                <div class="form-field modal-danger-confirm-field">
+                    <label class="form-label" for="confirmTextoExcluir">
+                        Para confirmar, digite <kbd class="modal-danger-kbd">EXCLUIR</kbd>
+                    </label>
+                    <input
+                        class="form-control modal-danger-confirm-input"
+                        id="confirmTextoExcluir"
+                        name="confirm_texto"
+                        required
+                        autocomplete="off"
+                        spellcheck="false"
+                        autocapitalize="characters"
+                        placeholder="Digite EXCLUIR"
+                        inputmode="text"
+                        aria-describedby="confirmTextoExcluirHint"
+                    >
+                    <p class="form-hint" id="confirmTextoExcluirHint">O botão só libera com a palavra exata.</p>
                 </div>
             </div>
-            <div class="modal-footer">
+
+            <div class="modal-footer modal-danger-confirm-footer">
                 <button class="btn btn-ghost" type="button" data-modal-close>Cancelar</button>
-                <button class="btn btn-danger" type="submit">Excluir período agora</button>
+                <button class="btn btn-danger" type="submit" id="excluirPeriodoSubmit" disabled>
+                    Excluir período agora
+                </button>
             </div>
         </form>
     </div>
 </div>
+<script>
+(() => {
+  const modal = document.getElementById('excluirPeriodoModal');
+  const input = document.getElementById('confirmTextoExcluir');
+  const submit = document.getElementById('excluirPeriodoSubmit');
+  const form = document.getElementById('excluirPeriodoForm');
+  if (!modal || !input || !submit || !form) return;
+
+  const sync = () => {
+    const ok = input.value.trim().toUpperCase() === 'EXCLUIR';
+    submit.disabled = !ok;
+    input.classList.toggle('is-valid', ok);
+    input.classList.toggle('is-invalid', input.value.trim() !== '' && !ok);
+  };
+
+  input.addEventListener('input', sync);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && submit.disabled) ev.preventDefault();
+  });
+
+  form.addEventListener('submit', (ev) => {
+    if (submit.disabled || input.value.trim().toUpperCase() !== 'EXCLUIR') {
+      ev.preventDefault();
+      input.focus();
+      sync();
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = 'Excluindo…';
+  });
+
+  const openBtn = document.querySelector('[data-modal-open="excluirPeriodoModal"]');
+  openBtn?.addEventListener('click', () => {
+    input.value = '';
+    submit.textContent = 'Excluir período agora';
+    sync();
+    window.setTimeout(() => input.focus(), 50);
+  });
+
+  sync();
+})();
+</script>
 <?php endif; ?>
 
 <?php if ($filtroEspecial === 'divergencia'): ?>
@@ -467,7 +548,7 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
         <button class="btn btn-primary btn-sm" type="submit">Fechar</button>
     </form>
 </dialog>
-<script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-gerar-20261116" defer></script>
+<script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-gerar-20261119b" defer></script>
 
 <div class="modal-backdrop" id="pontoReabrirModal">
     <div class="modal">

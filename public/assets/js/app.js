@@ -1,4 +1,41 @@
 (() => {
+  // Horário de negócio do sistema: sempre São Paulo / Brasil.
+  const APP_TZ = 'America/Sao_Paulo';
+  const formatSaoPaulo = (value, opts = {}) => {
+    const options = {
+      timeZone: APP_TZ,
+      hour: '2-digit',
+      minute: '2-digit',
+      ...opts,
+    };
+    if (value == null || value === '') {
+      return new Intl.DateTimeFormat('pt-BR', options).format(new Date());
+    }
+    if (value instanceof Date) {
+      return new Intl.DateTimeFormat('pt-BR', options).format(value);
+    }
+    const raw = String(value).trim();
+    // Datetime MySQL sem offset = horário de São Paulo (wall-clock).
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw) && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(raw)) {
+      const iso = raw.replace(' ', 'T') + '-03:00';
+      const d = new Date(iso);
+      if (!Number.isNaN(d.getTime())) {
+        return new Intl.DateTimeFormat('pt-BR', options).format(d);
+      }
+    }
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '—';
+    return new Intl.DateTimeFormat('pt-BR', options).format(d);
+  };
+  window.AppClock = {
+    timeZone: APP_TZ,
+    nowTime: (withSeconds = false) => formatSaoPaulo(null, withSeconds ? { second: '2-digit' } : {}),
+    format: formatSaoPaulo,
+    formatDateTime: (value) => formatSaoPaulo(value, {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    }),
+  };
+
   const sidebar = document.getElementById('sidebar');
   const backdrop = document.getElementById('sidebarBackdrop');
   const toggle = document.getElementById('sidebarToggle');
@@ -213,7 +250,8 @@
 
       root.classList.add('is-open');
       document.body.classList.add('ui-confirm-open');
-      queueMicrotask(() => (danger ? cancelBtn : okBtn).focus());
+      // Sempre foca Confirmar: o usuário já iniciou a ação (ex.: Excluir).
+      queueMicrotask(() => okBtn.focus());
     });
   };
 
@@ -228,44 +266,73 @@
     danger: el.hasAttribute('data-confirm-danger'),
   });
 
+  const nativeSubmit = (form, submitter = null) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    injectCsrfIntoForm(form);
+    // Avisa a página (ex.: limpar beforeunload) antes de navegar.
+    form.dispatchEvent(new CustomEvent('arcadis:beforenativesubmit', { bubbles: true }));
+    // requestSubmit dispara o evento submit (validação/HE/dirty). Fallback: submit() nativo.
+    form.dataset.uiConfirmAccepted = '1';
+    if (typeof form.requestSubmit === 'function') {
+      try {
+        if (submitter instanceof HTMLElement) {
+          form.requestSubmit(submitter);
+        } else {
+          form.requestSubmit();
+        }
+        return;
+      } catch (_) {
+        // continua no fallback
+      }
+    }
+    HTMLFormElement.prototype.submit.call(form);
+  };
+
   document.addEventListener('click', async (event) => {
-    const trigger = event.target.closest('[data-confirm]');
+    const raw = event.target instanceof Element ? event.target : null;
+    if (!raw) return;
+
+    // Botão/link com data-confirm (ou submit dentro de form[data-confirm]).
+    let trigger = raw.closest('[data-confirm]');
+    if (trigger && trigger.tagName === 'FORM') {
+      const submitter = raw.closest('button, input[type="submit"]');
+      trigger = submitter || null;
+    }
     if (!trigger) return;
-    if (trigger.tagName === 'FORM') return;
     if (trigger.disabled) return;
     if (trigger.dataset.uiConfirmSkip === '1') {
       delete trigger.dataset.uiConfirmSkip;
       return;
     }
+
+    const formForConfirm = trigger.tagName === 'FORM'
+      ? trigger
+      : (trigger.form || trigger.closest('form'));
+    const optsEl = trigger.hasAttribute('data-confirm')
+      ? trigger
+      : (formForConfirm && formForConfirm.hasAttribute('data-confirm') ? formForConfirm : trigger);
+    if (!optsEl || !optsEl.hasAttribute('data-confirm')) return;
+
     event.preventDefault();
     event.stopPropagation();
 
-    const ok = await uiConfirm(readConfirmOptions(trigger));
+    const ok = await uiConfirm(readConfirmOptions(optsEl));
     if (!ok) return;
 
     if (trigger.tagName === 'A' && trigger.getAttribute('href')) {
       window.location.href = trigger.href;
       return;
     }
-    if (trigger.tagName === 'BUTTON' && trigger.type === 'submit') {
+
+    const isSubmitter = (trigger.tagName === 'BUTTON' || trigger.tagName === 'INPUT')
+      && String(trigger.type || 'submit') === 'submit';
+    if (isSubmitter) {
       const form = trigger.form || trigger.closest('form');
       if (!form) return;
-      injectCsrfIntoForm(form);
-      if (trigger.name) {
-        let hidden = form.querySelector(`input[data-ui-confirm-submit="${CSS.escape(trigger.name)}"]`);
-        if (!hidden) {
-          hidden = document.createElement('input');
-          hidden.type = 'hidden';
-          hidden.name = trigger.name;
-          hidden.setAttribute('data-ui-confirm-submit', trigger.name);
-          form.appendChild(hidden);
-        }
-        hidden.value = trigger.value || '1';
-      }
-      if (typeof form.requestSubmit === 'function') form.requestSubmit();
-      else form.submit();
+      nativeSubmit(form, trigger);
       return;
     }
+
     trigger.dataset.uiConfirmSkip = '1';
     trigger.click();
   }, true);
@@ -274,17 +341,22 @@
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
     injectCsrfIntoForm(form);
-    if (!form.hasAttribute('data-confirm')) return;
+
+    const submitter = event.submitter instanceof HTMLElement ? event.submitter : null;
+    const optsEl = (submitter && submitter.hasAttribute('data-confirm'))
+      ? submitter
+      : (form.hasAttribute('data-confirm') ? form : null);
+    if (!optsEl) return;
     if (form.dataset.uiConfirmAccepted === '1') {
       delete form.dataset.uiConfirmAccepted;
       return;
     }
+
     event.preventDefault();
-    const ok = await uiConfirm(readConfirmOptions(form));
+    event.stopPropagation();
+    const ok = await uiConfirm(readConfirmOptions(optsEl));
     if (!ok) return;
-    form.dataset.uiConfirmAccepted = '1';
-    if (typeof form.requestSubmit === 'function') form.requestSubmit();
-    else form.submit();
+    nativeSubmit(form, submitter);
   }, true);
 
   const ensureToastStack = () => {

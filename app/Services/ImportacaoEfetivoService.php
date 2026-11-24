@@ -240,6 +240,15 @@ final class ImportacaoEfetivoService
         }
 
         if ($existing === null) {
+            if (empty($parsed['cpf']) || strlen($parsed['cpf']) !== 11) {
+                return [
+                    'acao' => 'erro',
+                    'chave' => $chave !== '' ? $chave : 'sem-chave',
+                    'diff' => [],
+                    'colaborador_id' => null,
+                    'erros' => ['cpf' => 'CPF de 11 dígitos obrigatório para novo colaborador'],
+                ];
+            }
             return [
                 'acao' => 'criar',
                 'chave' => $chave,
@@ -251,7 +260,7 @@ final class ImportacaoEfetivoService
 
         $camposCadastro = [
             'nome', 'email_corp', 'email_alt', 'telefone', 'data_admissao',
-            'cargo', 'funcao', 'status', 'cpf',
+            'cargo', 'funcao', 'status', 'cpf', 'he_fluxo', 'percentual_he',
         ];
         $diff = [];
         foreach ($camposCadastro as $field) {
@@ -268,13 +277,13 @@ final class ImportacaoEfetivoService
             }
         }
 
-        foreach (['empresa', 'gestor_matricula', 'supervisor_matricula', 'lotacao', 'centro_custo', 'os', 'localidade'] as $field) {
+        foreach (['empresa', 'gestor_matricula', 'supervisor_matricula', 'gestor_cliente', 'lotacao', 'centro_custo', 'os', 'localidade'] as $field) {
             if (!empty($parsed[$field])) {
                 $diff[$field] = ['novo' => $parsed[$field]];
             }
         }
 
-        $hintKeys = ['empresa', 'gestor_matricula', 'supervisor_matricula', 'lotacao', 'centro_custo', 'os', 'localidade'];
+        $hintKeys = ['empresa', 'gestor_matricula', 'supervisor_matricula', 'gestor_cliente', 'lotacao', 'centro_custo', 'os', 'localidade'];
         $somenteHints = $diff;
         foreach ($hintKeys as $k) {
             unset($somenteHints[$k]);
@@ -330,10 +339,12 @@ final class ImportacaoEfetivoService
                 if (($linha['acao'] ?? '') === 'criar') {
                     $novo = $diff['novo'] ?? [];
                     $empId = $this->resolverEmpresaId((string) ($novo['empresa'] ?? ''), $empresaId);
-                    $cpf = preg_replace('/\D+/', '', (string) ($novo['cpf'] ?? ''))
-                        ?: ('9' . str_pad((string) random_int(0, 9999999999), 10, '0', STR_PAD_LEFT));
-                    $gestorId = $this->resolverColabPorMatricula((string) ($novo['gestor_matricula'] ?? ''));
-                    $supervisorId = $this->resolverColabPorMatricula((string) ($novo['supervisor_matricula'] ?? ''));
+                    $cpf = preg_replace('/\D+/', '', (string) ($novo['cpf'] ?? '')) ?: '';
+                    if (strlen($cpf) !== 11) {
+                        throw new RuntimeException('CPF inválido na criação do colaborador ' . (string) ($novo['nome'] ?? $linha['chave']));
+                    }
+                    $gestorId = $this->resolverGestorArcadisPorMatricula((string) ($novo['gestor_matricula'] ?? ''));
+                    $supervisorId = $this->resolverSupervisorPorMatricula((string) ($novo['supervisor_matricula'] ?? ''));
                     $ins = $this->db->prepare(
                         'INSERT INTO rh_colaboradores
                             (empresa_id, matricula, nome, cpf, email_corp, email_alt, telefone, data_admissao, cargo, funcao, status, gestor_id, supervisor_id)
@@ -356,9 +367,11 @@ final class ImportacaoEfetivoService
                         'supervisor_id' => $supervisorId > 0 ? $supervisorId : null,
                     ]);
                     $novoId = (int) $this->db->lastInsertId();
+                    $this->aplicarCamposHeColaborador($novoId, $novo);
                     $lotacaoId = $this->resolverLotacaoFromParsed($novo);
                     if ($lotacaoId > 0 && $novoId > 0) {
-                        (new TransferenciaLotacaoService($this->db))->transferir(
+                        $svcLot = new TransferenciaLotacaoService($this->db);
+                        $svcLot->transferir(
                             $novoId,
                             $lotacaoId,
                             (string) (($novo['data_admissao'] ?? '') ?: date('Y-m-d')),
@@ -366,6 +379,17 @@ final class ImportacaoEfetivoService
                             'Admissão via importação',
                             $usuarioId
                         );
+                        $percNovo = trim((string) ($novo['percentual_he'] ?? ''));
+                        if ($percNovo !== '' && is_numeric(str_replace(',', '.', $percNovo))) {
+                            try {
+                                $svcLot->atualizarPercentualHe(
+                                    $novoId,
+                                    (int) round((float) str_replace(',', '.', $percNovo)),
+                                    $usuarioId
+                                );
+                            } catch (\Throwable) {
+                            }
+                        }
                     }
                     $aplicadas++;
                     continue;
@@ -388,12 +412,12 @@ final class ImportacaoEfetivoService
                     $params['empresa_id'] = $this->resolverEmpresaId((string) $diff['empresa']['novo'], $empresaId);
                 }
                 if (isset($diff['gestor_matricula']['novo'])) {
-                    $gid = $this->resolverColabPorMatricula((string) $diff['gestor_matricula']['novo']);
+                    $gid = $this->resolverGestorArcadisPorMatricula((string) $diff['gestor_matricula']['novo']);
                     $sets[] = 'gestor_id = :gestor_id';
                     $params['gestor_id'] = $gid > 0 ? $gid : null;
                 }
                 if (isset($diff['supervisor_matricula']['novo'])) {
-                    $sid = $this->resolverColabPorMatricula((string) $diff['supervisor_matricula']['novo']);
+                    $sid = $this->resolverSupervisorPorMatricula((string) $diff['supervisor_matricula']['novo']);
                     $sets[] = 'supervisor_id = :supervisor_id';
                     $params['supervisor_id'] = $sid > 0 ? $sid : null;
                 }
@@ -401,6 +425,23 @@ final class ImportacaoEfetivoService
                     $sql = 'UPDATE rh_colaboradores SET ' . implode(', ', $sets) . ' WHERE id = :id';
                     $this->db->prepare($sql)->execute($params);
                     $aplicadas++;
+                }
+                $this->aplicarCamposHeColaborador($colabId, [
+                    'he_fluxo' => (string) ($diff['he_fluxo']['novo'] ?? ''),
+                    'percentual_he' => (string) ($diff['percentual_he']['novo'] ?? ''),
+                    'gestor_cliente' => (string) ($diff['gestor_cliente']['novo'] ?? ''),
+                ]);
+                $percImp = trim((string) ($diff['percentual_he']['novo'] ?? ''));
+                if ($percImp !== '' && is_numeric(str_replace(',', '.', $percImp))) {
+                    try {
+                        (new TransferenciaLotacaoService($this->db))->atualizarPercentualHe(
+                            $colabId,
+                            (int) round((float) str_replace(',', '.', $percImp)),
+                            $usuarioId
+                        );
+                    } catch (\Throwable) {
+                        // Sem lotação vigente: campo fica só no cadastro, se coluna existir.
+                    }
                 }
 
                 $parsedLot = [
@@ -529,6 +570,40 @@ final class ImportacaoEfetivoService
         return (int) ($st->fetchColumn() ?: 0);
     }
 
+    private function resolverGestorArcadisPorMatricula(string $matricula): int
+    {
+        $matricula = trim($matricula);
+        if ($matricula === '') {
+            return 0;
+        }
+        try {
+            $st = $this->db->prepare(
+                "SELECT id FROM rh_gestores_arcadis WHERE matricula = :m AND status = 'ativo' LIMIT 1"
+            );
+            $st->execute(['m' => $matricula]);
+            return (int) ($st->fetchColumn() ?: 0);
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
+    private function resolverSupervisorPorMatricula(string $matricula): int
+    {
+        $matricula = trim($matricula);
+        if ($matricula === '') {
+            return 0;
+        }
+        try {
+            $st = $this->db->prepare(
+                "SELECT id FROM rh_supervisores WHERE matricula = :m AND status = 'ativo' LIMIT 1"
+            );
+            $st->execute(['m' => $matricula]);
+            return (int) ($st->fetchColumn() ?: 0);
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
     private function normalizarData(string $value): string
     {
         $value = trim($value);
@@ -557,5 +632,66 @@ final class ImportacaoEfetivoService
             }
         }
         return true;
+    }
+
+    /**
+     * Aplica campos opcionais de HE (he_fluxo, percentual_he, gestor_cliente) se as colunas existirem no banco.
+     *
+     * @param array<string,mixed> $dados
+     */
+    private function aplicarCamposHeColaborador(int $colaboradorId, array $dados): void
+    {
+        if ($colaboradorId <= 0) {
+            return;
+        }
+        $sets = [];
+        $params = ['id' => $colaboradorId];
+        $heFluxo = mb_strtolower(trim((string) ($dados['he_fluxo'] ?? '')));
+        if (in_array($heFluxo, ['off', 'padrao', 'cliente'], true) && $this->hasCol('rh_colaboradores', 'he_fluxo')) {
+            $sets[] = 'he_fluxo = :he_fluxo';
+            $params['he_fluxo'] = $heFluxo;
+        }
+        $percRaw = trim((string) ($dados['percentual_he'] ?? ''));
+        if ($percRaw !== '' && is_numeric(str_replace(',', '.', $percRaw)) && $this->hasCol('rh_colaboradores', 'percentual_he')) {
+            $sets[] = 'percentual_he = :percentual_he';
+            $params['percentual_he'] = (float) str_replace(',', '.', $percRaw);
+        }
+        $gcRaw = trim((string) ($dados['gestor_cliente'] ?? ''));
+        if ($gcRaw !== '' && $this->hasCol('rh_colaboradores', 'gestor_cliente_id')) {
+            $gcId = 0;
+            if (ctype_digit($gcRaw)) {
+                $gcId = (int) $gcRaw;
+            } else {
+                try {
+                    $st = $this->db->prepare('SELECT id FROM rh_gestores_cliente WHERE nome = :n LIMIT 1');
+                    $st->execute(['n' => $gcRaw]);
+                    $gcId = (int) ($st->fetchColumn() ?: 0);
+                } catch (\Throwable) {
+                    $gcId = 0;
+                }
+            }
+            if ($gcId > 0) {
+                $sets[] = 'gestor_cliente_id = :gc_id';
+                $params['gc_id'] = $gcId;
+            }
+        }
+        if ($sets !== []) {
+            $sql = 'UPDATE rh_colaboradores SET ' . implode(', ', $sets) . ' WHERE id = :id';
+            $this->db->prepare($sql)->execute($params);
+        }
+    }
+
+    private function hasCol(string $table, string $column): bool
+    {
+        try {
+            $st = $this->db->prepare(
+                'SELECT 1 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c LIMIT 1'
+            );
+            $st->execute(['t' => $table, 'c' => $column]);
+            return (bool) $st->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }

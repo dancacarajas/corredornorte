@@ -9,6 +9,10 @@ $nomeAssinaturaInformado = $nomeAssinaturaInformado ?? '';
 $flash = $flash ?? null;
 $error = $error ?? null;
 $status = (string) ($documento['status'] ?? '');
+$espelhoStatus = (string) ($documento['espelho_status'] ?? '');
+$emDivergencia = $espelhoStatus === 'em_divergencia';
+$portalToken = trim((string) ($documento['portal_token'] ?? ''));
+$portalAssinarUrl = $portalToken !== '' ? ('/assinar/' . rawurlencode($portalToken)) : '';
 $assinado = $status === 'assinado';
 $docId = (int) ($documento['id'] ?? 0);
 $nomeCadastro = (string) ($documento['nome'] ?? '');
@@ -25,7 +29,7 @@ $nomeCadastro = (string) ($documento['nome'] ?? '');
     <div class="ra-page-head">
         <div>
             <h2 class="card-title" style="margin:0;">
-                <?= $assinado ? 'Folha assinada' : 'Assinar folha de ponto' ?>
+                <?= $assinado ? 'Folha assinada' : ($emDivergencia ? 'Folha em revisão pelo RH' : 'Assinar folha de ponto') ?>
             </h2>
             <p class="muted text-sm" style="margin:.35rem 0 0;">
                 Conferência e assinatura eletrônica liberadas pela medição.
@@ -43,17 +47,38 @@ $nomeCadastro = (string) ($documento['nome'] ?? '');
                 <a class="btn btn-primary btn-sm" href="/he/folhas/<?= $docId ?>/pdf" target="_blank" rel="noopener">
                     Abrir PDF assinado
                 </a>
+                <?php if ($portalAssinarUrl !== ''): ?>
+                    <a class="btn btn-secondary btn-sm" href="<?= View::e($portalAssinarUrl) ?>">
+                        Ver comprovante completo
+                    </a>
+                <?php endif; ?>
             </div>
+        </div>
+    <?php elseif ($emDivergencia): ?>
+        <div class="alert alert-warning" role="status">
+            <strong>Divergência em análise pelo RH.</strong> A assinatura desta folha está pausada até que o RH conclua o ajuste e emita uma nova via corrigida.
+            <?php if ($portalAssinarUrl !== ''): ?>
+                <div style="margin-top:.6rem;">
+                    <a class="btn btn-secondary btn-sm" href="<?= View::e($portalAssinarUrl) ?>">
+                        Acompanhar divergência / Ver espelho detalhado
+                    </a>
+                </div>
+            <?php endif; ?>
         </div>
     <?php else: ?>
         <div class="ra-next ra-next-sign" role="status">
             <div>
-                <strong>Sua vez:</strong> confira a folha e assine aqui no portal do colaborador.
+                <strong>Sua vez:</strong> confira a folha e assine aqui no portal do colaborador, ou abra o espelho detalhado caso precise apontar alguma divergência.
             </div>
-            <div class="ra-sign-row">
+            <div class="ra-sign-row" style="display:flex;gap:.5rem;flex-wrap:wrap;">
                 <a class="btn btn-secondary btn-sm" href="/he/folhas/<?= $docId ?>/pdf" target="_blank" rel="noopener">
                     Visualizar PDF
                 </a>
+                <?php if ($portalAssinarUrl !== ''): ?>
+                    <a class="btn btn-ghost btn-sm" href="<?= View::e($portalAssinarUrl) ?>">
+                        Ver espelho / Apontar divergência
+                    </a>
+                <?php endif; ?>
             </div>
         </div>
 

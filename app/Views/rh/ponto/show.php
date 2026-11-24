@@ -19,6 +19,7 @@ use App\Services\CalculoPontoService;
 /** @var int $espelhoAcaoId */
 
 $heAutorizadas = $heAutorizadas ?? [];
+$heAnexosPorDia = $heAnexosPorDia ?? [];
 $heDeclaracoes = $heDeclaracoes ?? [];
 
 $dataInicio = $dataInicio ?? sprintf('%04d-%02d-01', (int)$espelho['ano'], (int)$espelho['mes']);
@@ -76,12 +77,14 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
             'he-todas-aplicadas' => 'Todas as HEs declaradas do período foram aplicadas no cartão de ponto.',
             'he-divergente' => 'HE marcada como divergente (não aplicada).',
             'previsto-aplicado' => 'Horários previstos aplicados nos dias úteis pendentes.',
-            'divergencia-resolvida' => 'Divergência concluída! O espelho voltou para tratamento.',
-            'divergencia-reenviada' => 'Divergência concluída, ponto fechado e nova folha enviada por e-mail ao colaborador.',
+            'divergencia-resolvida' => 'Divergência liberada para conferência. Próximos passos: Conferir → Fechar → Gerar PDF → Reenviar e-mail.',
+            'divergencia-reenviada' => 'Divergência liberada para conferência. Próximos passos: Conferir → Fechar → Gerar PDF → Reenviar e-mail.',
             'folha-pdf-link' => 'PDF gerado e link de assinatura pronto neste cartão.',
             'folha-email' => 'E-mail com link de assinatura enviado ao colaborador.',
             'justificativa' => 'Justificativa salva. O ponto do período foi recalculado.',
             'justificativa-removida' => 'Justificativa removida. O ponto do período foi recalculado.',
+            'turno-autorizado' => 'Alteração temporária de turno aplicada com anexo PDF. Ponto e adicional noturno recalculados.',
+            'turno-removido' => 'Autorização de alteração de turno removida.',
             default => 'Atualizado com sucesso.',
         };
         ?>
@@ -92,14 +95,78 @@ $statusBloqueados = ['fechado', 'enviado', 'assinado'];
 <?php
 $docFolha = $docFolha ?? null;
 $portalUrlFolha = $portalUrlFolha ?? null;
+$cltConformidade = $cltConformidade ?? [
+    'por_dia' => [],
+    'resumo' => ['total' => 0, 'bloqueios' => 0, 'alertas' => 0, 'dias_afetados' => 0, 'contexto_escala' => ''],
+];
+$cltPorDia = is_array($cltConformidade['por_dia'] ?? null) ? $cltConformidade['por_dia'] : [];
+$cltResumo = is_array($cltConformidade['resumo'] ?? null) ? $cltConformidade['resumo'] : ['total' => 0, 'bloqueios' => 0, 'alertas' => 0, 'dias_afetados' => 0, 'contexto_escala' => ''];
+$turnoAutorizacoes = $turnoAutorizacoes ?? [];
+$turnoAutorizacoesPorData = $turnoAutorizacoesPorData ?? [];
 ?>
+
+<?php if ($turnoAutorizacoes !== []): ?>
+<section class="card" style="margin-bottom:1rem;">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Alterações temporárias de turno autorizadas</h2>
+            <p class="card-subtitle">Períodos com troca de horário/escala liberados mediante anexo PDF do cliente.</p>
+        </div>
+    </div>
+    <div class="card-body" style="display:flex;flex-direction:column;gap:.6rem;">
+        <?php foreach ($turnoAutorizacoes as $ta): ?>
+            <div class="turno-auth-row">
+                <div class="turno-auth-info">
+                    <strong><?= date('d/m/Y', strtotime((string) $ta['data_inicio'])) ?> a <?= date('d/m/Y', strtotime((string) $ta['data_fim'])) ?></strong>
+                    <span class="badge badge-neutral"><?= View::e(substr((string) $ta['entrada1'], 0, 5)) ?><?= !empty($ta['saida1']) ? ' / ' . View::e(substr((string) $ta['saida1'], 0, 5)) . ' / ' . View::e(substr((string) ($ta['entrada2'] ?? ''), 0, 5)) : '' ?> / <?= View::e(substr((string) $ta['saida2'], 0, 5)) ?></span>
+                    <?php if (!empty($ta['adicional_noturno'])): ?>
+                        <span class="badge badge-warning">Ad. Noturno</span>
+                    <?php endif; ?>
+                    <span class="text-sm muted"><?= View::e((string) ($ta['motivo'] ?? '')) ?></span>
+                </div>
+                <div class="turno-auth-actions">
+                    <a class="btn btn-secondary btn-sm" href="/rh/ponto/<?= (int) $espelho['id'] ?>/turno-autorizacao/<?= (int) $ta['id'] ?>" target="_blank" rel="noopener">Abrir PDF</a>
+                    <?php if (!$periodoBloqueado): ?>
+                        <form method="post" action="/rh/ponto/<?= (int) $espelho['id'] ?>/turno-autorizacao/<?= (int) $ta['id'] ?>/excluir" style="display:inline;">
+                            <input type="hidden" name="_csrf" value="<?= View::e(Csrf::token()) ?>">
+                            <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+                            <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+                            <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+                            <button class="btn btn-ghost btn-sm" type="submit"
+                                    data-confirm-title="Remover autorização de turno?"
+                                    data-confirm="O anexo PDF da alteração temporária de turno será excluído."
+                                    data-confirm-ok="Remover">Remover</button>
+                        </form>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</section>
+<?php endif; ?>
+
+<section class="ponto-clt-banner<?= ((int) ($cltResumo['total'] ?? 0) === 0) ? ' is-hidden' : '' ?>" id="pontoCltBanner" aria-label="Conformidade trabalhista CLT">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.75rem;">
+        <div>
+            <strong style="color:#991B1B;" id="pontoCltBannerTitle">
+                ⚠ Conformidade CLT: <?= (int) ($cltResumo['bloqueios'] ?? 0) ?> ilegalidade(s) e <?= (int) ($cltResumo['alertas'] ?? 0) ?> alerta(s) em <?= (int) ($cltResumo['dias_afetados'] ?? 0) ?> dia(s)
+            </strong>
+            <p class="text-sm" style="margin:.2rem 0 0;color:#7F1D1D;" id="pontoCltBannerSub">
+                Regra aplicada conforme lotação/escala: <strong><?= View::e((string) ($cltResumo['contexto_escala'] ?? 'Padrão CLT')) ?></strong>. Clique no selo <strong>CLT</strong> em cada dia abaixo para ver o artigo violado e o motivo legal.
+            </p>
+        </div>
+    </div>
+</section>
 
 <?php if (!empty($divergenciasAbertas) || $statusPeriodo === 'em_divergencia'): ?>
 <section class="ponto-div-banner" aria-label="Divergência apontada pelo colaborador">
     <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:.75rem;">
         <div>
             <strong style="color:#991B1B;">Divergência apontada pelo colaborador — assinatura pausada</strong>
-            <p class="text-sm" style="margin:.25rem 0 0;color:#7F1D1D;">Ajuste as batidas ou justificativas abaixo e use o botão único para concluir, regerar o PDF e reenviar.</p>
+            <p class="text-sm" style="margin:.25rem 0 0;color:#7F1D1D;">
+                Ajuste as batidas ou justificativas abaixo e libere o cartão para <strong>conferência</strong>.
+                Depois: Conferir → Fechar → Gerar PDF → Reenviar e-mail (a Medição também volta a essas etapas).
+            </p>
         </div>
     </div>
     <?php if (!empty($divergenciasAbertas)): ?>
@@ -120,12 +187,10 @@ $portalUrlFolha = $portalUrlFolha ?? null;
         <input class="form-control" type="text" name="resolucao_obs" maxlength="500"
                placeholder="Observação da correção para o histórico (opcional)"
                style="flex:1;min-width:220px;background:#fff;">
-        <button class="btn btn-secondary btn-sm" type="submit">Concluir divergência e liberar</button>
         <button class="btn btn-primary btn-sm" type="submit"
-                formaction="/rh/ponto/<?= (int) $espelhoAcaoId ?>/resolver-divergencia-reenviar"
-                data-confirm-title="Concluir divergência, regerar PDF e reenviar?"
-                data-confirm="Fecha o ponto, gera PDF+link e envia o e-mail ao colaborador em um único passo."
-                data-confirm-ok="Concluir e reenviar">Concluir divergência, regerar PDF e reenviar ao colaborador</button>
+                data-confirm-title="Liberar para conferência?"
+                data-confirm="O cartão volta para em tratamento. Você precisará conferir, fechar e reemitir o PDF antes de reenviar ao colaborador."
+                data-confirm-ok="Liberar para conferência">Liberar para conferência</button>
     </form>
 </section>
 <?php endif; ?>
@@ -230,8 +295,12 @@ $portalUrlFolha = $portalUrlFolha ?? null;
     <?php foreach ($dias as $diaForm):
         // Folga/feriado também têm formulário: trabalho nesses dias gera HE (100% só domingo/feriado).
         $fid = 'batida-' . (int)$diaForm['id'];
-    ?>
-        <form id="<?= $fid ?>" method="post" action="/rh/ponto/<?= (int) $diaForm['espelho_id'] ?>/dia" class="batida-form" data-dia-id="<?= (int) $diaForm['id'] ?>">
+        ?>
+        <form id="<?= $fid ?>" method="post" action="/rh/ponto/<?= (int) $diaForm['espelho_id'] ?>/dia" class="batida-form" data-dia-id="<?= (int) $diaForm['id'] ?>" enctype="multipart/form-data">
+            <input type="hidden" name="he_justificativa" id="he-just-<?= (int) $diaForm['id'] ?>" value="<?= View::e((string) (($heAnexosPorDia[(int) $diaForm['id']]['justificativa'] ?? ''))) ?>">
+            <input type="file" name="he_autorizacao" id="he-file-<?= (int) $diaForm['id'] ?>" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" hidden>
+            <input type="hidden" name="clt_confirmado" id="clt-conf-<?= (int) $diaForm['id'] ?>" value="0">
+            <input type="hidden" name="clt_justificativa" id="clt-just-<?= (int) $diaForm['id'] ?>" value="">
             <input type="hidden" name="ponto_dia_id" value="<?= (int)$diaForm['id'] ?>">
             <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
             <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
@@ -303,6 +372,51 @@ $portalUrlFolha = $portalUrlFolha ?? null;
                                         aria-label="<?= View::e($heTitulo) ?>"
                                         data-modal-open="heDetalheModal"
                                         data-he-id="<?= (int) $heDia['id'] ?>">HE</button>
+                            <?php endif; ?>
+                            <?php
+                            $heAnexoDia = $heAnexosPorDia[(int) $dia['id']] ?? null;
+                            $heMinDia = (int) ($dia['horas_extras_min'] ?? 0);
+                            if ($heAnexoDia): ?>
+                                <a class="ponto-he-chip" style="background:var(--success-soft);color:var(--success);text-decoration:none;"
+                                   href="/rh/ponto/<?= (int) $dia['espelho_id'] ?>/he-autorizacao/<?= (int) $heAnexoDia['id'] ?>"
+                                   target="_blank" rel="noopener"
+                                   title="Autorização de HE anexada">HE OK</a>
+                            <?php elseif ($heMinDia > 5 && !$locked): ?>
+                                <button class="ponto-he-chip" type="button"
+                                        style="background:var(--warning-soft);color:var(--ink);"
+                                        data-he-upload="<?= (int) $dia['id'] ?>"
+                                        title="Anexar autorização de HE (obrigatório)">+HE</button>
+                            <?php elseif ($heMinDia > 5): ?>
+                                <span class="ponto-he-chip" style="background:var(--danger-soft);color:var(--danger);" title="HE sem autorização anexada">HE?</span>
+                            <?php endif; ?>
+                            <?php
+                            $turnoAuthDia = $turnoAutorizacoesPorData[(string) $dia['data']] ?? null;
+                            if (is_array($turnoAuthDia)): ?>
+                                <a class="ponto-he-chip" style="background:#FFF7ED;color:#C2410C;border:1px solid #FDBA74;text-decoration:none;"
+                                   href="/rh/ponto/<?= (int) $espelho['id'] ?>/turno-autorizacao/<?= (int) $turnoAuthDia['id'] ?>"
+                                   target="_blank" rel="noopener"
+                                   title="Alteração de turno autorizada via PDF (<?= View::e(substr((string) $turnoAuthDia['entrada1'], 0, 5)) ?>–<?= View::e(substr((string) $turnoAuthDia['saida2'], 0, 5)) ?>)">TURNO PDF</a>
+                            <?php endif; ?>
+                            <?php
+                            $cltViolacoesDia = $cltPorDia[(int) $dia['id']] ?? [];
+                            if ($cltViolacoesDia !== []):
+                                $temBloqueioClt = false;
+                                foreach ($cltViolacoesDia as $cv) {
+                                    if (($cv['severidade'] ?? '') === 'bloqueio') {
+                                        $temBloqueioClt = true;
+                                        break;
+                                    }
+                                }
+                                $cltJson = json_encode($cltViolacoesDia, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
+                            ?>
+                                <button class="ponto-clt-chip <?= $temBloqueioClt ? 'is-bloqueio' : 'is-alerta' ?>"
+                                        type="button"
+                                        data-clt-dia-id="<?= (int) $dia['id'] ?>"
+                                        data-clt-dia-data="<?= View::e(date('d/m/Y', $ts)) ?>"
+                                        data-clt-violacoes="<?= View::e((string) $cltJson) ?>"
+                                        title="<?= View::e($cltViolacoesDia[0]['codigo'] . ': ' . $cltViolacoesDia[0]['titulo']) ?>">
+                                    CLT (<?= count($cltViolacoesDia) ?>)
+                                </button>
                             <?php endif; ?>
                         </div>
                     </td>
@@ -426,7 +540,7 @@ $portalUrlFolha = $portalUrlFolha ?? null;
         <div class="box"><span>Horas falta</span><strong class="val-red" data-tot="falta"><?= View::e($calc->fmt($totFalta)) ?></strong></div>
         <div class="box"><span>Atrasos</span><strong data-tot="atraso"><?= View::e($calc->fmt($totAtraso)) ?></strong></div>
         <div class="box"><span>Descontos</span><strong class="val-red" data-tot="desc"><?= View::e($calc->fmt($totDesc)) ?></strong></div>
-        <div class="box"><span>Jornada / Escala</span><strong><?= View::e(($espelho['jornada_codigo'] ?? '—').' · '.($espelho['escala_codigo'] ?? '')) ?></strong></div>
+        <div class="box"><span>Horário</span><strong><?= View::e((string) ($espelho['horario_codigo'] ?? $espelho['horario_nome'] ?? '—')) ?></strong></div>
     </div>
 
     <?php if ($heDeclaracoes !== []):
@@ -727,6 +841,157 @@ $portalUrlFolha = $portalUrlFolha ?? null;
     </div>
 </div>
 
+<div class="modal-backdrop" id="heAutorizacaoModal">
+    <div class="modal">
+        <form id="heAutorizacaoForm" novalidate>
+            <div class="modal-header">
+                <h3 class="card-title">Autorização de hora extra</h3>
+                <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="heModalDiaId" value="">
+                <div class="alert alert-warning" id="heModalAlerta" style="margin-bottom:.9rem;">
+                    Este dia gerou hora extra em relação à escala. Informe a justificativa e anexe a autorização.
+                </div>
+                <div class="form-grid cols-1">
+                    <div class="form-field">
+                        <label class="form-label" for="heModalJustificativa">Justificativa enviada ao gestor <span class="muted">(obrigatório)</span></label>
+                        <textarea class="form-control" id="heModalJustificativa" rows="5" required
+                                  placeholder="Cole aqui o texto que o colaborador enviou ao gestor para autorizar a HE. Esse conteúdo será lançado no Relatório de Atividades deste dia."></textarea>
+                        <p class="form-hint">Evita contradição entre a autorização de HE e a atividade do dia no RA.</p>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="heModalAnexo">Anexo da autorização de HE <span class="muted">(obrigatório)</span></label>
+                        <input class="form-control" type="file" id="heModalAnexo" required
+                               accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*">
+                        <p class="form-hint">PDF ou imagem do SharePoint (até 8 MB).</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" data-modal-close>Cancelar</button>
+                <button class="btn btn-primary" type="submit" id="heModalSalvar">Salvar autorização</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="turnoAutorizacaoModal" role="dialog" aria-modal="true" aria-labelledby="turnoModalTitulo">
+    <div class="modal modal-turno-alt">
+        <form method="post" action="/rh/ponto/<?= (int) $espelhoAcaoId ?>/turno-autorizacao" enctype="multipart/form-data">
+            <input type="hidden" name="_csrf" value="<?= View::e(Csrf::token()) ?>">
+            <input type="hidden" name="espelho_retorno" value="<?= (int) $espelho['id'] ?>">
+            <input type="hidden" name="data_inicio" value="<?= View::e($dataInicio) ?>">
+            <input type="hidden" name="data_fim" value="<?= View::e($dataFim) ?>">
+            <div class="modal-header">
+                <div>
+                    <h3 class="card-title" id="turnoModalTitulo">Alteração temporária de turno</h3>
+                    <p class="text-sm muted" style="margin:.15rem 0 0;">Troca de escala (ex.: noturna 19:00–05:00) mediante autorização em PDF do cliente.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning" style="margin-bottom:1rem;">
+                    Mantém a mesma carga horária prevista do colaborador, habilita a validação noturna (CLT-15) no período e anexa o PDF ao dossiê da Medição.
+                </div>
+                <div class="form-grid cols-2">
+                    <div class="form-field">
+                        <label class="form-label" for="turnoDataIni">Data início *</label>
+                        <input class="form-control" type="date" id="turnoDataIni" name="turno_data_inicio"
+                               value="<?= View::e($dataInicio) ?>" min="<?= View::e($dataInicio) ?>" max="<?= View::e($dataFim) ?>" required>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="turnoDataFim">Data fim *</label>
+                        <input class="form-control" type="date" id="turnoDataFim" name="turno_data_fim"
+                               value="<?= View::e($dataFim) ?>" min="<?= View::e($dataInicio) ?>" max="<?= View::e($dataFim) ?>" required>
+                    </div>
+                </div>
+                <div class="form-grid cols-4 turno-horarios-grid" style="margin-top:.75rem;">
+                    <div class="form-field">
+                        <label class="form-label" for="turnoEnt1">Ent. 1 *</label>
+                        <input class="form-control" type="time" id="turnoEnt1" name="turno_ent1" value="19:00" required>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="turnoSai1">Sai. 1</label>
+                        <input class="form-control" type="time" id="turnoSai1" name="turno_sai1" value="00:00">
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="turnoEnt2">Ent. 2</label>
+                        <input class="form-control" type="time" id="turnoEnt2" name="turno_ent2" value="01:00">
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="turnoSai2">Sai. 2 *</label>
+                        <input class="form-control" type="time" id="turnoSai2" name="turno_sai2" value="05:00" required>
+                    </div>
+                </div>
+                <div class="form-grid cols-1" style="margin-top:.75rem;">
+                    <div class="form-field">
+                        <label class="form-label" for="turnoMotivo">Motivo / solicitação do cliente *</label>
+                        <textarea class="form-control" id="turnoMotivo" name="turno_motivo" rows="2" required
+                                  placeholder="Ex.: Solicitação do gestor Vale para atuação temporária em turno noturno mantendo a carga horária."></textarea>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label" for="turnoPdf">Anexo PDF da autorização *</label>
+                        <input class="form-control" type="file" id="turnoPdf" name="turno_autorizacao_pdf" accept=".pdf,application/pdf" required>
+                        <p class="form-hint">Somente PDF (até 10 MB). Fica vinculado ao cartão e ao pacote ZIP da Medição.</p>
+                    </div>
+                    <div class="turno-checks">
+                        <label class="turno-check-item">
+                            <input type="checkbox" name="turno_adicional_noturno" value="1" checked>
+                            <span>Habilitar adicional noturno no período</span>
+                        </label>
+                        <label class="turno-check-item">
+                            <input type="checkbox" name="turno_aplicar_batidas" value="1" checked>
+                            <span>Aplicar horários nos dias úteis do intervalo</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" data-modal-close>Cancelar</button>
+                <button class="btn btn-primary" type="submit">Salvar alteração</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="cltAlertaModal" role="dialog" aria-modal="true" aria-labelledby="cltModalTitulo">
+    <div class="modal modal-clt-alerta">
+        <form id="cltAlertaForm" novalidate>
+            <div class="modal-header">
+                <div>
+                    <h3 class="card-title" id="cltModalTitulo">Alerta de conformidade trabalhista (CLT)</h3>
+                    <p class="text-sm muted" id="cltModalSubtitulo" style="margin:.15rem 0 0;"></p>
+                </div>
+                <button class="btn btn-ghost btn-sm" type="button" data-modal-close>Fechar</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="cltModalDiaId" value="">
+                <input type="hidden" id="cltModalMode" value="save">
+                <div class="alert alert-danger" id="cltModalIntro" style="margin-bottom:.9rem;">
+                    O lançamento diverge da legislação trabalhista (CLT) para a lotação/escala configurada. Revise a regra violada antes de prosseguir.
+                </div>
+                <div id="cltModalLista" class="clt-modal-list"></div>
+
+                <div id="cltModalConfirmBox" class="clt-confirm-box">
+                    <div class="form-field">
+                        <label class="form-label" for="cltModalJustificativa">
+                            Justificativa de exceção <span class="muted">(obrigatório para confirmar)</span>
+                        </label>
+                        <textarea class="form-control" id="cltModalJustificativa" rows="2"
+                                  placeholder="Ex.: Força maior / serviço inadiável (Art. 61 CLT) ou registro fiel de campo para apuração."></textarea>
+                        <p class="form-hint">Motivo e usuário ficam gravados na trilha de auditoria CLT (Portaria MTP nº 671/2021).</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" type="button" id="cltModalCorrigir" data-modal-close>Voltar e corrigir</button>
+                <button class="btn btn-danger-soft" type="submit" id="cltModalForcar">Confirmar exceção</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 (() => {
   const savePill = document.getElementById('pontoSaveState');
@@ -847,10 +1112,47 @@ $portalUrlFolha = $portalUrlFolha ?? null;
       if (pendingSaves.get(diaId) !== seq) return;
       const data = await res.json();
       if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'Falha ao salvar batida.');
+        if (data && data.code === 'clt_violation') {
+          if (tr) tr.classList.remove('is-saving');
+          setPill('Divergência CLT', 'is-error');
+          openCltModal(diaId, data.clt || {}, 'save');
+          return;
+        }
+        if (data && data.code === 'needs_he_anexo') {
+          if (tr) tr.classList.remove('is-saving');
+          setPill('Aguardando autorização HE', 'is-error');
+          openHeAutorizacaoModal(diaId, data.error || '');
+          return;
+        }
+        throw new Error((data && data.error) || 'Falha ao salvar batida.');
       }
+      // Reset flag de confirmação CLT após salvamento bem-sucedido
+      const cltConfReset = document.getElementById('clt-conf-' + diaId);
+      const cltJustReset = document.getElementById('clt-just-' + diaId);
+      if (cltConfReset) cltConfReset.value = '0';
+      if (cltJustReset) cltJustReset.value = '';
       updateRowAndTotals(diaId, data);
-      const hhmm = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      if (data.clt) {
+        refreshCltBadges(data.clt);
+      }
+      if (data.dia && data.dia.he_anexo) {
+        const existing = tr ? tr.querySelector('[data-he-upload], a.ponto-he-chip[href*="he-autorizacao"], span.ponto-he-chip') : null;
+        const anexoId = Number(data.dia.he_anexo_id || 0);
+        if (existing && anexoId > 0) {
+          const a = document.createElement('a');
+          a.className = 'ponto-he-chip';
+          a.style.cssText = 'background:var(--success-soft);color:var(--success);text-decoration:none;';
+          a.textContent = 'HE OK';
+          a.title = 'Autorização de HE anexada';
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.href = form.action.replace(/\/dia$/, '') + '/he-autorizacao/' + anexoId;
+          existing.replaceWith(a);
+        }
+      }
+      const hhmm = (window.AppClock && window.AppClock.nowTime)
+        ? window.AppClock.nowTime(true)
+        : new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setPill('Salvo ' + hhmm, 'is-saved');
     } catch (err) {
       if (tr) {
@@ -864,6 +1166,219 @@ $portalUrlFolha = $portalUrlFolha ?? null;
       }
     }
   };
+
+  const cltModal = document.getElementById('cltAlertaModal');
+  const cltModalForm = document.getElementById('cltAlertaForm');
+  const cltModalDiaId = document.getElementById('cltModalDiaId');
+  const cltModalMode = document.getElementById('cltModalMode');
+  const cltModalSub = document.getElementById('cltModalSubtitulo');
+  const cltModalLista = document.getElementById('cltModalLista');
+  const cltModalJust = document.getElementById('cltModalJustificativa');
+  const cltModalConfirmBox = document.getElementById('cltModalConfirmBox');
+  const cltModalForcar = document.getElementById('cltModalForcar');
+  const cltModalCorrigir = document.getElementById('cltModalCorrigir');
+
+  const escapeHtml = (str) => String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  const openCltModal = (diaId, cltData, mode) => {
+    if (!cltModal || !cltModalLista) return;
+    const violacoes = Array.isArray(cltData.violacoes) ? cltData.violacoes : [];
+    const dataStr = cltData.data ? String(cltData.data) : '';
+    const escalaStr = cltData.contexto_escala ? String(cltData.contexto_escala) : '';
+
+    if (cltModalDiaId) cltModalDiaId.value = String(diaId || '');
+    if (cltModalMode) cltModalMode.value = mode || 'save';
+    if (cltModalJust) cltModalJust.value = '';
+    if (cltModalSub) {
+      cltModalSub.textContent = [dataStr ? ('Dia ' + dataStr) : '', escalaStr].filter(Boolean).join(' · ');
+    }
+
+    cltModalLista.innerHTML = violacoes.map((v) => {
+      const isBloq = v.severidade === 'bloqueio';
+      const pillCls = isBloq ? 'clt-pill-bloq' : 'clt-pill-alert';
+      const pillTxt = isBloq ? 'ILEGALIDADE CLT' : 'ALERTA TRABALHISTA';
+      return `
+        <div class="clt-item ${isBloq ? 'is-bloqueio' : 'is-alerta'}">
+          <div class="clt-item-head">
+            <span class="clt-code">${escapeHtml(v.codigo)}</span>
+            <span class="${pillCls}">${pillTxt}</span>
+          </div>
+          <div class="clt-item-title">${escapeHtml(v.titulo)}</div>
+          <div class="clt-item-base"><strong>Base legal:</strong> ${escapeHtml(v.base_legal)}</div>
+          <p class="clt-item-desc">${escapeHtml(v.explicacao)}</p>
+          <div class="clt-item-rec"><strong>Orientação:</strong> ${escapeHtml(v.acao_recomendada)}</div>
+        </div>
+      `;
+    }).join('');
+
+    const isSaveMode = (mode === 'save');
+    if (cltModalConfirmBox) {
+      cltModalConfirmBox.hidden = !isSaveMode;
+      cltModalConfirmBox.style.display = isSaveMode ? '' : 'none';
+    }
+    if (cltModalForcar) {
+      cltModalForcar.hidden = !isSaveMode;
+      cltModalForcar.style.display = isSaveMode ? '' : 'none';
+    }
+    if (cltModalCorrigir) {
+      cltModalCorrigir.textContent = isSaveMode ? 'Voltar e corrigir' : 'Entendi';
+    }
+
+    cltModal.classList.add('is-open');
+    if (cltModalCorrigir) cltModalCorrigir.focus();
+  };
+
+  const refreshCltBadges = (cltState) => {
+    const porDia = (cltState && cltState.por_dia) ? cltState.por_dia : {};
+    const resumo = (cltState && cltState.resumo) ? cltState.resumo : {};
+    const banner = document.getElementById('pontoCltBanner');
+    const bTitle = document.getElementById('pontoCltBannerTitle');
+    const bSub = document.getElementById('pontoCltBannerSub');
+    if (banner) {
+      const tot = Number(resumo.total || 0);
+      banner.classList.toggle('is-hidden', tot === 0);
+      if (bTitle) {
+        bTitle.textContent = `⚠ Conformidade CLT: ${Number(resumo.bloqueios || 0)} ilegalidade(s) e ${Number(resumo.alertas || 0)} alerta(s) em ${Number(resumo.dias_afetados || 0)} dia(s)`;
+      }
+      if (bSub && resumo.contexto_escala) {
+        bSub.innerHTML = `Regra aplicada conforme lotação/escala: <strong>${escapeHtml(resumo.contexto_escala)}</strong>. Clique no selo <strong>CLT</strong> em cada dia abaixo para ver o artigo violado e o motivo legal.`;
+      }
+    }
+    document.querySelectorAll('tr[data-dia-row]').forEach((tr) => {
+      const dId = tr.getAttribute('data-dia-row') || '';
+      const cell = tr.querySelector('.ponto-dia-cell');
+      if (!cell) return;
+      const oldBtn = cell.querySelector('.ponto-clt-chip');
+      if (oldBtn) oldBtn.remove();
+      const viols = porDia[dId] || [];
+      if (Array.isArray(viols) && viols.length > 0) {
+        const hasBloq = viols.some((x) => x.severidade === 'bloqueio');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ponto-clt-chip ' + (hasBloq ? 'is-bloqueio' : 'is-alerta');
+        btn.setAttribute('data-clt-dia-id', dId);
+        btn.setAttribute('data-clt-dia-data', (tr.querySelector('.ponto-dia-label')?.textContent || '').trim());
+        btn.setAttribute('data-clt-violacoes', JSON.stringify(viols));
+        btn.title = `${viols[0].codigo}: ${viols[0].titulo}`;
+        btn.textContent = `CLT (${viols.length})`;
+        cell.appendChild(btn);
+      }
+    });
+  };
+
+  if (cltModalForm) {
+    cltModalForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const diaId = cltModalDiaId ? cltModalDiaId.value : '';
+      const just = (cltModalJust?.value || '').trim();
+      if (!just) {
+        if (window.Toast && typeof window.Toast.show === 'function') {
+          window.Toast.show('Informe a justificativa obrigatória de exceção trabalhista.', 'warning');
+        }
+        cltModalJust?.focus();
+        return;
+      }
+      const form = diaId ? document.getElementById('batida-' + diaId) : null;
+      const confEl = diaId ? document.getElementById('clt-conf-' + diaId) : null;
+      const justEl = diaId ? document.getElementById('clt-just-' + diaId) : null;
+      if (!form || !confEl || !justEl) return;
+
+      confEl.value = '1';
+      justEl.value = just;
+      cltModal.classList.remove('is-open');
+      await submitInlineDia(form);
+    });
+  }
+
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.ponto-clt-chip');
+    if (!btn) return;
+    const diaId = btn.getAttribute('data-clt-dia-id') || '';
+    const diaData = btn.getAttribute('data-clt-dia-data') || '';
+    let viols = [];
+    try {
+      viols = JSON.parse(btn.getAttribute('data-clt-violacoes') || '[]');
+    } catch (_) {
+      viols = [];
+    }
+    openCltModal(diaId, {
+      data: diaData,
+      contexto_escala: <?= json_encode((string) ($cltResumo['contexto_escala'] ?? ''), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP) ?>,
+      violacoes: viols,
+    }, 'view');
+  });
+
+  const heModal = document.getElementById('heAutorizacaoModal');
+  const heModalForm = document.getElementById('heAutorizacaoForm');
+  const heModalDiaId = document.getElementById('heModalDiaId');
+  const heModalJust = document.getElementById('heModalJustificativa');
+  const heModalAnexo = document.getElementById('heModalAnexo');
+  const heModalAlerta = document.getElementById('heModalAlerta');
+
+  const openHeAutorizacaoModal = (diaId, mensagem) => {
+    if (!heModal || !heModalDiaId || !heModalJust || !heModalAnexo) return;
+    const justHidden = document.getElementById('he-just-' + diaId);
+    heModalDiaId.value = String(diaId || '');
+    heModalJust.value = (justHidden && justHidden.value) ? justHidden.value : '';
+    heModalAnexo.value = '';
+    if (heModalAlerta) {
+      heModalAlerta.textContent = mensagem && String(mensagem).trim()
+        ? String(mensagem).trim()
+        : 'Este dia gerou hora extra em relação à escala. Informe a justificativa e anexe a autorização.';
+    }
+    heModal.classList.add('is-open');
+    heModalJust.focus();
+  };
+
+  if (heModalForm) {
+    heModalForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const diaId = heModalDiaId ? heModalDiaId.value : '';
+      const form = diaId ? document.getElementById('batida-' + diaId) : null;
+      const justHidden = diaId ? document.getElementById('he-just-' + diaId) : null;
+      const fileHidden = diaId ? document.getElementById('he-file-' + diaId) : null;
+      const just = (heModalJust?.value || '').trim();
+      const file = heModalAnexo?.files?.[0] || null;
+
+      if (!just) {
+        if (window.Toast && typeof window.Toast.show === 'function') {
+          window.Toast.show('Informe a justificativa de HE.', 'warning');
+        }
+        heModalJust?.focus();
+        return;
+      }
+      if (!file) {
+        if (window.Toast && typeof window.Toast.show === 'function') {
+          window.Toast.show('Anexe a autorização de HE (PDF ou imagem).', 'warning');
+        }
+        heModalAnexo?.focus();
+        return;
+      }
+      if (!form || !justHidden || !fileHidden) {
+        if (window.Toast && typeof window.Toast.show === 'function') {
+          window.Toast.show('Não foi possível vincular o dia do cartão.', 'danger');
+        }
+        return;
+      }
+
+      justHidden.value = just;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      fileHidden.files = dt.files;
+      heModal.classList.remove('is-open');
+      await submitInlineDia(form);
+    });
+  }
+
+  document.querySelectorAll('[data-he-upload]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openHeAutorizacaoModal(btn.getAttribute('data-he-upload') || '', '');
+    });
+  });
 
   const timeInputs = Array.from(document.querySelectorAll('.ponto-time:not([readonly])'));
   timeInputs.forEach((input, idx) => {

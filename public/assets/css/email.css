@@ -5,7 +5,7 @@
 .email-hero h2 {
   margin: 0 0 0.35rem;
   font-size: 1.35rem;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--tracking);
 }
 
 .email-hero p {
@@ -37,12 +37,12 @@
 }
 
 .email-provider-tabs input {
-  accent-color: var(--brand-primary, #E06008);
+  accent-color: var(--brand-primary);
 }
 
 .email-provider-tabs label.is-active {
-  border-color: rgba(224, 96, 8, 0.45);
-  background: var(--brand-primary-soft, #FFF1E6);
+  border-color: rgba(var(--brand-heritage-rgb), 0.45);
+  background: var(--brand-primary-soft);
   color: #9a3f00;
 }
 
@@ -150,8 +150,8 @@
 }
 
 .email-tpl-row.is-open {
-  border-color: rgba(224, 96, 8, 0.45);
-  background: var(--brand-primary-soft, #FFF1E6);
+  border-color: rgba(var(--brand-heritage-rgb), 0.45);
+  background: var(--brand-primary-soft);
 }
 
 .email-tpl-actions {

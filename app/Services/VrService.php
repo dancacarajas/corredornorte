@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Config\Database;
+use App\Helpers\DiaUtil;
 use PDO;
 use RuntimeException;
 
@@ -159,7 +160,7 @@ final class VrService
      */
     public function calcularPeriodo(string $dataInicio, string $dataFim): array
     {
-        $configs = $this->configsVigentes($dataInicio);
+        $configs = $this->configsVigentesNoPeriodo($dataInicio, $dataFim);
         if ($configs === []) {
             throw new RuntimeException('Cadastre uma configuração de Vale Refeição vigente.');
         }
@@ -184,9 +185,11 @@ final class VrService
                       )
                 )"
             : '';
-        // Remoto só conta com dia de trabalho no ponto, sem falta integral nem afastamento/justificativa abonadora.
+        // Remoto só conta com trabalho efetivo no ponto (total_trab_min > 0), sem falta integral nem justificativa abonadora.
+        // Permite feriado/folga/folga_escala trabalhados para 'dias_trabalhados'; 'dias_uteis' restringe a dias úteis sem feriado.
         $condDiaValido = 'pd.id IS NOT NULL'
-            . " AND pd.tipo_dia = 'trabalho'"
+            . " AND pd.tipo_dia IN ('trabalho', 'feriado', 'folga', 'folga_escala')"
+            . ' AND COALESCE(pd.total_trab_min, 0) > 0'
             . ' AND COALESCE(pd.dia_falta, 0) = 0'
             . " AND LOWER(COALESCE(pd.ocorrencia_resumo, '')) NOT LIKE 'justificado%'"
             . $condJustCol
@@ -194,10 +197,9 @@ final class VrService
 
         $sql = "SELECT ra.id AS relatorio_id, ra.status, ra.contrato_id, c.id AS colaborador_id, c.nome, c.matricula,
                        pp.data_inicio, pp.data_fim,
-                       SUM(CASE WHEN rd.ambiente = 'remoto' AND {$condDiaValido} THEN 1 ELSE 0 END) AS dias_remoto_todos,
-                       SUM(CASE WHEN rd.ambiente = 'remoto' AND WEEKDAY(rd.data) < 5 AND {$condDiaValido} THEN 1 ELSE 0 END) AS dias_remoto_uteis,
-                       SUM(CASE WHEN rd.ambiente = 'site' THEN 1 ELSE 0 END) AS dias_site,
-                       SUM(CASE WHEN rd.ambiente = 'viagem' THEN 1 ELSE 0 END) AS dias_viagem
+                       rd.data AS dia_data, rd.ambiente,
+                       pd.tipo_dia, pd.ocorrencia_resumo,
+                       CASE WHEN {$condDiaValido} THEN 1 ELSE 0 END AS dia_valido
                 FROM ra_relatorios ra
                 INNER JOIN rh_colaboradores c ON c.id = ra.colaborador_id
                 INNER JOIN ponto_periodos pp ON pp.id = ra.periodo_id
@@ -211,42 +213,96 @@ final class VrService
                 LEFT JOIN ponto_dias pd ON pd.espelho_id = pe.id AND pd.data = rd.data
                 WHERE pp.data_inicio = :i AND pp.data_fim = :f
                   AND ra.status IN ('enviado', 'aprovado')
-                GROUP BY ra.id, ra.status, ra.contrato_id, c.id, c.nome, c.matricula, pp.data_inicio, pp.data_fim
-                ORDER BY c.nome";
+                ORDER BY c.nome, ra.id, rd.data";
         $st = $this->db->prepare($sql);
         $st->execute(['i' => $dataInicio, 'f' => $dataFim]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        $out = [];
+
+        $porRelatorio = [];
         foreach ($rows as $row) {
-            $contratoId = isset($row['contrato_id']) && $row['contrato_id'] !== null
-                ? (int) $row['contrato_id']
-                : null;
-            $cfg = $this->resolverConfig($configs, $contratoId);
-            if ($cfg === null) {
+            $relId = (int) $row['relatorio_id'];
+            if (!isset($porRelatorio[$relId])) {
+                $contratoId = isset($row['contrato_id']) && $row['contrato_id'] !== null
+                    ? (int) $row['contrato_id']
+                    : null;
+                $porRelatorio[$relId] = [
+                    'relatorio_id' => $relId,
+                    'status' => (string) $row['status'],
+                    'colaborador_id' => (int) $row['colaborador_id'],
+                    'nome' => (string) $row['nome'],
+                    'matricula' => (string) $row['matricula'],
+                    'contrato_id' => $contratoId,
+                    'data_inicio' => (string) $row['data_inicio'],
+                    'data_fim' => (string) $row['data_fim'],
+                    'dias_remoto' => 0,
+                    'dias_site' => 0,
+                    'dias_viagem' => 0,
+                    'valor_centavos' => 0,
+                    'cfg_aplicada' => null,
+                ];
+            }
+
+            $ambiente = (string) ($row['ambiente'] ?? '');
+            if ($ambiente === 'site') {
+                $porRelatorio[$relId]['dias_site']++;
                 continue;
             }
-            $dias = $cfg['tipo'] === 'dias_uteis'
-                ? (int) $row['dias_remoto_uteis']
-                : (int) $row['dias_remoto_todos'];
-            $valorDia = (float) $cfg['valor_dia'];
+            if ($ambiente === 'viagem') {
+                $porRelatorio[$relId]['dias_viagem']++;
+                continue;
+            }
+            if ($ambiente !== 'remoto' || (int) ($row['dia_valido'] ?? 0) !== 1) {
+                continue;
+            }
+
+            $diaData = (string) ($row['dia_data'] ?? '');
+            $contratoId = $porRelatorio[$relId]['contrato_id'];
+            $cfgDia = $this->resolverConfigParaData($configs, $contratoId, $diaData);
+            if ($cfgDia === null) {
+                continue;
+            }
+
+            if ($cfgDia['tipo'] === 'dias_uteis') {
+                $tipoDia = (string) ($row['tipo_dia'] ?? '');
+                $ocorrencia = (string) ($row['ocorrencia_resumo'] ?? '');
+                if ($tipoDia !== 'trabalho' || !$this->isDiaUtilParaVr($diaData, $ocorrencia)) {
+                    continue;
+                }
+            }
+
+            $porRelatorio[$relId]['dias_remoto']++;
+            $porRelatorio[$relId]['valor_centavos'] += $this->paraCentavos((string) $cfgDia['valor_dia']);
+            $porRelatorio[$relId]['cfg_aplicada'] = $cfgDia;
+        }
+
+        $out = [];
+        foreach ($porRelatorio as $item) {
+            $contratoId = $item['contrato_id'];
+            $cfgRef = $item['cfg_aplicada']
+                ?? $this->resolverConfigParaData($configs, $contratoId, $dataFim)
+                ?? $this->resolverConfig($configs, $contratoId);
+            if ($cfgRef === null) {
+                continue;
+            }
+
             $out[] = [
-                'relatorio_id' => (int) $row['relatorio_id'],
-                'status' => (string) $row['status'],
-                'colaborador_id' => (int) $row['colaborador_id'],
-                'nome' => (string) $row['nome'],
-                'matricula' => (string) $row['matricula'],
+                'relatorio_id' => $item['relatorio_id'],
+                'status' => $item['status'],
+                'colaborador_id' => $item['colaborador_id'],
+                'nome' => $item['nome'],
+                'matricula' => $item['matricula'],
                 'contrato_id' => $contratoId,
-                'data_inicio' => (string) $row['data_inicio'],
-                'data_fim' => (string) $row['data_fim'],
-                'dias_remoto' => $dias,
-                'dias_site' => (int) $row['dias_site'],
-                'dias_viagem' => (int) $row['dias_viagem'],
-                'valor_dia' => $valorDia,
-                'tipo_calculo' => $cfg['tipo'],
-                'config_id' => $cfg['id'],
-                'config_nome' => (string) ($cfg['nome'] ?? ''),
-                'config_alocacao' => (string) ($cfg['contratos_label'] ?? ''),
-                'valor_vr' => round($valorDia * $dias, 2),
+                'data_inicio' => $item['data_inicio'],
+                'data_fim' => $item['data_fim'],
+                'dias_remoto' => $item['dias_remoto'],
+                'dias_site' => $item['dias_site'],
+                'dias_viagem' => $item['dias_viagem'],
+                'valor_dia' => (float) $cfgRef['valor_dia'],
+                'tipo_calculo' => $cfgRef['tipo'],
+                'config_id' => $cfgRef['id'],
+                'config_nome' => (string) ($cfgRef['nome'] ?? ''),
+                'config_alocacao' => (string) ($cfgRef['contratos_label'] ?? ''),
+                'valor_vr' => round($item['valor_centavos'] / 100, 2),
             ];
         }
         return $out;
@@ -276,23 +332,77 @@ final class VrService
         return $especifica ?? $geral;
     }
 
+    /**
+     * Resolve a configuração vigente em uma data específica, respeitando precedência
+     * de contrato específico sobre configuração geral.
+     *
+     * @param list<array<string,mixed>> $configs
+     * @return array<string,mixed>|null
+     */
+    private function resolverConfigParaData(array $configs, ?int $contratoId, string $data): ?array
+    {
+        $vigentes = [];
+        foreach ($configs as $cfg) {
+            $ini = (string) ($cfg['vigencia_inicio'] ?? '');
+            $fim = $cfg['vigencia_fim'] ?? null;
+            if ($ini !== '' && $ini > $data) {
+                continue;
+            }
+            if ($fim !== null && $fim !== '' && (string) $fim < $data) {
+                continue;
+            }
+            $vigentes[] = $cfg;
+        }
+        if ($vigentes === []) {
+            return null;
+        }
+        return $this->resolverConfig($vigentes, $contratoId);
+    }
+
+    private function isDiaUtilParaVr(string $data, string $ocorrenciaResumo): bool
+    {
+        if (!DiaUtil::isUtil($data, $this->db)) {
+            return false;
+        }
+        $resumo = mb_strtolower(trim($ocorrenciaResumo));
+        if (str_starts_with($resumo, 'plantão em feriado') || str_starts_with($resumo, 'plantao em feriado')) {
+            return false;
+        }
+        return true;
+    }
+
+    private function paraCentavos(string $valor): int
+    {
+        $norm = str_replace(',', '.', trim($valor));
+        if (!is_numeric($norm)) {
+            return 0;
+        }
+        return (int) round((float) $norm * 100);
+    }
+
     /** @return list<array<string,mixed>> */
-    private function configsVigentes(string $dataRef): array
+    private function configsVigentesNoPeriodo(string $dataInicio, string $dataFim): array
     {
         $st = $this->db->prepare(
             'SELECT * FROM vr_config
              WHERE ativo = 1
-               AND vigencia_inicio <= :d
-               AND (vigencia_fim IS NULL OR vigencia_fim >= :d2)
+               AND vigencia_inicio <= :fim
+               AND (vigencia_fim IS NULL OR vigencia_fim >= :ini)
              ORDER BY vigencia_inicio DESC, id DESC'
         );
-        $st->execute(['d' => $dataRef, 'd2' => $dataRef]);
+        $st->execute(['fim' => $dataFim, 'ini' => $dataInicio]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $out = [];
         foreach ($rows as $row) {
             $out[] = $this->hidratarConfig($row);
         }
         return $out;
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function configsVigentes(string $dataRef): array
+    {
+        return $this->configsVigentesNoPeriodo($dataRef, $dataRef);
     }
 
     /**

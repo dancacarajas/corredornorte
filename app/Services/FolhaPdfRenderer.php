@@ -4,413 +4,221 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use FPDF;
+use DateTimeImmutable;
 use RuntimeException;
 
-/**
- * Gera o cartão de ponto em PHP (sem exec/shell), compatível com Hostinger.
- */
+/** Emite a folha de ponto individual no formulário revisado da Arcadis. */
 final class FolhaPdfRenderer
 {
-    public const LAYOUT_VERSION = 4;
-    // O selo começa a 224 mm do topo e precisa ficar separado da tabela.
-    private const TABLE_BOTTOM_MM = 218.0;
+    public const LAYOUT_VERSION = 5;
 
-    /**
-     * @param array<string,mixed> $payload
-     */
+    // Bordas impressas na planilha de referência (Letter, em pontos).
+    private const COLUNAS = [18.24, 40.32, 81.384, 117.17, 157.01, 198.79, 233.14, 410.09, 465.79, 520.30, 583.20];
+    private const LINHAS = [
+        230.23, 242.47, 254.71, 266.95, 279.22, 291.46, 303.70, 315.94,
+        328.18, 340.42, 352.66, 364.92, 377.16, 389.40, 401.64, 413.88,
+        426.12, 438.38, 450.62, 462.86, 475.10, 487.34, 499.58, 511.82,
+        524.09, 536.33, 548.57, 560.81, 573.05, 585.29, 597.55, 609.79,
+    ];
+    private const MESES = [1 => 'JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO',
+        'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
+
+    /** @param array<string,mixed> $payload */
     public function render(array $payload, string $outPath): void
     {
         $dir = dirname($outPath);
         if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
             throw new RuntimeException('Não foi possível criar a pasta do PDF.');
         }
-
-        $pdf = new FPDF('P', 'mm', 'Letter');
-        $pdf->SetAutoPageBreak(false);
-        $pdf->SetTitle('Cartão de Ponto | Arcadis RH', true);
+        // Também aceita o payload anterior, cujo período era enviado como texto.
+        if (isset($payload['periodo_inicio'], $payload['periodo_fim'])) {
+            $inicio = new DateTimeImmutable($payload['periodo_inicio']);
+            $fim = new DateTimeImmutable($payload['periodo_fim']);
+        } elseif (preg_match('~^(\d{2}/\d{2}/\d{4}) A (\d{2}/\d{2}/\d{4})$~i', $payload['periodo'] ?? '', $datas)) {
+            $inicio = DateTimeImmutable::createFromFormat('!d/m/Y', $datas[1]);
+            $fim = DateTimeImmutable::createFromFormat('!d/m/Y', $datas[2]);
+        } else {
+            throw new RuntimeException('O período da folha não foi informado.');
+        }
+        $dias = $this->diasDoPeriodo($payload['dias'] ?? [], $inicio, $fim);
+        $pdf = new FolhaPontoFormulario();
+        $pdf->SetTitle('Folha de Ponto Individual | Arcadis RH', true);
         $pdf->SetAuthor('Arcadis RH', true);
         $pdf->SetSubject('Arcadis RH | folha de ponto retrato v' . self::LAYOUT_VERSION, true);
-
-        $dias = $payload['dias'] ?? [];
-        if (!is_array($dias) || $dias === []) {
-            $dias = [[]];
-        }
-        $chunks = array_chunk($dias, 40);
-        $pages = count($chunks);
-        foreach ($chunks as $index => $pageDays) {
-            $last = ($index + 1) === $pages;
-            $this->drawPage($pdf, $payload, $pageDays, $index + 1, $pages, $last);
-        }
-
-        $pdf->Output('F', $outPath);
-        if (!is_file($outPath) || filesize($outPath) === 0) {
-            throw new RuntimeException('Falha ao gravar o PDF da folha.');
-        }
-    }
-
-    /**
-     * @param array<string,mixed> $payload
-     * @param list<array<string,mixed>> $days
-     */
-    private function drawPage(FPDF $pdf, array $payload, array $days, int $page, int $pages, bool $last): void
-    {
         $pdf->AddPage();
-        $left = 8.5;
-        $right = 207.5;
-        $width = $right - $left;
-        $employee = is_array($payload['espelho'] ?? null) ? $payload['espelho'] : [];
-
-        $logo = dirname(__DIR__, 2) . '/public/assets/img/logo.png';
-        if (is_file($logo)) {
-            $pdf->Image($logo, $left, 8, 28);
-        }
-
-        $pdf->SetTextColor(34, 36, 39);
-        $pdf->SetFont('Helvetica', 'B', 16);
-        $pdf->SetXY($left, 10);
-        $pdf->Cell($width, 8, $this->txt('Cartão de Ponto'), 0, 0, 'C');
-
-        $pdf->SetTextColor(198, 77, 19);
-        $pdf->SetFont('Helvetica', 'B', 9);
-        $pdf->SetXY($left, 18);
-        $periodo = str_replace(' A ', ' ATÉ ', (string) ($payload['periodo'] ?? ''));
-        $pdf->Cell($width, 5, $this->txt('DE ' . $periodo), 0, 0, 'C');
-
-        $pdf->SetTextColor(86, 91, 98);
-        $pdf->SetFont('Helvetica', '', 7);
-        $pdf->SetXY($right - 50, 10);
-        $pdf->Cell(50, 4, $this->txt(sprintf('Página %02d de %02d', $page, $pages)), 0, 2, 'R');
-        $pdf->Cell(50, 4, $this->txt('Emitido em ' . (string) ($payload['emitido'] ?? '')), 0, 0, 'R');
-
-        $pdf->SetDrawColor(200, 203, 208);
-        $pdf->Line($left, 28, $right, 28);
-        $pdf->SetDrawColor(233, 96, 27);
-        $pdf->SetLineWidth(0.6);
-        $pdf->Line($left, 28, $left + 12, 28);
-        $pdf->SetLineWidth(0.2);
-
-        $this->field($pdf, 'EMPRESA', (string) ($employee['empresa'] ?? '—'), $left, 32, 72);
-        $this->field($pdf, 'MATRÍCULA', (string) ($employee['matricula'] ?? '—'), $left + 74, 32, 36);
-        $this->field($pdf, 'FUNCIONÁRIO', (string) ($employee['nome'] ?? '—'), $left, 42, 72);
-        $this->field($pdf, 'CPF', (string) ($employee['cpf'] ?? '—'), $left + 74, 42, 36);
-        $this->field($pdf, 'CARGO', (string) ($employee['cargo'] ?? '—'), $left, 52, 72);
-        $local = trim(((string) ($employee['municipio'] ?? '')) . '/' . ((string) ($employee['uf'] ?? '')), '/');
-        $this->field($pdf, 'LOCAL', $local !== '' ? $local : '—', $left + 74, 52, 36);
-        $lotacao = implode(' / ', [
-            (string) ($employee['contrato_codigo'] ?? '—'),
-            (string) ($employee['cc_codigo'] ?? '—'),
-            (string) ($employee['os_codigo'] ?? '—'),
-        ]);
-        $this->field($pdf, 'CONTRATO / CC / OS', $lotacao, $left, 62, 110);
-
-        $this->drawSchedule(
-            $pdf,
-            is_array($employee['jornada_semanal'] ?? null) ? $employee['jornada_semanal'] : [],
-            124,
-            30,
-            (string) ($employee['escala_tipo'] ?? '')
-        );
-
-        $bottom = $this->drawTable(
-            $pdf,
-            $days,
-            $last && is_array($payload['totais'] ?? null) ? $payload['totais'] : null,
-            $left,
-            $right,
-            78
-        );
-
-        $pdf->SetTextColor(86, 91, 98);
-        $pdf->SetFont('Helvetica', '', 7);
-        $pdf->SetXY($left, $bottom + 2);
-        $pdf->Cell($width, 4, $this->txt('Verificação  ' . (string) ($payload['codigo'] ?? '')), 0, 0, 'R');
-
-        if ($last) {
-            // Mesmas coordenadas do cartão Python (pt → mm): linha em y≈109pt da base.
-            $lineY = 279.4 - (109 * 25.4 / 72);
-            $empX = 33 * 25.4 / 72;
-            $empW = 260 * 25.4 / 72;
-            $compX = (612 / 2 + 13) * 25.4 / 72;
-            $compW = $empW;
-            $pdf->SetDrawColor(34, 36, 39);
-            $pdf->Line($empX, $lineY, $empX + $empW, $lineY);
-            $pdf->Line($compX, $lineY, $compX + $compW, $lineY);
-            $pdf->SetFont('Helvetica', 'B', 7);
-            $pdf->SetTextColor(34, 36, 39);
-            $pdf->SetXY($empX, $lineY + 1.5);
-            $pdf->Cell($empW, 4, $this->txt((string) ($employee['nome'] ?? '')), 0, 0, 'C');
-            $pdf->SetXY($compX, $lineY + 1.5);
-            $pdf->Cell($compW, 4, $this->txt((string) ($employee['empresa'] ?? '')), 0, 0, 'C');
-        }
+        $this->grade($pdf, $dias);
+        $this->cabecalho($pdf, $payload['espelho'], $fim);
+        $this->totais($pdf, $payload['totais'] ?? []);
+        $pdf->Output('F', $outPath);
     }
 
-    private function field(FPDF $pdf, string $label, string $value, float $x, float $y, float $w): void
+    private function diasDoPeriodo(array $registros, DateTimeImmutable $inicio, DateTimeImmutable $fim): array
     {
-        $pdf->SetTextColor(86, 91, 98);
-        $pdf->SetFont('Helvetica', 'B', 6.5);
-        $pdf->SetXY($x, $y);
-        $pdf->Cell($w, 3.5, $this->txt($label), 0, 2);
-        $pdf->SetTextColor(34, 36, 39);
-        $pdf->SetFont('Helvetica', '', 8);
-        $pdf->Cell($w, 4.5, $this->txt($value !== '' ? $value : '—'), 0, 0);
+        $marcados = [];
+        foreach ($registros as $registro) {
+            $chave = $registro['data'] ?? substr((string) ($registro['data_fmt'] ?? ''), 0, 5);
+            $marcados[$chave] = $registro;
+        }
+        $total = (int) $inicio->diff($fim)->format('%r%a') + 1;
+        if ($total < 1 || $total > PeriodoPonto::MAX_DIAS_PDF) {
+            throw new RuntimeException('O período da folha não cabe no formulário.');
+        }
+        $linhas = [];
+        for ($data = $inicio; $data <= $fim; $data = $data->modify('+1 day')) {
+            $dia = $marcados[$data->format('Y-m-d')] ?? $marcados[$data->format('d/m')] ?? [];
+            $dia['rotulo_data'] = $data->format('d/m');
+            $dia['observacao_pdf'] = $this->observacao($dia, (int) $data->format('N'));
+            $linhas[] = $dia;
+        }
+        return $linhas;
     }
 
-    /** @param list<array<string,mixed>> $weekly */
-    private function drawSchedule(FPDF $pdf, array $weekly, float $x, float $y, string $escalaTipo = ''): void
+    private function observacao(array $dia, int $semana): string
     {
-        $w = 207.5 - $x;
-        $rows = [];
-        foreach ($weekly as $row) {
-            if (isset($row['dia'])) {
-                $rows[(string) $row['dia']] = $row;
-            }
-        }
-
-        $tituloHorario = match ($escalaTipo) {
-            '12x36' => 'Horário de trabalho (12x36)',
-            'ciclo' => 'Horário de trabalho (Ciclo)',
-            default => 'Horário de trabalho',
+        $nome = trim((string) ($dia['feriado_nome'] ?? ''));
+        $tipo = $dia['tipo_dia'] ?? '';
+        $rotulo = $nome !== '' ? $nome : match (true) {
+            $tipo === 'feriado' => 'FERIADO',
+            $semana === 6 => 'SÁBADO',
+            $semana === 7 => 'DOMINGO',
+            in_array($tipo, ['folga', 'folga_escala'], true) => 'FOLGA',
+            default => '',
         };
-        $pdf->SetFillColor(238, 240, 242);
-        $pdf->Rect($x, $y, $w, 7, 'F');
-        $pdf->SetFont('Helvetica', 'B', 7.5);
-        $pdf->SetTextColor(34, 36, 39);
-        $pdf->SetXY($x, $y + 1.5);
-        $pdf->Cell($w, 4, $this->txt($tituloHorario), 0, 0, 'C');
+        $resumo = trim((string) ($dia['ocorrencia_resumo'] ?? ''));
+        $nota = match (true) {
+            !empty($dia['atestado']) => 'Atestado',
+            !empty($dia['dia_falta']) => 'Falta',
+            str_starts_with($resumo, 'Justificado') => $resumo,
+            default => '',
+        };
+        return implode(' / ', array_filter([$rotulo, $nota]));
+    }
 
-        $headers = ['Dia', 'Ent.1', 'Saí.1', 'Ent.2', 'Saí.2'];
-        $colW = [$w * 0.18, $w * 0.205, $w * 0.205, $w * 0.205, $w * 0.205];
-        $yy = $y + 7;
-        $pdf->SetFillColor(238, 240, 242);
-        $pdf->Rect($x, $yy, $w, 5, 'F');
-        $pdf->SetFont('Helvetica', 'B', 6.5);
-        $cx = $x;
-        foreach ($headers as $i => $h) {
-            $pdf->SetXY($cx, $yy + 0.8);
-            $pdf->Cell($colW[$i], 3.5, $this->txt($h), 0, 0, 'C');
-            $cx += $colW[$i];
+    private function grade(FolhaPontoFormulario $pdf, array $dias): void
+    {
+        $linhas = self::LINHAS;
+        $total = count($dias);
+        $compacta = $total > 31;
+        if ($compacta) {
+            // Períodos especiais de 32–40 dias conservam cabeçalho, rodapé e uma página para assinar.
+            $altura = (end($linhas) - $linhas[0]) / $total;
+            $linhas = array_map(static fn(int $i): float => self::LINHAS[0] + $i * $altura, range(0, $total));
         }
-
-        $dias = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM'];
-        $yy += 5;
+        $modelo = $pdf->importPage(1);
+        if ($compacta) {
+            $pdf->useTemplate($modelo);
+            $pdf->SetFillColor(255);
+            $pdf->Rect(18.24, $linhas[0], 565.68, end($linhas) - $linhas[0] + 0.72, 'F');
+        }
+        $pdf->SetFillColor(192);
         foreach ($dias as $i => $dia) {
-            $row = $rows[$dia] ?? $rows[str_replace('A', 'Á', $dia)] ?? [];
-            if ($i % 2 === 1) {
-                $pdf->SetFillColor(248, 249, 250);
-                $pdf->Rect($x, $yy, $w, 4.8, 'F');
-            }
-            $tipo = (string) ($row['tipo'] ?? '');
-            $vals = [$dia, '—', '—', '—', '—'];
-            if ($tipo === 'trabalho') {
-                $vals = [
-                    $dia,
-                    $this->hm($row['entrada'] ?? null),
-                    $this->hm($row['intervalo_inicio'] ?? null),
-                    $this->hm($row['intervalo_fim'] ?? null),
-                    $this->hm($row['saida'] ?? null),
-                ];
-            } elseif ($tipo === 'folga') {
-                $vals = [$dia, 'Folga', '', '', ''];
-            } elseif ($tipo === 'variavel') {
-                $vals = [$dia, 'Variável', '', '', ''];
-            }
-            $cx = $x;
-            $pdf->SetFont('Helvetica', $i === 0 ? 'B' : '', 6.5);
-            $pdf->SetTextColor(34, 36, 39);
-            foreach ($vals as $vi => $val) {
-                $pdf->SetXY($cx, $yy + 0.7);
-                $pdf->Cell($colW[$vi], 3.5, $this->txt((string) $val), 0, 0, 'C');
-                $cx += $colW[$vi];
-            }
-            $yy += 4.8;
-        }
-        $pdf->SetDrawColor(200, 203, 208);
-        $pdf->Rect($x, $y, $w, $yy - $y);
-    }
-
-    /**
-     * @param list<array<string,mixed>> $days
-     * @param array<string,mixed>|null $totals
-     */
-    private function drawTable(FPDF $pdf, array $days, ?array $totals, float $left, float $right, float $top): float
-    {
-        $cols = [
-            ['Dia', 18],
-            ['Ent.1', 13],
-            ['Saí.1', 13],
-            ['Ent.2', 13],
-            ['Saí.2', 13],
-            ['Normal', 12],
-            ['Trab.', 12],
-            ['ADN', 11],
-            ['Prev.', 12],
-            ['Falta', 9],
-            ['H.Falta', 12],
-            ['Atraso', 12],
-            ['Desc.', 12],
-            ['Atest.', 11],
-            ['HE', 12],
-        ];
-        $width = $right - $left;
-        $sumW = array_sum(array_column($cols, 1));
-        $scale = $width / $sumW;
-        foreach ($cols as $i => $col) {
-            $cols[$i][1] = $col[1] * $scale;
-        }
-
-        $headH = 8;
-        $hasTotals = $totals !== null;
-        $extraTotalsHeight = $hasTotals ? 1.2 : 0.0;
-        $rows = count($days) + (int) $hasTotals;
-        $rowH = min(5.2, (self::TABLE_BOTTOM_MM - $top - $headH - $extraTotalsHeight) / max(1, $rows));
-        $y = $top;
-
-        $pdf->SetFillColor(238, 240, 242);
-        $pdf->Rect($left, $y, $width, $headH, 'F');
-        $pdf->SetFont('Helvetica', 'B', 6);
-        $pdf->SetTextColor(34, 36, 39);
-        $x = $left;
-        foreach ($cols as [$label, $w]) {
-            $pdf->SetXY($x, $y + 2.2);
-            $pdf->Cell($w, 3.5, $this->txt($label), 0, 0, 'C');
-            $x += $w;
-        }
-        $y += $headH;
-
-        foreach ($days as $i => $day) {
-            $vals = $this->dayValues($day);
-            $bg = ((string) ($day['tipo_dia'] ?? '') === 'feriado')
-                ? [255, 243, 234]
-                : ($i % 2 ? [248, 249, 250] : [255, 255, 255]);
-            $pdf->SetFillColor($bg[0], $bg[1], $bg[2]);
-            $pdf->Rect($left, $y, $width, $rowH, 'F');
-            $this->paintRow($pdf, $cols, $vals, $left, $y, $rowH, false);
-            $y += $rowH;
-        }
-
-        if ($hasTotals) {
-            $totalsHeight = $rowH + $extraTotalsHeight;
-            $pdf->SetFillColor(238, 240, 242);
-            $pdf->Rect($left, $y, $width, $totalsHeight, 'F');
-            $this->paintRow($pdf, $cols, $this->totalValues($totals), $left, $y, $totalsHeight, true);
-            $y += $totalsHeight;
-        }
-
-        $pdf->SetDrawColor(200, 203, 208);
-        $pdf->Rect($left, $top, $width, $y - $top);
-        $pdf->SetDrawColor(233, 96, 27);
-        $pdf->SetLineWidth(0.45);
-        $pdf->Line($left, $top, $right, $top);
-        $pdf->SetLineWidth(0.2);
-
-        return $y;
-    }
-
-    /**
-     * @param list<array{0:string,1:float}> $cols
-     * @param list<string> $vals
-     */
-    private function paintRow(FPDF $pdf, array $cols, array $vals, float $left, float $y, float $h, bool $bold): void
-    {
-        $pdf->SetFont('Helvetica', $bold ? 'B' : '', 6.2);
-        $pdf->SetTextColor(34, 36, 39);
-        $x = $left;
-        foreach ($cols as $i => [$label, $w]) {
-            $val = $vals[$i] ?? '';
-            $pdf->SetXY($x, $y + max(0.6, ($h - 3.2) / 2));
-            $pdf->Cell($w, 3.2, $this->txt($val), 0, 0, $i === 0 ? 'L' : 'C');
-            $x += $w;
-        }
-    }
-
-    /** @param array<string,mixed> $day @return list<string> */
-    private function dayValues(array $day): array
-    {
-        $kind = (string) ($day['tipo_dia'] ?? '');
-        $plannedOff = match ($kind) {
-            'folga', 'folga_escala' => 'Folga',
-            'feriado' => 'Feriado',
-            default => null,
-        };
-        $hasPunch = false;
-        foreach (['ent1', 'sai1', 'ent2', 'sai2'] as $k) {
-            if (!empty($day[$k])) {
-                $hasPunch = true;
-                break;
+            if ($dia['observacao_pdf'] !== '') {
+                $pdf->Rect(40.56, $linhas[$i] + 0.24, 370.01, $linhas[$i + 1] - $linhas[$i] + 0.24, 'F');
             }
         }
-        $punches = [
-            $this->hm($day['ent1'] ?? null),
-            $this->hm($day['sai1'] ?? null),
-            $this->hm($day['ent2'] ?? null),
-            $this->hm($day['sai2'] ?? null),
-        ];
-        if ($plannedOff !== null && !$hasPunch) {
-            $punches = [$plannedOff, $plannedOff, $plannedOff, $plannedOff];
-        } elseif (!empty($day['dia_falta']) && !$hasPunch) {
-            $punches[0] = 'Falta';
+        if ($compacta) {
+            $pdf->SetFillColor(0);
+            foreach ($linhas as $y) {
+                $pdf->Rect(18.24, $y, 565.68, 0.72, 'F');
+            }
+            foreach (self::COLUNAS as $x) {
+                $pdf->Rect($x, $linhas[0], 0.72, end($linhas) - $linhas[0] + 0.72, 'F');
+            }
+        } else {
+            $pdf->useTemplate($modelo);
         }
-
-        $atestado = $this->horas(isset($day['atestado_min']) ? (int) $day['atestado_min'] : null)
-            ?: (!empty($day['atestado']) ? 'Sim' : '');
-
-        return [
-            (string) ($day['data_fmt'] ?? ''),
-            $punches[0],
-            $punches[1],
-            $punches[2],
-            $punches[3],
-            $this->horas((int) ($day['total_normal_min'] ?? 0), $hasPunch),
-            $this->horas((int) ($day['total_trab_min'] ?? 0), $hasPunch),
-            $this->horas((int) ($day['adn_min'] ?? 0), $hasPunch),
-            $this->horas((int) ($day['horas_previstas_min'] ?? 0)),
-            !empty($day['dia_falta']) ? '1' : '',
-            $this->horas((int) ($day['horas_falta_min'] ?? 0)),
-            $this->horas((int) ($day['atraso_bruto_min'] ?? 0)),
-            $this->horas((int) ($day['desconto_min'] ?? 0)),
-            $atestado,
-            $this->horas((int) ($day['horas_extras_min'] ?? 0)),
-        ];
+        foreach ($dias as $i => $dia) {
+            $fator = min(1.0, ($linhas[$i + 1] - $linhas[$i]) / 12.24);
+            $y = $linhas[$i] + 8.88 * $fator;
+            $pdf->campo(20.88, $y, 18.9, $dia['rotulo_data'], false, 7.44 * $fator);
+            foreach ([1 => 'ent1', 'sai1', 'ent2', 'sai2'] as $coluna => $campo) {
+                $this->celula($pdf, $coluna, $y, substr((string) ($dia[$campo] ?? ''), 0, 5), $fator);
+            }
+            $pdf->campo(235.06, $y + 0.24, 173.1, $dia['observacao_pdf'], true, 8.4 * $fator);
+            foreach ([7 => 'horas_extras_min', 'adn_min', 'horas_falta_min'] as $coluna => $campo) {
+                $this->celula($pdf, $coluna, $y, $this->horas($dia[$campo] ?? 0), $fator);
+            }
+        }
     }
 
-    /** @param array<string,mixed> $totals @return list<string> */
-    private function totalValues(array $totals): array
+    private function celula(FolhaPontoFormulario $pdf, int $coluna, float $y, string $valor, float $fator = 1.0): void
     {
-        return [
-            'TOTAIS', '', '', '', '',
-            $this->horas((int) ($totals['norm'] ?? 0), true),
-            $this->horas((int) ($totals['trab'] ?? 0), true),
-            $this->horas((int) ($totals['adn'] ?? 0), true),
-            $this->horas((int) ($totals['prev'] ?? 0), true),
-            (string) ($totals['dias_falta'] ?? ''),
-            $this->horas((int) ($totals['falta'] ?? 0), true),
-            $this->horas((int) ($totals['atraso'] ?? 0), true),
-            $this->horas((int) ($totals['desconto'] ?? 0), true),
-            $this->horas((int) ($totals['atestado'] ?? 0)),
-            $this->horas((int) ($totals['he'] ?? 0), true),
-        ];
+        $x = self::COLUNAS[$coluna] + 1.5;
+        $largura = self::COLUNAS[$coluna + 1] - $x - 0.8;
+        $pdf->campo($x, $y, $largura, $valor, false, 7.44 * $fator, true);
     }
 
-    private function horas(?int $minutes, bool $showZero = false): string
+    private function cabecalho(FolhaPontoFormulario $pdf, array $e, DateTimeImmutable $fim): void
     {
-        if ($minutes === null || ($minutes === 0 && !$showZero)) {
+        $pdf->campo(19.92, 109.22, 318, mb_strtoupper((string) ($e['nome'] ?? '')), true);
+        $pdf->campo(341.42, 109.22, 176, (string) ($e['matricula'] ?? ''), true);
+        $pdf->campo(19.92, 131.33, 443, mb_strtoupper(trim((string) ($e['funcao'] ?? '')) ?: (string) ($e['cargo'] ?? '')), true);
+        $pdf->campo(467.47, 131.33, 76, self::MESES[(int) $fim->format('n')], true);
+        $pdf->campo(547.90, 131.33, 33, $fim->format('Y'), true);
+        $pdf->duasLinhas(19.92, 153.41, 256.5, $this->horario($e));
+        $contrato = trim((string) ($e['contrato_nome'] ?? '')) ?: (string) ($e['contrato_codigo'] ?? '');
+        $pdf->duasLinhas(279.96, 153.41, 301.5, mb_strtoupper($contrato));
+    }
+
+    private function faixa(array $turno): string
+    {
+        $pontos = array_map(static fn(string $campo): string => substr((string) ($turno[$campo] ?? ''), 0, 5),
+            ['entrada', 'intervalo_inicio', 'intervalo_fim', 'saida']);
+        if ($pontos[0] === '' || $pontos[3] === '') {
             return '';
         }
-        $sign = $minutes < 0 ? '-' : '';
-        $minutes = abs($minutes);
-        return sprintf('%s%02d:%02d', $sign, intdiv($minutes, 60), $minutes % 60);
+        if ($pontos[1] === '' || $pontos[2] === '') {
+            return $pontos[0] . ' AS ' . $pontos[3];
+        }
+        return $pontos[0] . ' AS ' . $pontos[1] . ' E DAS ' . $pontos[2] . ' AS ' . $pontos[3];
     }
 
-    private function hm(mixed $value): string
+    private function horario(array $e): string
     {
-        $value = (string) ($value ?? '');
-        return $value !== '' ? substr($value, 0, 5) : '';
+        $descricao = trim((string) ($e['jornada_descricao'] ?? ''));
+        if (preg_match('/\d{1,2}:\d{2}.*\d{1,2}:\d{2}/', $descricao)) {
+            return mb_strtoupper($descricao);
+        }
+        $rotulos = ['SEG' => 'SEGUNDA', 'TER' => 'TERÇA', 'QUA' => 'QUARTA', 'QUI' => 'QUINTA',
+            'SEX' => 'SEXTA', 'SAB' => 'SÁBADO', 'DOM' => 'DOMINGO'];
+        $semana = array_column($e['jornada_semanal'] ?? [], null, 'dia');
+        $grupos = [];
+        $anterior = '';
+        foreach ($rotulos as $dia => $nome) {
+            $turno = $semana[$dia] ?? [];
+            $faixa = ($turno['tipo'] ?? '') === 'variavel' ? 'HORÁRIO VARIÁVEL' : $this->faixa($turno);
+            if ($faixa !== '') {
+                if ($faixa === $anterior) {
+                    $grupos[array_key_last($grupos)]['fim'] = $nome;
+                } else {
+                    $grupos[] = ['inicio' => $nome, 'fim' => $nome, 'faixa' => $faixa];
+                }
+            }
+            $anterior = $faixa;
+        }
+        if (in_array($e['escala_tipo'] ?? '', ['12x36', 'ciclo'], true)) {
+            $turnos = array_values(array_unique(array_column($grupos, 'faixa')));
+            $escala = ($e['escala_codigo'] ?? '') ?: $e['escala_tipo'];
+            return mb_strtoupper(trim($escala . ' ' . implode(' / ', $turnos ?: [$this->faixa($e['jornada'] ?? [])])));
+        }
+        $partes = [];
+        foreach ($grupos as $grupo) {
+            $dias = $grupo['inicio'] === $grupo['fim'] ? $grupo['inicio'] : $grupo['inicio'] . ' A ' . $grupo['fim'];
+            $partes[] = $dias . ' ' . $grupo['faixa'];
+        }
+        return $partes ? implode(' / ', $partes) : ($descricao ?: $this->faixa($e['jornada'] ?? []));
     }
 
-    private function txt(string $value): string
+    private function totais(FolhaPontoFormulario $pdf, array $totais): void
     {
-        $converted = @iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $value);
-        return $converted !== false ? $converted : $value;
+        foreach ([6 => 'trab', 'he', 'adn', 'falta'] as $coluna => $campo) {
+            $this->celula($pdf, $coluna, 618.67, $this->horas($totais[$campo] ?? 0));
+        }
+    }
+
+    private function horas(mixed $minutos): string
+    {
+        $minutos = (int) $minutos;
+        return $minutos > 0 ? sprintf('%02d:%02d', intdiv($minutos, 60), $minutos % 60) : '';
     }
 }

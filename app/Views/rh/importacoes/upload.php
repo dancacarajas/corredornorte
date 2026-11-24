@@ -27,7 +27,7 @@ use App\Helpers\View;
         </div>
         <div class="form-field">
             <label class="form-label">Arquivo Excel</label>
-            <input class="form-control" type="file" name="arquivo" accept=".xlsx,.xls,.csv" required <?= $dbOk ? '' : 'disabled' ?>>
+            <input class="form-control" type="file" name="arquivo" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" required <?= $dbOk ? '' : 'disabled' ?>>
             <div class="form-hint">Use o modelo matriz completo (todos os campos do cadastro de colaborador).</div>
         </div>
         <div class="stack-row">

@@ -1,5 +1,7 @@
 <?php
 
+use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\View;
 
 /** @var bool $dbOk */
@@ -12,7 +14,11 @@ $msgs = [
     'criado' => 'Usuário criado com sucesso.',
     'atualizado' => 'Usuário atualizado.',
     'reset_enviado' => 'E-mail de redefinição enviado.',
+    'excluido' => 'Usuário excluído (inativado).',
 ];
+$podeCriar = $podeCriar ?? Auth::canAny('usuarios.criar', 'usuarios.operar', 'usuarios.gerenciar');
+$podeEditar = $podeEditar ?? Auth::canAny('usuarios.editar', 'usuarios.operar', 'usuarios.gerenciar');
+$podeExcluir = $podeExcluir ?? Auth::canAny('usuarios.excluir', 'usuarios.gerenciar');
 ?>
 
 <?php if (!$dbOk): ?>
@@ -40,7 +46,7 @@ $msgs = [
         <div class="empty-state">
             <h3>Nenhum usuário</h3>
             <p>Crie a primeira conta de acesso.</p>
-            <a class="btn btn-primary" href="/rh/usuarios/novo">Novo usuário</a>
+            <?php if ($podeCriar): ?><a class="btn btn-primary" href="/rh/usuarios/novo">Novo usuário</a><?php endif; ?>
         </div>
     <?php else: ?>
         <div class="table-wrap">
@@ -90,8 +96,20 @@ $msgs = [
                                 <?= View::e((string) $u['status']) ?>
                             </span>
                         </td>
-                        <td>
+                        <td style="white-space:nowrap;">
+                            <?php if ($podeEditar): ?>
                             <a class="btn btn-ghost btn-sm" href="/rh/usuarios/<?= (int) $u['id'] ?>/editar">Editar</a>
+                            <?php endif; ?>
+                            <?php if ($podeExcluir && (string)($u['status'] ?? '') !== 'inativo'): ?>
+                            <form method="post" action="/rh/usuarios/<?= (int) $u['id'] ?>/excluir" style="display:inline;"
+                                  data-confirm-title="Excluir usuário?"
+                                  data-confirm="Inativa a conta de <?= View::e((string)$u['nome']) ?>. O histórico é preservado."
+                                  data-confirm-ok="Excluir"
+                                  data-confirm-tone="danger">
+                                <?= Csrf::field() ?>
+                                <button class="btn btn-ghost btn-sm" type="submit" style="color:#B42318;">Excluir</button>
+                            </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endforeach; ?>

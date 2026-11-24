@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Config\Database;
 use PDO;
 use RuntimeException;
+use Throwable;
 use ZipArchive;
 
 final class MedicaoService
@@ -107,10 +108,12 @@ final class MedicaoService
             $et = $row['etapas'];
             $heBloqueia = !empty($row['he_pendente']);
             $batidasBloqueia = !empty($row['batidas_pendentes']);
-            if (empty($et['tratado']) && !$heBloqueia && !$batidasBloqueia) {
+            $emDivergencia = !empty($row['em_divergencia']);
+            // Divergência: RH libera no cartão antes de conferir/fechar em lote.
+            if (empty($et['tratado']) && !$heBloqueia && !$batidasBloqueia && !$emDivergencia) {
                 $elegiveis['conferir']++;
             }
-            if (!empty($et['tratado']) && empty($et['fechado']) && !$heBloqueia && !$batidasBloqueia) {
+            if (!empty($et['tratado']) && empty($et['fechado']) && !$heBloqueia && !$batidasBloqueia && !$emDivergencia) {
                 $elegiveis['fechar']++;
             }
             if ($batidasBloqueia && empty($et['fechado'])) {
@@ -204,6 +207,7 @@ final class MedicaoService
              LEFT JOIN documentos d ON d.id = (
                 SELECT d2.id FROM documentos d2
                 WHERE d2.espelho_id = e.id AND d2.tipo = 'folha_ponto' AND d2.status <> 'invalidado'
+                  AND d2.periodo_inicio IS NULL AND d2.periodo_fim IS NULL
                 ORDER BY d2.id DESC LIMIT 1
              )
              {$raJoin}
@@ -245,15 +249,18 @@ final class MedicaoService
                 (in_array($folhaStatus, ['gerado', 'enviado', 'assinado'], true) && !empty($row['portal_token']))
                 || $folhaStatus === 'assinado'
             );
+            $emDivergencia = $statusEsp === 'em_divergencia';
+            // Em divergência a jornada recua: etapas 2–6 ficam off até liberar → conferir → fechar → reemitir.
             $etapas = [
                 'gerado' => true,
-                'tratado' => in_array($statusEsp, ['conferido', 'fechado', 'enviado', 'assinado'], true)
+                'tratado' => !$emDivergencia
+                    && in_array($statusEsp, ['conferido', 'fechado', 'enviado', 'assinado'], true)
                     && empty($hePendentes[$espelhoId]),
-                'fechado' => $fechadoOk,
-                'pdf' => $temPdfELink,
-                'link' => $temPdfELink,
-                'email' => $temPdfELink && $emailOk,
-                'assinaturas' => $temPdfELink && $folhaStatus === 'assinado' && $raValido && $raDocStatus === 'assinado',
+                'fechado' => !$emDivergencia && $fechadoOk,
+                'pdf' => !$emDivergencia && $temPdfELink,
+                'link' => !$emDivergencia && $temPdfELink,
+                'email' => !$emDivergencia && $temPdfELink && $emailOk,
+                'assinaturas' => !$emDivergencia && $temPdfELink && $folhaStatus === 'assinado' && $raValido && $raDocStatus === 'assinado',
             ];
 
             $feitos = 0;
@@ -290,6 +297,7 @@ final class MedicaoService
                 'portal_token' => $token !== '' ? $token : null,
                 'portal_url' => $portalUrl,
                 'he_pendente' => !empty($hePendentes[$espelhoId]),
+                'em_divergencia' => $emDivergencia,
                 'batidas_pendentes' => (int) ($batidasPendentes[$espelhoId] ?? 0),
                 'email_ok' => $emailOk,
                 'email_ultimo_status' => is_array($emailUltimo) ? (string) ($emailUltimo['status'] ?? '') : null,
@@ -375,6 +383,16 @@ final class MedicaoService
         foreach ($this->db->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
             $map[(int) $row['espelho_id']] = true;
         }
+
+        // HE no cartão sem anexo de autorização (SharePoint) também bloqueia a jornada.
+        try {
+            $anexoPend = (new PontoHeAutorizacaoService($this->db))->mapEspelhosComHeSemAnexo($ids);
+            foreach ($anexoPend as $eid => $_) {
+                $map[(int) $eid] = true;
+            }
+        } catch (Throwable) {
+        }
+
         return $map;
     }
 
@@ -424,6 +442,7 @@ final class MedicaoService
              INNER JOIN documentos d ON d.id = (
                 SELECT d2.id FROM documentos d2
                 WHERE d2.espelho_id = pe.id AND d2.tipo = 'folha_ponto' AND d2.status <> 'invalidado'
+                  AND d2.periodo_inicio IS NULL AND d2.periodo_fim IS NULL
                 ORDER BY d2.id DESC LIMIT 1
              )
              LEFT JOIN emails_envios e ON e.id = (
@@ -534,9 +553,29 @@ final class MedicaoService
             $dataFim
         );
 
+        $hePorEspelho = [];
         try {
+            $heSvc = new PontoHeAutorizacaoService($this->db);
+            foreach ($heSvc->listarParaDossie(array_column($painel['colaboradores'], 'espelho_id')) as $heRow) {
+                $hePorEspelho[(int) $heRow['espelho_id']][] = $heRow;
+            }
+        } catch (Throwable) {
+            $hePorEspelho = [];
+        }
+
+        try {
+            $pastasUsadas = [];
             foreach ($painel['colaboradores'] as $colab) {
-                $pasta = $this->nomePastaSeguro((string) $colab['nome']);
+                $basePasta = $this->nomePastaSeguro((string) $colab['nome']);
+                $matriculaRaw = trim((string) ($colab['matricula'] ?? ''));
+                $matriculaSegura = $matriculaRaw !== '' ? $this->nomePastaSeguro($matriculaRaw) : '';
+                $pasta = $matriculaSegura !== '' ? ($basePasta . ' - ' . $matriculaSegura) : $basePasta;
+                $chavePasta = mb_strtolower($pasta, 'UTF-8');
+                if (isset($pastasUsadas[$chavePasta])) {
+                    $pasta = $pasta . '_' . (int) $colab['colaborador_id'];
+                    $chavePasta = mb_strtolower($pasta, 'UTF-8');
+                }
+                $pastasUsadas[$chavePasta] = true;
                 $folha = $colab['folha_assinada_path'] ?? null;
                 $ra = $colab['ra_assinada_path'] ?? null;
                 if (!is_string($folha) || $folha === '' || !is_string($ra) || $ra === '') {
@@ -558,6 +597,48 @@ final class MedicaoService
                     }
                     $nomeArquivo = $this->nomeAnexoJustificativa($anexo, $usados);
                     $zip->addFile($abs, $pasta . '/Justificativas/' . $nomeArquivo);
+                }
+
+                $usadosHe = [];
+                $matricula = preg_replace('/\D+/', '', (string) ($colab['matricula'] ?? '')) ?: 'sem_matricula';
+                foreach ($hePorEspelho[(int) $colab['espelho_id']] ?? [] as $heAnexo) {
+                    $abs = $this->absPath((string) $heAnexo['path']);
+                    if (!is_file($abs)) {
+                        continue;
+                    }
+                    $ext = strtolower((string) pathinfo((string) $heAnexo['path'], PATHINFO_EXTENSION));
+                    if ($ext === '' || !preg_match('/^[a-z0-9]{1,8}$/', $ext)) {
+                        $ext = 'bin';
+                    }
+                    $dataSlug = preg_replace('/\D+/', '', (string) $heAnexo['data']) ?: 'data';
+                    $base = 'HE_' . $dataSlug . '_' . $matricula;
+                    $nomeHe = $base . '.' . $ext;
+                    if (isset($usadosHe[$nomeHe])) {
+                        $nomeHe = $base . '_' . (int) $heAnexo['id'] . '.' . $ext;
+                    }
+                    $usadosHe[$nomeHe] = true;
+                    $zip->addFile($abs, $pasta . '/Autorizacoes_HE/' . $nomeHe);
+                }
+
+                // Inclui anexos PDF de alteração temporária de turno (ex.: noturno autorizado pelo cliente)
+                try {
+                    $turnoSvc = new PontoTurnoAutorizacaoService($this->db);
+                    $usadosTurno = [];
+                    foreach ($turnoSvc->listarPorEspelho((int) $colab['espelho_id']) as $tAnexo) {
+                        $abs = $this->absPath((string) ($tAnexo['arquivo_path'] ?? ''));
+                        if (!is_file($abs)) {
+                            continue;
+                        }
+                        $iniSlug = preg_replace('/\D+/', '', (string) ($tAnexo['data_inicio'] ?? '')) ?: 'ini';
+                        $fimSlug = preg_replace('/\D+/', '', (string) ($tAnexo['data_fim'] ?? '')) ?: 'fim';
+                        $nomeT = 'Turno_' . $iniSlug . '_' . $fimSlug . '_' . $matricula . '.pdf';
+                        if (isset($usadosTurno[$nomeT])) {
+                            $nomeT = 'Turno_' . $iniSlug . '_' . $fimSlug . '_' . $matricula . '_' . (int) $tAnexo['id'] . '.pdf';
+                        }
+                        $usadosTurno[$nomeT] = true;
+                        $zip->addFile($abs, $pasta . '/Autorizacoes_Turno/' . $nomeT);
+                    }
+                } catch (Throwable) {
                 }
             }
         } finally {

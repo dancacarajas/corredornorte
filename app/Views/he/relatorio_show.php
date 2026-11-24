@@ -385,6 +385,20 @@ $primeiroPendenteAberto = false;
                     $heLock = $somenteLeitura || $heStatus === 'aplicada';
                     $heIni = substr((string) ($dia['he_hora_inicio'] ?? ''), 0, 5);
                     $heFim = substr((string) ($dia['he_hora_fim'] ?? ''), 0, 5);
+                    // Prioriza a HE exata do cartão de ponto; fallback = intervalo informado no RA.
+                    $heMinDia = (int) ($dia['ponto_horas_extras_min'] ?? 0);
+                    if ($heMinDia <= 0 && $heIni !== '' && $heFim !== ''
+                        && preg_match('/^\d{2}:\d{2}$/', $heIni) && preg_match('/^\d{2}:\d{2}$/', $heFim)) {
+                        $heIniParts = array_map('intval', explode(':', $heIni));
+                        $heFimParts = array_map('intval', explode(':', $heFim));
+                        $heMinDia = (($heFimParts[0] * 60) + $heFimParts[1]) - (($heIniParts[0] * 60) + $heIniParts[1]);
+                        if ($heMinDia < 0) {
+                            $heMinDia += 1440;
+                        }
+                    }
+                    $heHorasLabel = $heMinDia > 0
+                        ? sprintf('%02d:%02d HE', intdiv($heMinDia, 60), $heMinDia % 60)
+                        : '';
                     $pontoBatidas = trim((string) ($dia['ponto_batidas_label'] ?? ''));
                     $pontoUltima = substr((string) ($dia['ponto_ultima_batida'] ?? ''), 0, 5);
                     $ehFolga = $tipo !== 'trabalho';
@@ -543,25 +557,32 @@ $primeiroPendenteAberto = false;
                                 <div class="ra-he-block"
                                      data-ra-he-day
                                      data-ultima-batida="<?= View::e($pontoUltima) ?>"
-                                     data-day-label="<?= View::e(date('d/m', $ts ?: time())) ?>">
-                                    <div class="ra-ponto-batidas">
-                                        <div class="ra-ponto-batidas-title">Marcação do ponto</div>
-                                        <?php if ($pontoBatidas !== ''): ?>
-                                            <div class="ra-ponto-batidas-times"><?= View::e($pontoBatidas) ?></div>
-                                            <?php if ($pontoUltima !== ''): ?>
+                                     data-day-label="<?= View::e(date('d/m', $ts ?: time())) ?>"
+                                     data-he-minutos-ponto="<?= (int) ($dia['ponto_horas_extras_min'] ?? 0) ?>">
+                                    <div class="ra-he-top">
+                                        <div class="ra-ponto-batidas">
+                                            <div class="ra-ponto-batidas-title">Marcação do ponto</div>
+                                            <?php if ($pontoBatidas !== ''): ?>
+                                                <div class="ra-ponto-batidas-times"><?= View::e($pontoBatidas) ?></div>
+                                                <?php if ($pontoUltima !== ''): ?>
+                                                    <p class="ra-ponto-batidas-hint">
+                                                        HE só a partir de <strong><?= View::e($pontoUltima) ?></strong>
+                                                        (última batida do dia).
+                                                    </p>
+                                                <?php endif; ?>
+                                            <?php else: ?>
+                                                <div class="ra-ponto-batidas-times is-empty">Sem batidas registradas neste dia</div>
                                                 <p class="ra-ponto-batidas-hint">
-                                                    HE só a partir de <strong><?= View::e($pontoUltima) ?></strong>
-                                                    (última batida do dia).
+                                                    <?= $ehFolga
+                                                        ? 'Em folga/feriado você pode lançar HE autorizada sem batida prévia.'
+                                                        : 'Sem batida final no ponto, a HE ainda pode ser informada — o RH conferirá na aplicação.' ?>
                                                 </p>
                                             <?php endif; ?>
-                                        <?php else: ?>
-                                            <div class="ra-ponto-batidas-times is-empty">Sem batidas registradas neste dia</div>
-                                            <p class="ra-ponto-batidas-hint">
-                                                <?= $ehFolga
-                                                    ? 'Em folga/feriado você pode lançar HE autorizada sem batida prévia.'
-                                                    : 'Sem batida final no ponto, a HE ainda pode ser informada — o RH conferirá na aplicação.' ?>
-                                            </p>
-                                        <?php endif; ?>
+                                        </div>
+                                        <div class="ra-he-qty<?= $heHorasLabel === '' ? ' is-empty' : '' ?>"
+                                             data-he-qty
+                                             title="<?= $heMinDia > 0 ? View::e(sprintf('%dh%02d de hora extra no ponto', intdiv($heMinDia, 60), $heMinDia % 60)) : 'Sem hora extra' ?>"
+                                             <?= $heHorasLabel === '' ? 'hidden' : '' ?>><?= View::e($heHorasLabel !== '' ? $heHorasLabel : '00:00 HE') ?></div>
                                     </div>
                                     <div class="ra-he-row">
                                         <div class="ra-field-box">
@@ -912,12 +933,47 @@ $primeiroPendenteAberto = false;
     }
     return !msg;
   };
+  const formatHeQty = (mins) => {
+    const h = String(Math.floor(mins / 60)).padStart(2, '0');
+    const m = String(mins % 60).padStart(2, '0');
+    return h + ':' + m + ' HE';
+  };
+  const updateHeQty = (card) => {
+    if (!card) return;
+    const qty = card.querySelector('[data-he-qty]');
+    const block = card.querySelector('[data-ra-he-day]');
+    if (!qty || !block) return;
+    const pontoMin = parseInt(block.dataset.heMinutosPonto || '0', 10) || 0;
+    const ini = (block.querySelector('[data-he-inicio]')?.value || '').slice(0, 5);
+    const fim = (block.querySelector('[data-he-fim]')?.value || '').slice(0, 5);
+    const iniMin = toMinutes(ini);
+    const fimMin = toMinutes(fim);
+    let mins = pontoMin > 0 ? pontoMin : 0;
+    if (mins <= 0 && iniMin !== null && fimMin !== null) {
+      mins = fimMin - iniMin;
+      if (mins < 0) mins += 1440;
+    }
+    if (mins > 0) {
+      qty.textContent = formatHeQty(mins);
+      qty.hidden = false;
+      qty.classList.remove('is-empty');
+      qty.title = Math.floor(mins / 60) + 'h' + String(mins % 60).padStart(2, '0') + ' de hora extra no ponto';
+    } else {
+      qty.textContent = '00:00 HE';
+      qty.hidden = true;
+      qty.classList.add('is-empty');
+      qty.title = 'Sem hora extra';
+    }
+  };
   document.querySelectorAll('[data-ra-he-day]').forEach((block) => {
+    const card = block.closest('.ra-day-card');
+    updateHeQty(card);
     ['change', 'input', 'blur'].forEach((evt) => {
       block.addEventListener(evt, (e) => {
         if (!(e.target instanceof HTMLInputElement)) return;
         if (!e.target.matches('[data-he-inicio], [data-he-fim]')) return;
         validateHeBlock(block);
+        updateHeQty(card);
       }, true);
     });
   });
@@ -937,7 +993,12 @@ $primeiroPendenteAberto = false;
     });
     try {
       localStorage.setItem(draftKey, JSON.stringify({ ts: Date.now(), data: payload }));
-      if (autosaveHint) autosaveHint.textContent = 'Salvo localmente às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      if (autosaveHint) {
+        const hhmm = (window.AppClock && window.AppClock.nowTime)
+          ? window.AppClock.nowTime(false)
+          : new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+        autosaveHint.textContent = 'Salvo localmente às ' + hhmm;
+      }
     } catch (_) {}
   };
 
@@ -966,6 +1027,12 @@ $primeiroPendenteAberto = false;
 
     form.addEventListener('input', () => { dirty = true; saveDraftLocal(); recount(); });
     form.addEventListener('change', () => { dirty = true; saveDraftLocal(); recount(); });
+    const markSubmitting = () => {
+      dirty = false;
+      try { localStorage.removeItem(draftKey); } catch (_) {}
+    };
+    // data-confirm usa submit nativo/requestSubmit — precisa limpar dirty nos dois caminhos.
+    form.addEventListener('arcadis:beforenativesubmit', markSubmitting);
     form.addEventListener('submit', (ev) => {
       let heOk = true;
       document.querySelectorAll('[data-ra-he-day]').forEach((block) => {
@@ -973,13 +1040,13 @@ $primeiroPendenteAberto = false;
       });
       if (!heOk) {
         ev.preventDefault();
+        dirty = true;
         const firstErr = document.querySelector('[data-he-error]:not([hidden])');
         firstErr?.closest('.ra-day-card')?.classList.add('is-open');
         firstErr?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
-      dirty = false;
-      try { localStorage.removeItem(draftKey); } catch (_) {}
+      markSubmitting();
     });
     window.addEventListener('beforeunload', (e) => {
       if (!dirty) return;

@@ -54,43 +54,76 @@ $dbOk = $dbOk ?? true;
         <?php if ($relatorios === []): ?>
             <div class="empty-state"><h3>Nenhum relatório</h3><p>Gere cartões de ponto para criar os relatórios automaticamente.</p></div>
         <?php else: ?>
-            <div class="table-wrap">
-                <table class="table">
-                    <thead>
-                    <tr>
-                        <th>Colaborador</th>
-                        <th>Período</th>
-                        <th>OS</th>
-                        <th>Status</th>
-                        <th>Remoto</th>
-                        <th>Site</th>
-                        <th>Viagem</th>
-                        <th></th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($relatorios as $r):
-                        $ini = (string) ($r['data_inicio'] ?? '');
-                        $fim = (string) ($r['data_fim'] ?? '');
-                        $rotulo = ($ini && $fim) ? date('d/m/Y', strtotime($ini)) . ' a ' . date('d/m/Y', strtotime($fim)) : '—';
-                        ?>
+            <form method="post" action="/rh/relatorios-atividades/lote">
+                <?= \App\Helpers\Csrf::field() ?>
+                <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;justify-content:space-between;margin-bottom:.75rem;padding:.6rem .85rem;background:var(--canvas);border:1px solid var(--border);border-radius:var(--radius-md);">
+                    <label style="display:inline-flex;align-items:center;gap:.45rem;font-size:.875rem;cursor:pointer;">
+                        <input type="checkbox" id="raCheckTodos" onclick="document.querySelectorAll('.js-ra-check').forEach(function(cb){cb.checked=document.getElementById('raCheckTodos').checked;});">
+                        <span>Selecionar todos da página</span>
+                    </label>
+                    <div style="display:flex;flex-wrap:wrap;gap:.5rem;">
+                        <button class="btn btn-secondary btn-sm" type="submit" name="acao" value="gerar_link">
+                            Gerar PDF + Link selecionados
+                        </button>
+                        <button class="btn btn-primary btn-sm" type="submit" name="acao" value="aprovar">
+                            Aprovar selecionados
+                        </button>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table class="table">
+                        <thead>
                         <tr>
-                            <td>
-                                <strong><?= View::e((string) $r['nome']) ?></strong><br>
-                                <span class="muted text-sm"><?= View::e((string) $r['matricula']) ?></span>
-                            </td>
-                            <td><?= View::e($rotulo) ?></td>
-                            <td><?= View::e((string) ($r['os_codigo'] ?? '—')) ?></td>
-                            <td><?= View::e((string) $r['status']) ?></td>
-                            <td><?= (int) ($r['dias_remoto'] ?? 0) ?></td>
-                            <td><?= (int) ($r['dias_site'] ?? 0) ?></td>
-                            <td><?= (int) ($r['dias_viagem'] ?? 0) ?></td>
-                            <td><a class="btn btn-ghost btn-sm" href="/rh/relatorios-atividades/<?= (int) $r['id'] ?>">Abrir</a></td>
+                            <th style="width:2.2rem;"></th>
+                            <th>Colaborador</th>
+                            <th>Período</th>
+                            <th>OS</th>
+                            <th>Status RA</th>
+                            <th>Assinatura</th>
+                            <th>Remoto</th>
+                            <th>Site</th>
+                            <th>Viagem</th>
+                            <th></th>
                         </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($relatorios as $r):
+                            $ini = (string) ($r['data_inicio'] ?? '');
+                            $fim = (string) ($r['data_fim'] ?? '');
+                            $rotulo = ($ini && $fim) ? date('d/m/Y', strtotime($ini)) . ' a ' . date('d/m/Y', strtotime($fim)) : '—';
+                            $docSt = (string) ($r['doc_status'] ?? '');
+                            $pToken = (string) ($r['portal_token'] ?? '');
+                            ?>
+                            <tr>
+                                <td>
+                                    <input type="checkbox" class="js-ra-check" name="relatorio_ids[]" value="<?= (int) $r['id'] ?>">
+                                </td>
+                                <td>
+                                    <strong><?= View::e((string) $r['nome']) ?></strong><br>
+                                    <span class="muted text-sm"><?= View::e((string) $r['matricula']) ?></span>
+                                </td>
+                                <td><?= View::e($rotulo) ?></td>
+                                <td><?= View::e((string) ($r['os_codigo'] ?? '—')) ?></td>
+                                <td><?= View::e((string) $r['status']) ?></td>
+                                <td>
+                                    <?php if ($docSt === 'assinado'): ?>
+                                        <span class="badge badge-success">Assinado</span>
+                                    <?php elseif ($docSt === 'enviado' && $pToken !== ''): ?>
+                                        <a href="/assinar-relatorio/<?= View::e(rawurlencode($pToken)) ?>" target="_blank" rel="noopener" class="badge badge-warning" title="Abrir link de assinatura">Aguardando assinatura ↗</a>
+                                    <?php else: ?>
+                                        <span class="muted text-sm">Sem link</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?= (int) ($r['dias_remoto'] ?? 0) ?></td>
+                                <td><?= (int) ($r['dias_site'] ?? 0) ?></td>
+                                <td><?= (int) ($r['dias_viagem'] ?? 0) ?></td>
+                                <td><a class="btn btn-ghost btn-sm" href="/rh/relatorios-atividades/<?= (int) $r['id'] ?>">Abrir</a></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </form>
         <?php endif; ?>
     </div>
 </section>

@@ -16,7 +16,7 @@ final class ImportacaoController
 {
     public function index(): void
     {
-        Auth::requirePermission('importacoes.gerenciar');
+        Auth::requirePermission('importacoes.ver');
         $pdo = Db::tryConnection();
         $imports = [];
         if ($pdo instanceof PDO) {
@@ -25,10 +25,13 @@ final class ImportacaoController
             )->fetchAll();
         }
 
+        $podeOperar = Auth::canAny('importacoes.operar', 'importacoes.gerenciar');
         ob_start();
         ?>
         <a class="btn btn-secondary btn-sm" href="/rh/importacoes/modelo">Baixar modelo matriz</a>
+        <?php if ($podeOperar): ?>
         <a class="btn btn-primary btn-sm" href="/rh/importacoes/nova">Nova importação</a>
+        <?php endif; ?>
         <?php
         $topbarActions = ob_get_clean() ?: '';
 
@@ -44,7 +47,7 @@ final class ImportacaoController
 
     public function create(): void
     {
-        Auth::requirePermission('importacoes.gerenciar');
+        Auth::requirePermission('importacoes.operar');
         $pdo = Db::tryConnection();
         View::render('rh/importacoes/upload', [
             'pageTitle' => 'Importar efetivo',
@@ -58,8 +61,8 @@ final class ImportacaoController
     public function baixarModelo(): void
     {
         Auth::requireLogin();
-        if (!Auth::canAny('importacoes.gerenciar', 'efetivo.ver', 'efetivo.editar')) {
-            Auth::requirePermission('importacoes.gerenciar');
+        if (!Auth::canAny('importacoes.gerenciar', 'importacoes.ver', 'importacoes.operar', 'efetivo.ver', 'efetivo.editar')) {
+            Auth::requirePermission('importacoes.ver');
         }
         try {
             $path = (new ModeloEfetivoService())->gerarArquivo();
@@ -79,6 +82,7 @@ final class ImportacaoController
 
     public function store(): void
     {
+        Auth::requirePermission('importacoes.operar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
             header('Location: /rh/importacoes');
@@ -178,6 +182,7 @@ final class ImportacaoController
 
     public function confirm(string $id = '0'): void
     {
+        Auth::requirePermission('importacoes.operar');
         $pdo = Db::tryConnection();
         $importId = (int) $id;
         if (!$pdo instanceof PDO || $importId <= 0) {

@@ -59,12 +59,16 @@ final class CalculoPontoService
         // Folga/DSR ou feriado com batida: todo o tempo vira HE.
         // HE 100% SOMENTE domingo (w=0) ou feriado. Sábado e demais folgas → % da lotação/colaborador.
         if (in_array($tipo, ['folga', 'folga_escala', 'feriado'], true)) {
-            $ent1 = $dia['ent1'] ?? null;
-            $sai1 = $dia['sai1'] ?? null;
-            $ent2 = $dia['ent2'] ?? null;
-            $sai2 = $dia['sai2'] ?? null;
-            $trab = $this->minutosTrabalhados($ent1, $sai1, $ent2, $sai2);
-            $adn = $this->minutosNoturnos($ent1, $sai1) + $this->minutosNoturnos($ent2, $sai2);
+            $apurado = $this->apurarTrabalho(
+                $dia['ent1'] ?? null,
+                $dia['sai1'] ?? null,
+                $dia['ent2'] ?? null,
+                $dia['sai2'] ?? null,
+                isset($dia['previsto_intervalo_inicio']) ? (string) $dia['previsto_intervalo_inicio'] : null,
+                isset($dia['previsto_intervalo_fim']) ? (string) $dia['previsto_intervalo_fim'] : null
+            );
+            $trab = $apurado['trab'];
+            $adn = $apurado['adn'];
             $rotulo = $tipo === 'feriado'
                 ? (string) ($feriadoInfo['nome'] ?? 'Feriado')
                 : match (true) {
@@ -129,7 +133,15 @@ final class CalculoPontoService
         $ent2 = $dia['ent2'] ?? null;
         $sai2 = $dia['sai2'] ?? null;
 
-        $trab = $this->minutosTrabalhados($ent1, $sai1, $ent2, $sai2);
+        $apurado = $this->apurarTrabalho(
+            $ent1,
+            $sai1,
+            $ent2,
+            $sai2,
+            isset($dia['previsto_intervalo_inicio']) ? (string) $dia['previsto_intervalo_inicio'] : null,
+            isset($dia['previsto_intervalo_fim']) ? (string) $dia['previsto_intervalo_fim'] : null
+        );
+        $trab = $apurado['trab'];
         $temBatida = $ent1 || $sai1 || $ent2 || $sai2;
         // Dia útil sem marcação e com jornada prevista = falta.
         $diaFalta = (!$temBatida && $prevMin > 0) ? 1 : 0;
@@ -146,19 +158,36 @@ final class CalculoPontoService
             $atraso = max(0, $diffAtraso);
         }
 
-        // Variação ≤3 min com jornada fechada: sem atraso/falta artificiais
-        if ($trab === $prevMin && $atraso <= 3) {
+        // Tratativa do RH: se o colaborador cumpriu (ou excedeu) a jornada prevista
+        // — inclusive com HE na saída — entrada alguns minutos depois não é atraso.
+        // Também descarta jitter do horário britânico (≤N min).
+        $variacaoMax = 3;
+        try {
+            $appCfg = require dirname(__DIR__, 2) . '/config/app.php';
+            $variacaoMax = max(1, min(5, (int) ($appCfg['ponto']['variacao_minutos'] ?? 3)));
+        } catch (Throwable) {
+        }
+        if ($atraso > 0 && ($trab >= $prevMin || $atraso <= $variacaoMax)) {
             $atraso = 0;
+        }
+        if ($temBatida && $faltaMin > 0 && $faltaMin <= $variacaoMax) {
             $faltaMin = 0;
             $diaFalta = 0;
         }
 
         $he = max(0, $trab - $prevMin);
-        // Dia útil (ex.: 07–17 com saída 19): excedente = HE no % configurado.
-        // HE 100% somente domingo; feriado já cai no bloco de descanso acima.
-        $he100 = ($dow === 0) ? $he : 0;
-        $heAdicional = ($dow === 0) ? 0 : $he;
-        $adn = $this->minutosNoturnos($ent1, $sai1) + $this->minutosNoturnos($ent2, $sai2);
+        // Dia útil: excedente no % da lotação. Domingo → 100%.
+        // Plantão em feriado (trabalha_feriado): CLT/planilha → HE 100% de todo o trabalhado.
+        $plantaoFeriado = ($feriadoInfo !== null && $trabalhaFeriado && $trab > 0);
+        if ($plantaoFeriado) {
+            $he = $trab;
+            $he100 = $trab;
+            $heAdicional = 0;
+        } else {
+            $he100 = ($dow === 0) ? $he : 0;
+            $heAdicional = ($dow === 0) ? 0 : $he;
+        }
+        $adn = $apurado['adn'];
         $desconto = $faltaMin;
 
         $atrasoRelevante = $atraso > self::TOLERANCIA_MIN;
@@ -166,14 +195,16 @@ final class CalculoPontoService
         $ok = ($diaFalta === 0 && !$atrasoRelevante && !$faltaRelevante)
             ? 'ok'
             : ($diaFalta ? 'falta' : 'pendente');
-        $normalLabel = ($feriadoInfo !== null && $trabalhaFeriado)
+        $normalLabel = $plantaoFeriado
             ? mb_substr('Plantão em feriado — ' . (string) ($feriadoInfo['nome'] ?? 'Feriado'), 0, 120)
             : 'Normal';
         $resumo = $diaFalta
             ? 'Falta'
-            : ($he > self::TOLERANCIA_MIN
-                ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
-                : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : $normalLabel)));
+            : ($plantaoFeriado
+                ? sprintf('%s +%s HE100', $normalLabel, $this->fmt($he))
+                : ($he > self::TOLERANCIA_MIN
+                    ? sprintf('+%s HE%s', $this->fmt($he), $he100 > 0 ? '100' : (string) $pctHe)
+                    : ($atrasoRelevante ? 'Atraso' : ($adn > 0 ? 'ADN' : $normalLabel))));
 
         $this->persist($pontoDiaId, [
             'total_trab_min' => $trab,
@@ -268,7 +299,9 @@ final class CalculoPontoService
         foreach ($this->db->query(
             "SELECT ponto_dia_id, sequencia, horario, origem
              FROM ponto_marcacoes
-             WHERE ponto_dia_id IN ({$in}) AND origem IN ('gerado','previsto')"
+             WHERE ponto_dia_id IN ({$in})
+               AND ((origem = 'previsto' AND sequencia BETWEEN 1 AND 4)
+                    OR (origem = 'gerado' AND sequencia BETWEEN 5 AND 8))"
         ) as $row) {
             $marcacoes[(int) $row['ponto_dia_id']][(string) $row['origem']][(int) $row['sequencia']] = substr((string) $row['horario'], 0, 5);
         }
@@ -532,49 +565,180 @@ final class CalculoPontoService
         return $bruto;
     }
 
-    private function minutosTrabalhados(?string $e1, ?string $s1, ?string $e2, ?string $s2): int
-    {
-        $t = 0;
-        if ($e1 && $s1) {
-            $a = $this->toMin($e1);
-            $b = $this->toMin($s1);
+    /**
+     * Horas trabalhadas e ADN a partir das batidas.
+     * Se a jornada do dia passa de 6h e o intervalo previsto cai dentro de uma batida
+     * (almoço não separado em Sai.1/Ent.2), esse trecho sai da conta.
+     * Batidas já separadas no almoço não sofrem segundo desconto.
+     *
+     * @return array{trab:int,adn:int}
+     */
+    private function apurarTrabalho(
+        ?string $e1,
+        ?string $s1,
+        ?string $e2,
+        ?string $s2,
+        ?string $intIni,
+        ?string $intFim
+    ): array {
+        $pares = ($e1 && $s2 && !$s1 && !$e2)
+            ? [[$e1, $s2]]
+            : [[$e1, $s1], [$e2, $s2]];
+
+        $segs = [];
+        $prevStart = null;
+        foreach ($pares as [$ini, $fim]) {
+            if (!$ini || !$fim) {
+                continue;
+            }
+            $a = $this->toMin($ini);
+            $b = $this->toMin($fim);
+            if ($b === $a) {
+                continue;
+            }
             if ($b < $a) {
                 $b += 1440;
             }
-            $t += max(0, $b - $a);
-        }
-        if ($e2 && $s2) {
-            $a = $this->toMin($e2);
-            $b = $this->toMin($s2);
-            if ($b < $a) {
+            if ($prevStart !== null && $a < $prevStart) {
+                $a += 1440;
                 $b += 1440;
             }
-            $t += max(0, $b - $a);
+            $prevStart = $prevStart ?? $a;
+            $segs[] = [$a, $b];
         }
-        return $t;
+        if ($segs === []) {
+            return ['trab' => 0, 'adn' => 0];
+        }
+
+        usort($segs, static fn (array $x, array $y): int => $x[0] <=> $y[0]);
+        $fundidos = [];
+        foreach ($segs as [$a, $b]) {
+            if ($fundidos === []) {
+                $fundidos[] = [$a, $b];
+                continue;
+            }
+            $ultimoIdx = count($fundidos) - 1;
+            if ($a <= $fundidos[$ultimoIdx][1]) {
+                $fundidos[$ultimoIdx][1] = max($fundidos[$ultimoIdx][1], $b);
+                continue;
+            }
+            $fundidos[] = [$a, $b];
+        }
+        $segs = $fundidos;
+
+        $primeiro = $segs[0][0];
+        $ultimo = $segs[0][1];
+        foreach ($segs as [$a, $b]) {
+            $primeiro = min($primeiro, $a);
+            $ultimo = max($ultimo, $b);
+        }
+        $intervalo = $this->faixaMinutos($intIni, $intFim);
+        if (count($segs) === 1 && $intervalo !== null && ($ultimo - $primeiro) > 6 * 60) {
+            $cortados = [];
+            foreach ($segs as [$a, $b]) {
+                foreach ($this->cortarIntervalo($a, $b, $intervalo[0], $intervalo[1]) as $parte) {
+                    $cortados[] = $parte;
+                }
+            }
+            $segs = $cortados;
+        }
+
+        $trab = 0;
+        $adnRelogio = 0;
+        $teveNoturno = false;
+        foreach ($segs as [$a, $b]) {
+            $trab += max(0, $b - $a);
+            $adnSeg = $this->minutosNoturnosFaixa($a, $b, $teveNoturno);
+            if ($adnSeg > 0) {
+                $teveNoturno = true;
+            }
+            $adnRelogio += $adnSeg;
+        }
+
+        // Hora noturna reduzida CLT (Art. 73, § 1º): 52min30s equivalem a 60min (fator 60 / 52,5 = 8 / 7).
+        $adn = $adnRelogio > 0 ? (int) round($adnRelogio * 8 / 7) : 0;
+
+        return ['trab' => $trab, 'adn' => $adn];
     }
 
-    /**
-     * Faixa noturna urbana CLT: 22:00 às 05:00.
-     */
-    private function minutosNoturnos(?string $ini, ?string $fim): int
+    /** @return array{0:int,1:int}|null */
+    private function faixaMinutos(?string $ini, ?string $fim): ?array
     {
-        if (!$ini || !$fim) {
-            return 0;
+        $ini = trim((string) $ini);
+        $fim = trim((string) $fim);
+        if ($ini === '' || $fim === '') {
+            return null;
         }
         $a = $this->toMin($ini);
         $b = $this->toMin($fim);
-        if ($b <= $a) {
-            $b += 24 * 60;
+        if ($b === $a) {
+            return null;
+        }
+        if ($b < $a) {
+            $b += 1440;
         }
 
-        $total = 0;
-        // janela do mesmo dia 22:00-24:00
-        $total += $this->overlapMin($a, $b, self::NOTURNO_INI, 24 * 60);
-        // janela madrugada 00:00-05:00
-        $total += $this->overlapMin($a, $b, 0, self::NOTURNO_FIM);
-        // se cruza meia-noite: 24:00-29:00 (=05:00 D+1)
-        $total += $this->overlapMin($a, $b, 24 * 60, 24 * 60 + self::NOTURNO_FIM);
+        return [$a, $b];
+    }
+
+    /**
+     * @return list<array{0:int,1:int}>
+     */
+    private function cortarIntervalo(int $a, int $b, int $i1, int $i2): array
+    {
+        $partes = [[$a, $b]];
+        $janelas = [[$i1, $i2]];
+        if ($i1 < 1440) {
+            $janelas[] = [$i1 + 1440, $i2 + 1440];
+        }
+        foreach ($janelas as [$c, $d]) {
+            $novas = [];
+            foreach ($partes as [$x, $y]) {
+                $ini = max($x, $c);
+                $fim = min($y, $d);
+                if ($fim <= $ini) {
+                    $novas[] = [$x, $y];
+                    continue;
+                }
+                if ($ini > $x) {
+                    $novas[] = [$x, $ini];
+                }
+                if ($fim < $y) {
+                    $novas[] = [$fim, $y];
+                }
+            }
+            $partes = $novas;
+        }
+
+        return array_values(array_filter(
+            $partes,
+            static fn (array $p): bool => $p[1] > $p[0]
+        ));
+    }
+
+    /**
+     * Faixa noturna urbana CLT: 22:00 às 05:00, com prorrogação após 05:00 (art. 73 §5º / Súmula 60, II TST).
+     * $a/$b já estão na linha do tempo (saída após meia-noite vem com +1440).
+     */
+    private function minutosNoturnosFaixa(int $a, int $b, bool $teveNoturnoAntes = false): int
+    {
+        if ($b === $a) {
+            return 0;
+        }
+        if ($b < $a) {
+            $b += 1440;
+        }
+        $noturnoDia0 = $this->overlapMin($a, $b, 0, self::NOTURNO_FIM);
+        $noturnoVirada = $this->overlapMin($a, $b, self::NOTURNO_INI, 24 * 60 + self::NOTURNO_FIM);
+        $total = $noturnoDia0 + $noturnoVirada;
+
+        $fimNoturnoVirada = 24 * 60 + self::NOTURNO_FIM;
+        if (($noturnoVirada > 0 || $teveNoturnoAntes) && $b > $fimNoturnoVirada) {
+            $total += $this->overlapMin($a, $b, $fimNoturnoVirada, 24 * 60 + self::NOTURNO_INI);
+        } elseif ($noturnoDia0 > 0 && $a <= 2 * 60 && $b > self::NOTURNO_FIM) {
+            $total += $this->overlapMin($a, $b, self::NOTURNO_FIM, self::NOTURNO_INI);
+        }
+
         return $total;
     }
 

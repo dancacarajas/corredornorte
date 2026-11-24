@@ -3,8 +3,8 @@
   display: grid;
   place-items: center;
   background:
-    radial-gradient(circle at top left, rgba(224, 96, 8, 0.18), transparent 40%),
-    radial-gradient(circle at bottom right, rgba(17, 17, 17, 0.08), transparent 35%),
+    radial-gradient(circle at top left, rgba(var(--brand-heritage-rgb), 0.16), transparent 42%),
+    radial-gradient(circle at bottom right, rgba(var(--brand-confidence-rgb), 0.08), transparent 36%),
     var(--canvas);
   padding: 1.5rem;
 }
@@ -30,9 +30,10 @@
 .login-brand img {
   display: block;
   width: auto;
+  min-width: var(--logo-min-width);
   max-width: 100%;
   height: auto;
-  max-height: 72px;
+  max-height: 56px;
   margin: 0 auto;
   object-fit: contain;
   object-position: center;
@@ -41,8 +42,9 @@
 
 .auth-title {
   margin: 0 0 0.35rem;
-  font-size: 1.2rem;
-  font-weight: 800;
+  font-size: var(--text-h1);
+  font-weight: 700;
+  letter-spacing: var(--tracking);
   color: var(--ink);
   text-align: center;
 }

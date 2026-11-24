@@ -2,7 +2,7 @@
   overflow: hidden;
   border: 1px solid var(--border, #e5eaf0);
   background:
-    linear-gradient(135deg, rgba(224, 96, 8, 0.08) 0%, transparent 42%),
+    linear-gradient(135deg, rgba(var(--brand-heritage-rgb), 0.08) 0%, transparent 42%),
     linear-gradient(180deg, #fff 0%, #f8fafc 100%);
 }
 
@@ -29,15 +29,15 @@
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--brand-primary, #E06008);
+  color: var(--brand-primary);
 }
 
 .medicao-title {
   margin: 0;
-  font-family: "Plus Jakarta Sans", Manrope, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(1.4rem, 2.1vw, 1.85rem);
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--tracking);
   line-height: 1.15;
 }
 
@@ -146,7 +146,7 @@
   text-align: center;
   background:
     radial-gradient(circle at center, #fff 58%, transparent 59%),
-    conic-gradient(var(--brand-primary, #E06008) calc(var(--pct) * 1%), #e8eef4 0);
+    conic-gradient(var(--brand-primary) calc(var(--pct) * 1%), #e8eef4 0);
 }
 
 .medicao-score.is-complete .medicao-score-ring {
@@ -157,10 +157,10 @@
 
 .medicao-score-ring strong {
   display: block;
-  font-family: "Plus Jakarta Sans", Manrope, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.25rem;
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--tracking);
 }
 
 .medicao-score-ring span {
@@ -187,9 +187,9 @@
 }
 
 .medicao-score-ready strong {
-  font-family: "Plus Jakarta Sans", Manrope, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.55rem;
-  letter-spacing: -0.03em;
+  letter-spacing: var(--tracking);
   line-height: 1;
 }
 
@@ -259,8 +259,8 @@
 }
 
 .medicao-step.is-selected {
-  border-color: rgba(224, 96, 8, 0.55);
-  box-shadow: 0 0 0 2px rgba(224, 96, 8, 0.14);
+  border-color: rgba(var(--brand-heritage-rgb), 0.55);
+  box-shadow: 0 0 0 2px rgba(var(--brand-heritage-rgb), 0.14);
 }
 
 .medicao-step.is-done {
@@ -269,8 +269,8 @@
 }
 
 .medicao-step.is-active {
-  border-color: rgba(224, 96, 8, 0.35);
-  background: var(--brand-primary-soft, #FFF1E6);
+  border-color: rgba(var(--brand-heritage-rgb), 0.35);
+  background: var(--brand-primary-soft);
 }
 
 .medicao-step-num {
@@ -293,7 +293,7 @@
 }
 
 .medicao-step.is-active .medicao-step-num {
-  background: var(--brand-primary, #E06008);
+  background: var(--brand-primary);
   color: #fff;
 }
 
@@ -354,7 +354,7 @@
   align-items: center;
   gap: 0.3rem;
   padding: 0.3rem 0.7rem;
-  border: 1px solid var(--line, #e5e7eb);
+  border: 1px solid var(--line, var(--border));
   border-radius: 999px;
   background: #fff;
   color: var(--ink, #111);
@@ -472,7 +472,7 @@
 }
 
 .medicao-lote-actions .btn.is-filter-on {
-  box-shadow: 0 0 0 2px rgba(224, 96, 8, 0.2);
+  box-shadow: 0 0 0 2px rgba(var(--brand-heritage-rgb), 0.2);
 }
 
 .medicao-lote-exec form {
@@ -614,7 +614,7 @@
 .medicao-report {
   margin-top: 0.5rem;
   padding: 0.75rem;
-  border: 1px solid var(--line, #e5e7eb);
+  border: 1px solid var(--line, var(--border));
   border-radius: 0.65rem;
   background: #fafafa;
 }
@@ -627,7 +627,7 @@
 }
 
 .medicao-report-filter {
-  border: 1px solid var(--line, #e5e7eb);
+  border: 1px solid var(--line, var(--border));
   background: #fff;
   border-radius: 999px;
   padding: 0.25rem 0.7rem;

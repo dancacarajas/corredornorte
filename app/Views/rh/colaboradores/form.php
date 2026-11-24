@@ -83,11 +83,47 @@ $cancelHref = $isEdit ? '/rh/colaboradores/' . $colaboradorId : '/rh/efetivo';
             </div>
             <div class="form-field">
                 <label class="form-label">Cargo</label>
-                <input class="form-control" name="cargo" value="<?= View::e((string) ($c['cargo'] ?? '')) ?>">
+                <select class="form-control" name="cargo">
+                    <option value="">Selecione</option>
+                    <?php
+                    $cargoAtual = (string) ($c['cargo'] ?? '');
+                    $cargoNomes = array_map(static fn ($r) => (string) ($r['nome'] ?? ''), $cargos ?? []);
+                    if ($cargoAtual !== '' && !in_array($cargoAtual, $cargoNomes, true)):
+                    ?>
+                        <option value="<?= View::e($cargoAtual) ?>" selected><?= View::e($cargoAtual) ?> (atual)</option>
+                    <?php endif; ?>
+                    <?php foreach (($cargos ?? []) as $cargo): ?>
+                        <?php $cargoNome = (string) ($cargo['nome'] ?? ''); ?>
+                        <option value="<?= View::e($cargoNome) ?>" <?= ($cargoAtual === $cargoNome) ? 'selected' : '' ?>>
+                            <?= View::e(trim(($cargo['codigo'] ?? '') . ' — ' . $cargoNome, ' —')) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if (($cargos ?? []) === []): ?>
+                    <div class="form-hint">Nenhum cargo ativo. Cadastre em <a href="/rh/cargos">Cargos</a>.</div>
+                <?php endif; ?>
             </div>
             <div class="form-field">
                 <label class="form-label">Função</label>
-                <input class="form-control" name="funcao" value="<?= View::e((string) ($c['funcao'] ?? '')) ?>">
+                <select class="form-control" name="funcao">
+                    <option value="">Selecione</option>
+                    <?php
+                    $funcaoAtual = (string) ($c['funcao'] ?? '');
+                    $funcaoNomes = array_map(static fn ($r) => (string) ($r['nome'] ?? ''), $funcoes ?? []);
+                    if ($funcaoAtual !== '' && !in_array($funcaoAtual, $funcaoNomes, true)):
+                    ?>
+                        <option value="<?= View::e($funcaoAtual) ?>" selected><?= View::e($funcaoAtual) ?> (atual)</option>
+                    <?php endif; ?>
+                    <?php foreach (($funcoes ?? []) as $funcao): ?>
+                        <?php $funcaoNome = (string) ($funcao['nome'] ?? ''); ?>
+                        <option value="<?= View::e($funcaoNome) ?>" <?= ($funcaoAtual === $funcaoNome) ? 'selected' : '' ?>>
+                            <?= View::e(trim(($funcao['codigo'] ?? '') . ' — ' . $funcaoNome, ' —')) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if (($funcoes ?? []) === []): ?>
+                    <div class="form-hint">Nenhuma função ativa. Cadastre em <a href="/rh/funcoes">Funções</a>.</div>
+                <?php endif; ?>
             </div>
             <div class="form-field">
                 <label class="form-label">Status</label>
@@ -101,23 +137,29 @@ $cancelHref = $isEdit ? '/rh/colaboradores/' . $colaboradorId : '/rh/efetivo';
                 <label class="form-label">Gestor</label>
                 <select class="form-control" name="gestor_id">
                     <option value="">—</option>
-                    <?php foreach (($colaboradores ?? []) as $g): ?>
-                        <option value="<?= (int)$g['id'] ?>" <?= ((string)($c['gestor_id'] ?? '') === (string)$g['id']) ? 'selected' : '' ?>>
-                            <?= View::e($g['matricula'].' — '.$g['nome']) ?>
+                    <?php foreach (($gestoresArcadis ?? []) as $g): ?>
+                        <option value="<?= (int) $g['id'] ?>" <?= ((string) ($c['gestor_id'] ?? '') === (string) $g['id']) ? 'selected' : '' ?>>
+                            <?= View::e(trim(($g['matricula'] ?? '') . ' — ' . ($g['nome'] ?? ''), ' —')) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
+                <?php if (($gestoresArcadis ?? []) === []): ?>
+                    <div class="form-hint">Nenhum gestor ativo. Cadastre em <a href="/rh/gestores-arcadis">Gestores Arcadis</a>.</div>
+                <?php endif; ?>
             </div>
             <div class="form-field">
                 <label class="form-label">Supervisor</label>
                 <select class="form-control" name="supervisor_id">
                     <option value="">—</option>
-                    <?php foreach (($colaboradores ?? []) as $s): ?>
-                        <option value="<?= (int)$s['id'] ?>" <?= ((string)($c['supervisor_id'] ?? '') === (string)$s['id']) ? 'selected' : '' ?>>
-                            <?= View::e($s['matricula'].' — '.$s['nome']) ?>
+                    <?php foreach (($supervisores ?? []) as $s): ?>
+                        <option value="<?= (int) $s['id'] ?>" <?= ((string) ($c['supervisor_id'] ?? '') === (string) $s['id']) ? 'selected' : '' ?>>
+                            <?= View::e(trim(($s['matricula'] ?? '') . ' — ' . ($s['nome'] ?? ''), ' —')) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
+                <?php if (($supervisores ?? []) === []): ?>
+                    <div class="form-hint">Nenhum supervisor ativo. Cadastre em <a href="/rh/supervisores">Supervisores</a>.</div>
+                <?php endif; ?>
             </div>
             <div class="form-field">
                 <label class="form-label">HE via Gestor Cliente</label>
@@ -136,19 +178,25 @@ $cancelHref = $isEdit ? '/rh/colaboradores/' . $colaboradorId : '/rh/efetivo';
                         </option>
                     <?php endforeach; ?>
                 </select>
+                <?php if (($gestoresCliente ?? []) === []): ?>
+                    <div class="form-hint">Nenhum gestor cliente ativo. Cadastre em <a href="/rh/gestores-cliente">Gestores Cliente</a>.</div>
+                <?php endif; ?>
             </div>
             <?php if (!$isEdit): ?>
             <div class="form-field">
                 <label class="form-label">Lotação inicial</label>
                 <select class="form-control" name="lotacao_id" required>
                     <option value="">Selecione o pacote operacional</option>
-                    <?php foreach ($lotacoes as $lot): ?>
+                    <?php foreach (($lotacoes ?? []) as $lot): ?>
                         <option value="<?= (int) $lot['id'] ?>" <?= ((string) ($c['lotacao_id'] ?? '') === (string) $lot['id']) ? 'selected' : '' ?>>
                             <?= View::e($lot['codigo'] . ' — ' . $lot['nome']) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
-                <div class="form-hint">Jornada, escala e calendário são herdados da lotação.</div>
+                <div class="form-hint">Horário e calendário são herdados da lotação.</div>
+                <?php if (($lotacoes ?? []) === []): ?>
+                    <div class="form-hint">Nenhuma lotação ativa. Cadastre em <a href="/rh/lotacoes">Lotações</a>.</div>
+                <?php endif; ?>
                 <?php if (!empty($errors['lotacao_id'])): ?><div class="form-hint" style="color:var(--danger)"><?= View::e($errors['lotacao_id']) ?></div><?php endif; ?>
             </div>
             <?php else: ?>

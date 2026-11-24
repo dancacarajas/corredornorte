@@ -32,21 +32,39 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.75rem 0.75rem 1.1rem;
+  /* §3.1 clear space ≈ height of “A” around logo */
+  padding: calc(var(--logo-clear-space) + 0.35rem) var(--logo-clear-space) calc(var(--logo-clear-space) + 0.55rem);
   width: 100%;
   box-sizing: border-box;
   text-align: center;
+  background: var(--surface);
 }
 
 .brand-logo {
   display: block;
   width: auto;
+  min-width: var(--logo-min-width);
   max-width: 100%;
   height: auto;
-  max-height: 72px;
+  max-height: 56px;
   margin: 0 auto;
   object-fit: contain;
   object-position: center;
+}
+
+/* Secondary logo on Heritage / dark surfaces (SL2W) */
+.brand--on-dark,
+.brand--on-heritage {
+  background: var(--brand-confidence);
+}
+
+.brand--on-heritage {
+  background: var(--brand-heritage);
+}
+
+.brand--on-dark .brand-logo,
+.brand--on-heritage .brand-logo {
+  filter: brightness(0) invert(1);
 }
 
 .sidebar-search {
@@ -60,10 +78,10 @@
 .nav-section-title {
   padding: 0.55rem 0.75rem;
   font-size: 0.68rem;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--tracking);
   text-transform: uppercase;
   color: var(--ink-subtle);
-  font-weight: 740;
+  font-weight: 700;
 }
 
 .nav-list {
@@ -287,7 +305,7 @@
   padding: 0 0.35rem;
   margin-left: 0.35rem;
   border-radius: 999px;
-  background: var(--brand-primary, #e06008);
+  background: var(--brand-primary);
   color: #fff;
   font-size: 0.68rem;
   font-weight: 800;
@@ -302,7 +320,7 @@
   color: var(--ink, #111);
   font-size: 0.86rem;
   font-weight: 700;
-  border: 1px solid var(--border, #e5e7eb);
+  border: 1px solid var(--border, var(--border));
   border-radius: 999px;
   padding: 0.4rem 0.75rem;
   background: #fff;
@@ -359,7 +377,7 @@
   .sidebar-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(17, 17, 17, 0.4);
+    background: rgba(var(--brand-confidence-rgb), 0.4);
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--duration) var(--ease);

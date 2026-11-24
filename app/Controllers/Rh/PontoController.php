@@ -251,7 +251,7 @@ final class PontoController
             'pageSubtitle' => date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', strtotime($dataFim)),
             'activeMenu' => 'ponto',
             'topbarActions' => $topbarActions,
-            'extraCss' => ['css/ponto.css?v=ponto-periodos-20261114'],
+            'extraCss' => ['css/ponto.css?v=excluir-periodo-20261116'],
             'dbOk' => $dbOk,
             'espelhos' => $espelhos,
             'resumo' => $resumo,
@@ -461,6 +461,11 @@ final class PontoController
         if ($modoNdjson) {
             $this->iniciarProgressoGeracao();
         }
+        // Libera o lock de sessão para o lote AJAX não enfileirar atrás de outra aba.
+        if ($modoJson || $modoNdjson) {
+            Auth::start();
+            session_write_close();
+        }
 
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
@@ -476,6 +481,8 @@ final class PontoController
 
         try {
             @set_time_limit(120);
+            // DDL fora de qualquer GET_LOCK / TX da geração.
+            (new \App\Services\HorarioService($pdo))->ensureSchema();
             $periodo = $this->resolverPeriodo($_POST);
             $dataInicio = $periodo['inicio'];
             $dataFim = $periodo['fim'];
@@ -788,13 +795,17 @@ final class PontoController
             $stmt->execute([$espelhoId]);
             $status = $stmt->fetchColumn();
             if ($status !== false && !in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
-                // Não aplica britânico automaticamente: dia útil sem batida = falta.
-                // Presença: "Preencher previstos". Ausência abonada: justificativa com abona falta.
-                $calc->recalcularEspelho($espelhoId);
+                // Na geração o cartão já deve vir preenchido (britânico ou previsto).
+                // "Preencher previstos" permanece só como ação manual de reaplicar.
+                $calc->aplicarBritanicoNoEspelho($espelhoId);
             }
-            $pdo->commit();
+            if ($pdo->inTransaction()) {
+                $pdo->commit();
+            }
         } catch (Throwable $erro) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $erro;
         }
     }
@@ -875,7 +886,7 @@ final class PontoController
                     YEAR(pp.data_inicio) AS ano, MONTH(pp.data_inicio) AS mes,
                     l.codigo AS lotacao_codigo, ct.codigo AS contrato_codigo, ct.nome AS contrato_nome,
                     cc.codigo AS cc_codigo, os.codigo AS os_codigo, loc.municipio, loc.uf,
-                    j.codigo AS jornada_codigo, esc.codigo AS escala_codigo
+                    h.codigo AS horario_codigo, h.nome AS horario_nome
              FROM ponto_espelhos e
              INNER JOIN rh_colaboradores c ON c.id = e.colaborador_id
              INNER JOIN ponto_periodos pp ON pp.id = e.periodo_id
@@ -884,8 +895,7 @@ final class PontoController
              LEFT JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
              LEFT JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
              LEFT JOIN rh_localidades loc ON loc.id = l.localidade_id
-             LEFT JOIN rh_jornadas j ON j.id = l.jornada_id
-             LEFT JOIN rh_escalas esc ON esc.id = l.escala_id
+             LEFT JOIN rh_horarios h ON h.id = l.horario_id
              WHERE e.id = :id'
         );
         $stmt->execute(['id' => $espelhoId]);
@@ -995,12 +1005,16 @@ final class PontoController
         }
         $permiteJustificativa = !$periodoBloqueado && $competencias !== [];
         $acaoJustificativa = '';
+        $acaoTurno = '';
         if ($permiteJustificativa) {
             $acaoJustificativa = '<button class="btn btn-danger-soft btn-sm" type="button" data-modal-open="justModal" data-espelho-id="'
                 . $espelhoAcaoId . '">Adicionar justificativa</button>';
+            $acaoTurno = '<button class="btn btn-secondary btn-sm" type="button" data-modal-open="turnoAutorizacaoModal" data-espelho-id="'
+                . $espelhoAcaoId . '">Alterar Turno (PDF)</button>';
         }
         $topbarActions = ''
             . '<a class="btn btn-secondary btn-sm" href="/rh/ponto?' . $qsSeguro . '">Voltar ao filtro</a>'
+            . $acaoTurno
             . $acaoJustificativa
             . '<a class="btn btn-secondary btn-sm" href="/rh/ponto/justificativa-tipos">Tipos de justificativa</a>';
 
@@ -1016,6 +1030,24 @@ final class PontoController
             $divergenciasAbertas = $divStmt->fetchAll() ?: [];
         } catch (Throwable) {
             $divergenciasAbertas = [];
+        }
+
+        $heAnexosPorDia = [];
+        try {
+            $heAnexosPorDia = (new \App\Services\PontoHeAutorizacaoService($pdo))->mapPorDiaDoEspelho($espelhoId);
+        } catch (Throwable) {
+            $heAnexosPorDia = [];
+        }
+
+        $turnoAutorizacoes = [];
+        $turnoAutorizacoesPorData = [];
+        try {
+            $turnoSvc = new \App\Services\PontoTurnoAutorizacaoService($pdo);
+            $turnoAutorizacoes = $turnoSvc->listarPorEspelho($espelhoId);
+            $turnoAutorizacoesPorData = $turnoSvc->mapPorDataDoEspelho($espelhoId);
+        } catch (Throwable) {
+            $turnoAutorizacoes = [];
+            $turnoAutorizacoesPorData = [];
         }
 
         $docFolha = null;
@@ -1035,12 +1067,24 @@ final class PontoController
             $docFolha = null;
         }
 
+        $justificativasLista = $justs->fetchAll();
+
+        $cltConformidade = [
+            'por_dia' => [],
+            'resumo' => ['total' => 0, 'bloqueios' => 0, 'alertas' => 0, 'dias_afetados' => 0, 'contexto_escala' => ''],
+        ];
+        try {
+            $cltConformidade = (new \App\Services\ConformidadeCltService($pdo))
+                ->avaliarEspelho($espelho, $dias, $justificativasLista);
+        } catch (Throwable) {
+        }
+
         View::render('rh/ponto/show', [
             'pageTitle' => (string) $espelho['nome'],
             'pageSubtitle' => trim(($espelho['cargo'] ?: $espelho['funcao'] ?: '') . ' · Mat. ' . $espelho['matricula']),
             'activeMenu' => 'ponto',
             'topbarActions' => $topbarActions,
-            'extraCss' => ['css/ponto.css?v=p1-20261114'],
+            'extraCss' => ['css/ponto.css?v=p1-20261119b'],
             'espelho' => $espelho,
             'competencias' => $competencias,
             'statusPeriodo' => $statusPeriodo,
@@ -1048,14 +1092,18 @@ final class PontoController
             'espelhoAcaoId' => $espelhoAcaoId,
             'dias' => $dias,
             'heAutorizadas' => $heAutorizadas,
+            'heAnexosPorDia' => $heAnexosPorDia,
             'heDeclaracoes' => $heDeclaracoes,
             'divergenciasAbertas' => $divergenciasAbertas,
+            'cltConformidade' => $cltConformidade,
+            'turnoAutorizacoes' => $turnoAutorizacoes,
+            'turnoAutorizacoesPorData' => $turnoAutorizacoesPorData,
             'docFolha' => $docFolha,
             'portalUrlFolha' => $portalUrlFolha,
             'dataInicio' => $dataInicio,
             'dataFim' => $dataFim,
             'tiposJustificativa' => $tipos,
-            'justificativas' => $justs->fetchAll(),
+            'justificativas' => $justificativasLista,
             'calc' => new CalculoPontoService($pdo),
             'flash' => $_GET['ok'] ?? null,
             'error' => $erroPeriodo ?? $_GET['erro'] ?? null,
@@ -1187,6 +1235,37 @@ final class PontoController
                 'sai2' => $normHora($_POST['sai2'] ?? null),
             ];
 
+            // DDL (CREATE/ALTER) causa commit implícito no MySQL — rodar ANTES da transação.
+            \App\Services\PontoHeAutorizacaoService::ensureSchema($pdo);
+            \App\Services\ConformidadeCltService::ensureSchema($pdo);
+
+            // Validação trabalhista (CLT) ANTES de gravar batidas, respeitando lotação/escala do colaborador.
+            $cltSvc = new \App\Services\ConformidadeCltService($pdo);
+            $cltAval = $cltSvc->avaliarAlteracaoDia($espelhoId, $diaId, $batidas);
+            $cltConfirmado = ((string) ($_POST['clt_confirmado'] ?? '')) === '1';
+            $cltJustificativa = trim((string) ($_POST['clt_justificativa'] ?? ''));
+
+            if ($cltAval['has_violations'] && (!$cltConfirmado || $cltJustificativa === '')) {
+                if ($wantsJson) {
+                    http_response_code(422);
+                    $this->responderJson([
+                        'ok' => false,
+                        'code' => 'clt_violation',
+                        'error' => $cltConfirmado && $cltJustificativa === ''
+                            ? 'Informe a justificativa obrigatória para registrar esta exceção trabalhista.'
+                            : 'Divergência com a legislação trabalhista (CLT) detectada.',
+                        'ponto_dia_id' => $diaId,
+                        'clt' => $cltAval,
+                    ]);
+                    return;
+                }
+                $primeira = $cltAval['violacoes'][0] ?? null;
+                $txt = is_array($primeira)
+                    ? ('[' . $primeira['codigo'] . '] ' . $primeira['titulo'] . ' — ' . $primeira['explicacao'])
+                    : 'Divergência trabalhista (CLT) detectada.';
+                throw new RuntimeException($txt);
+            }
+
             $pdo->beginTransaction();
             $st = $pdo->prepare('SELECT e.status FROM ponto_dias d INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
                 WHERE d.id = ? AND e.id = ? FOR UPDATE');
@@ -1200,7 +1279,74 @@ final class PontoController
             }
             $calc = new CalculoPontoService($pdo);
             $calc->salvarBatidas($diaId, $batidas, 'manual');
-            $pdo->commit();
+
+            $heAuth = new \App\Services\PontoHeAutorizacaoService($pdo);
+            $diaHeStmt = $pdo->prepare('SELECT COALESCE(horas_extras_min, 0) FROM ponto_dias WHERE id = ?');
+            $diaHeStmt->execute([$diaId]);
+            $heMin = (int) $diaHeStmt->fetchColumn();
+            if ($heMin > \App\Services\PontoHeAutorizacaoService::TOLERANCIA_HE_MIN) {
+                $justHe = trim((string) ($_POST['he_justificativa'] ?? ''));
+                $temArquivo = isset($_FILES['he_autorizacao']) && (int) ($_FILES['he_autorizacao']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK;
+                if ($temArquivo) {
+                    $heAuth->anexar($espelhoId, $diaId, $_FILES['he_autorizacao'], Auth::id(), $heMin, $justHe);
+                } elseif (!$heAuth->temAnexo($diaId)) {
+                    throw new RuntimeException(
+                        'HE_AUTORIZACAO_OBRIGATORIA: Este dia gerou '
+                        . $calc->fmt($heMin)
+                        . ' de hora extra em relação à escala. Informe a justificativa enviada ao gestor e anexe a autorização de HE (PDF do SharePoint).'
+                    );
+                } else {
+                    try {
+                        $pdo->prepare('UPDATE ponto_he_autorizacoes SET minutos_he = ? WHERE ponto_dia_id = ?')
+                            ->execute([$heMin, $diaId]);
+                    } catch (Throwable) {
+                    }
+                    if ($justHe !== '') {
+                        $heAuth->atualizarJustificativa($espelhoId, $diaId, $justHe, Auth::id());
+                    }
+                }
+            }
+
+            // Espelha HE do cartão no RA (HE Cliente), inclusive quando o anexo já existia.
+            try {
+                $metaSt = $pdo->prepare(
+                    'SELECT d.data, d.previsto_saida, d.sai2, e.colaborador_id, e.periodo_id
+                     FROM ponto_dias d
+                     INNER JOIN ponto_espelhos e ON e.id = d.espelho_id
+                     WHERE d.id = ? LIMIT 1'
+                );
+                $metaSt->execute([$diaId]);
+                $meta = $metaSt->fetch(PDO::FETCH_ASSOC);
+                if ($meta !== false) {
+                    (new \App\Services\RelatorioAtividadesService($pdo))->sincronizarHeDoPontoDia(
+                        (int) $meta['colaborador_id'],
+                        (int) $meta['periodo_id'],
+                        (string) $meta['data'],
+                        $diaId,
+                        isset($meta['previsto_saida']) ? (string) $meta['previsto_saida'] : null,
+                        isset($meta['sai2']) ? (string) $meta['sai2'] : null,
+                        $heMin,
+                        Auth::id()
+                    );
+                }
+            } catch (Throwable) {
+            }
+
+            if ($pdo->inTransaction()) {
+                $pdo->commit();
+            }
+
+            if ($cltAval['has_violations'] && $cltConfirmado && $cltJustificativa !== '') {
+                $codigos = array_values(array_map(static fn(array $v): string => (string) ($v['codigo'] ?? ''), $cltAval['violacoes']));
+                $cltSvc->registrarExcecaoAuditada(
+                    $espelhoId,
+                    $diaId,
+                    (string) ($cltAval['data'] ?: date('Y-m-d')),
+                    $codigos,
+                    $cltJustificativa,
+                    Auth::id()
+                );
+            }
 
             if ($wantsJson) {
                 $diaRowStmt = $pdo->prepare(
@@ -1232,9 +1378,33 @@ final class PontoController
                 $totStmt->execute($totParams);
                 $tot = $totStmt->fetch() ?: [];
 
+                $cltAtualizado = [
+                    'por_dia' => [],
+                    'resumo' => ['total' => 0, 'bloqueios' => 0, 'alertas' => 0, 'dias_afetados' => 0, 'contexto_escala' => ''],
+                ];
+                try {
+                    $espSt = $pdo->prepare('SELECT * FROM ponto_espelhos WHERE id = ? LIMIT 1');
+                    $espSt->execute([$espelhoId]);
+                    $espRow = $espSt->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $diasAllSt = $pdo->prepare('SELECT * FROM ponto_dias WHERE espelho_id = ? ORDER BY data ASC');
+                    $diasAllSt->execute([$espelhoId]);
+                    $diasAll = $diasAllSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                    $justAllSt = $pdo->prepare(
+                        'SELECT j.*, t.nome AS tipo_nome, t.abona_falta
+                         FROM ponto_justificativas j
+                         INNER JOIN ponto_justificativa_tipos t ON t.id = j.tipo_id
+                         WHERE j.espelho_id = ?'
+                    );
+                    $justAllSt->execute([$espelhoId]);
+                    $justAll = $justAllSt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                    $cltAtualizado = $cltSvc->avaliarEspelho($espRow, $diasAll, $justAll);
+                } catch (Throwable) {
+                }
+
                 $this->responderJson([
                     'ok' => true,
                     'espelho_status' => (string) ($diaRow['espelho_status'] ?? $status),
+                    'clt' => $cltAtualizado,
                     'dia' => [
                         'id' => (int) ($diaRow['id'] ?? $diaId),
                         'tipo_dia' => (string) ($diaRow['tipo_dia'] ?? ''),
@@ -1256,6 +1426,10 @@ final class PontoController
                         'adn_fmt' => $calc->fmt((int) ($diaRow['adn_min'] ?? 0)),
                         'desconto_min' => (int) ($diaRow['desconto_min'] ?? 0),
                         'desconto_fmt' => $calc->fmt((int) ($diaRow['desconto_min'] ?? 0)),
+                        'horas_extras_min' => (int) ($diaRow['horas_extras_min'] ?? 0),
+                        'horas_extras_fmt' => $calc->fmt((int) ($diaRow['horas_extras_min'] ?? 0)),
+                        'he_anexo' => $heAuth->temAnexo($diaId),
+                        'he_anexo_id' => (int) (($heAuth->mapPorDiaDoEspelho($espelhoId)[$diaId]['id'] ?? 0)),
                     ],
                     'totais' => [
                         'he50_fmt' => $calc->fmt((int) ($tot['he50'] ?? 0)),
@@ -1273,12 +1447,157 @@ final class PontoController
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
+            $msg = $e->getMessage();
+            $needsHe = str_starts_with($msg, 'HE_AUTORIZACAO_OBRIGATORIA:');
+            if ($needsHe) {
+                $msg = trim(substr($msg, strlen('HE_AUTORIZACAO_OBRIGATORIA:')));
+            }
             if ($wantsJson) {
                 http_response_code(422);
-                $this->responderJson(['ok' => false, 'error' => $e->getMessage()]);
+                $this->responderJson([
+                    'ok' => false,
+                    'error' => $msg,
+                    'code' => $needsHe ? 'needs_he_anexo' : 'error',
+                    'ponto_dia_id' => $diaId,
+                ]);
                 return;
             }
+            $this->redirectEspelho($espelhoId, null, $msg);
+        }
+    }
+
+    /** Registra alteração temporária de turno (ex.: noturno 19h) com anexo PDF obrigatório do cliente. */
+    public function salvarTurnoAutorizacao(string $id = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        if (!$pdo instanceof PDO || $espelhoId <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            \App\Services\PontoTurnoAutorizacaoService::ensureSchema($pdo);
+            $svc = new \App\Services\PontoTurnoAutorizacaoService($pdo);
+            $svc->aplicarAlteracaoTurno(
+                $espelhoId,
+                trim((string) ($_POST['turno_data_inicio'] ?? '')),
+                trim((string) ($_POST['turno_data_fim'] ?? '')),
+                trim((string) ($_POST['turno_ent1'] ?? '')),
+                trim((string) ($_POST['turno_sai1'] ?? '')) ?: null,
+                trim((string) ($_POST['turno_ent2'] ?? '')) ?: null,
+                trim((string) ($_POST['turno_sai2'] ?? '')),
+                ((string) ($_POST['turno_adicional_noturno'] ?? '1')) === '1',
+                trim((string) ($_POST['turno_motivo'] ?? '')),
+                $_FILES['turno_autorizacao_pdf'] ?? [],
+                ((string) ($_POST['turno_aplicar_batidas'] ?? '1')) === '1',
+                Auth::id()
+            );
+            $this->redirectEspelho($espelhoId, 'turno-autorizado');
+        } catch (Throwable $e) {
             $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /** Download do anexo PDF da autorização de alteração de turno. */
+    public function baixarTurnoAutorizacao(string $id = '0', string $authId = '0'): void
+    {
+        Auth::requirePermission('ponto.ver');
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $aid = (int) $authId;
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $aid <= 0) {
+            http_response_code(404);
+            echo 'Autorização de turno não encontrada.';
+            return;
+        }
+        try {
+            $svc = new \App\Services\PontoTurnoAutorizacaoService($pdo);
+            $st = $pdo->prepare(
+                'SELECT id, arquivo_path, original_name, mime FROM ponto_turno_autorizacoes
+                 WHERE id = ? AND espelho_id = ? LIMIT 1'
+            );
+            $st->execute([$aid, $espelhoId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                http_response_code(404);
+                echo 'Autorização de turno não encontrada.';
+                return;
+            }
+            $abs = $svc->caminhoAbsoluto((string) $row['arquivo_path']);
+            if (!is_file($abs)) {
+                http_response_code(404);
+                echo 'Arquivo PDF não encontrado no servidor.';
+                return;
+            }
+            $name = preg_replace('/[^a-zA-Z0-9._-]/', '_', (string) ($row['original_name'] ?: 'autorizacao_turno.pdf'));
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: inline; filename="' . $name . '"');
+            header('Content-Length: ' . (string) filesize($abs));
+            readfile($abs);
+        } catch (Throwable) {
+            http_response_code(500);
+            echo 'Erro ao abrir anexo de alteração de turno.';
+        }
+    }
+
+    /** Remove autorização de turno temporário do espelho. */
+    public function excluirTurnoAutorizacao(string $id = '0', string $authId = '0'): void
+    {
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $aid = (int) $authId;
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $aid <= 0) {
+            header('Location: /rh/ponto');
+            exit;
+        }
+        try {
+            (new \App\Services\PontoTurnoAutorizacaoService($pdo))->excluir($espelhoId, $aid);
+            $this->redirectEspelho($espelhoId, 'turno-removido');
+        } catch (Throwable $e) {
+            $this->redirectEspelho($espelhoId, null, $e->getMessage());
+        }
+    }
+
+    /** Download do anexo de autorização de HE do cartão. */
+    public function baixarHeAutorizacao(string $id = '0', string $anexoId = '0'): void
+    {
+        Auth::requirePermission('ponto.ver');
+        $pdo = Db::tryConnection();
+        $espelhoId = (int) $id;
+        $aid = (int) $anexoId;
+        if (!$pdo instanceof PDO || $espelhoId <= 0 || $aid <= 0) {
+            http_response_code(404);
+            echo 'Anexo não encontrado.';
+            return;
+        }
+        try {
+            $svc = new \App\Services\PontoHeAutorizacaoService($pdo);
+            $st = $pdo->prepare(
+                'SELECT id, arquivo_path, original_name, mime FROM ponto_he_autorizacoes
+                 WHERE id = ? AND espelho_id = ? LIMIT 1'
+            );
+            $st->execute([$aid, $espelhoId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                http_response_code(404);
+                echo 'Anexo não encontrado.';
+                return;
+            }
+            $abs = $svc->absPath((string) $row['arquivo_path']);
+            if (!is_file($abs)) {
+                http_response_code(404);
+                echo 'Arquivo ausente.';
+                return;
+            }
+            $mime = (string) ($row['mime'] ?: 'application/octet-stream');
+            $name = (string) ($row['original_name'] ?: basename($abs));
+            header('Content-Type: ' . $mime);
+            header('Content-Disposition: inline; filename="' . str_replace('"', '', $name) . '"');
+            header('Content-Length: ' . (string) filesize($abs));
+            readfile($abs);
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo 'Falha ao baixar anexo.';
         }
     }
 
@@ -1750,50 +2069,11 @@ final class PontoController
     }
 
     /**
-     * Resolve a divergência, confere e fecha o espelho, emite novo PDF + Link e envia por e-mail em um clique.
+     * Atalho antigo (reenviar direto) desativado: divergência deve voltar à conferência.
      */
     public function resolverDivergenciaEReenviar(string $id = '0'): void
     {
-        $pdo = Db::tryConnection();
-        $espelhoId = (int) $id;
-        if (!$pdo instanceof PDO || $espelhoId <= 0) {
-            header('Location: /rh/ponto');
-            exit;
-        }
-        try {
-            $obs = trim((string) ($_POST['resolucao_obs'] ?? ''));
-            $uid = Auth::id();
-
-            // 1. Resolve a divergência
-            $assinaturaService = new \App\Services\AssinaturaEletronicaService($pdo);
-            $assinaturaService->resolverDivergencia($espelhoId, $uid, $obs);
-
-            // 2. Confere e fecha o espelho
-            $motor = new MotorPontoService($pdo);
-            $just = $obs !== '' ? $obs : 'Divergência resolvida e folha reenviada pelo RH';
-            $motor->alterarStatus($espelhoId, 'conferido', $just, $uid);
-            $motor->alterarStatus($espelhoId, 'fechado', $just, $uid);
-
-            // 3. Emite novo PDF + Link (mesmo ato)
-            $folhaService = new \App\Services\FolhaPontoService($pdo);
-            $ini = trim((string) ($_POST['data_inicio'] ?? ''));
-            $fim = trim((string) ($_POST['data_fim'] ?? ''));
-            $pdf = $folhaService->gerarPdf($espelhoId, $uid, $ini !== '' ? $ini : null, $fim !== '' ? $fim : null);
-            $docId = (int) ($pdf['documento_id'] ?? 0);
-            if ($docId <= 0 || empty($pdf['portal_token'])) {
-                throw new RuntimeException('PDF emitido sem link de assinatura. Tente novamente.');
-            }
-
-            // 4. Envia o e-mail com o novo link ao colaborador
-            $resEmail = $folhaService->enviarDocumento($docId, null, $espelhoId);
-            if (is_array($resEmail) && isset($resEmail['ok']) && !$resEmail['ok']) {
-                throw new RuntimeException((string) ($resEmail['erro'] ?? 'Falha ao enviar o e-mail com a nova folha.'));
-            }
-
-            $this->redirectEspelho($espelhoId, 'divergencia-reenviada');
-        } catch (Throwable $e) {
-            $this->redirectEspelho($espelhoId, null, $e->getMessage());
-        }
+        $this->resolverDivergencia($id);
     }
 
     /** Emite PDF + link de assinatura sem sair do cartão de ponto. */

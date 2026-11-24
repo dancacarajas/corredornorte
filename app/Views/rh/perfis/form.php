@@ -1,9 +1,10 @@
 <?php
 
 use App\Helpers\View;
+use App\Services\PerfilService;
 
 /** @var ?array<string,mixed> $perfil */
-/** @var list<array<string,mixed>> $permissoes */
+/** @var list<array{grupo:string,itens:list<array{recurso:string,label:string,menu:string,celulas:array<string,?array{id:int,codigo:string}>}>}> $matriz */
 /** @var ?string $error */
 
 $isEdit = !empty($perfil['id']);
@@ -13,13 +14,39 @@ foreach (($perfil['permissao_ids'] ?? []) as $pid) {
     $selected[(int) $pid] = true;
 }
 
-$grupos = [];
-foreach ($permissoes as $perm) {
-    $g = (string) ($perm['grupo'] ?? 'Outros');
-    $grupos[$g][] = $perm;
+$acoes = PerfilService::ACOES;
+$acaoMeta = [
+    'ver' => ['label' => 'Ver', 'icon' => 'eye'],
+    'criar' => ['label' => 'Criar', 'icon' => 'plus'],
+    'editar' => ['label' => 'Editar', 'icon' => 'pencil'],
+    'excluir' => ['label' => 'Excluir', 'icon' => 'trash'],
+    'operar' => ['label' => 'Operar', 'icon' => 'play'],
+];
+
+$totalCells = 0;
+$marcadas = 0;
+foreach ($matriz as $grupo) {
+    foreach ($grupo['itens'] as $item) {
+        foreach ($acoes as $acao) {
+            $cel = $item['celulas'][$acao] ?? null;
+            if ($cel === null) {
+                continue;
+            }
+            $totalCells++;
+            if (!empty($selected[(int) $cel['id']])) {
+                $marcadas++;
+            }
+        }
+    }
 }
-$totalPerms = count($permissoes);
-$marcadas = count($selected);
+
+$icons = [
+    'eye' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+    'plus' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+    'pencil' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
+    'trash' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>',
+    'play' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>',
+];
 $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 ?>
 
@@ -31,7 +58,7 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
     <div class="card-header">
         <div>
             <h2 class="card-title"><?= $isEdit ? 'Editar perfil' : 'Novo perfil' ?></h2>
-            <p class="card-subtitle">Defina o perfil e ligue só os módulos necessários.</p>
+            <p class="card-subtitle">Matriz 360° — liberar ou bloquear Ver, Criar, Editar, Excluir e Operar por tela do menu.</p>
         </div>
         <a class="btn btn-ghost btn-sm" href="/rh/perfis">Voltar</a>
     </div>
@@ -69,69 +96,107 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
 
         <div class="perfis-access" id="perfisMatrix">
             <div class="perfis-access-head">
-                <h3>Acessos</h3>
+                <div>
+                    <h3>Gestão de acessos 360°</h3>
+                    <p class="perfis-access-sub">Cada linha é uma tela do sistema. Marque só o que o perfil pode fazer.</p>
+                </div>
                 <div class="perfis-access-tools">
                     <input class="form-control perfis-search" type="search" id="perfisSearch"
-                           placeholder="Filtrar…" aria-label="Filtrar permissões">
-                    <span class="perfis-count" id="perfisCount"><?= (int) $marcadas ?>/<?= (int) $totalPerms ?></span>
+                           placeholder="Buscar… gestor, feriado, ponto" aria-label="Filtrar matriz">
+                    <span class="perfis-count" id="perfisCount"><?= (int) $marcadas ?>/<?= (int) $totalCells ?></span>
                     <button class="btn btn-ghost btn-sm" type="button" data-perm-all>Tudo</button>
                     <button class="btn btn-ghost btn-sm" type="button" data-perm-none>Nada</button>
                 </div>
             </div>
 
             <?php if ($isSistema): ?>
-                <p class="perfis-hint">Administrador: mantenha “Gerenciar perfis” marcado.</p>
+                <p class="perfis-hint">Administrador: mantenha Perfis → Operar ou Editar para não se travar fora desta tela.</p>
             <?php endif; ?>
+
+            <div class="perfis-matrix-legend" aria-hidden="true">
+                <?php foreach ($acoes as $acao): ?>
+                    <span class="perfis-legend-item">
+                        <span class="perfis-acao-ico"><?= $icons[$acaoMeta[$acao]['icon']] ?></span>
+                        <?= View::e($acaoMeta[$acao]['label']) ?>
+                    </span>
+                <?php endforeach; ?>
+            </div>
 
             <div class="perfis-modules">
                 <?php
-                $gi = 0;
-                foreach ($grupos as $grupo => $items):
-                    $gi++;
-                    $gid = 'g_' . substr(sha1($grupo), 0, 8);
+                foreach ($matriz as $grupo):
+                    $gid = 'g_' . substr(sha1($grupo['grupo']), 0, 8);
                     $onCount = 0;
-                    foreach ($items as $perm) {
-                        if (!empty($selected[(int) $perm['id']])) {
-                            $onCount++;
+                    $cellCount = 0;
+                    foreach ($grupo['itens'] as $item) {
+                        foreach ($acoes as $acao) {
+                            $cel = $item['celulas'][$acao] ?? null;
+                            if ($cel === null) {
+                                continue;
+                            }
+                            $cellCount++;
+                            if (!empty($selected[(int) $cel['id']])) {
+                                $onCount++;
+                            }
                         }
                     }
-                    $open = $onCount > 0 && $onCount < count($items) ? true : ($gi === 1 && $marcadas === 0);
-                    $allOn = $onCount === count($items) && count($items) > 0;
+                    $allOn = $cellCount > 0 && $onCount === $cellCount;
                     ?>
-                    <div class="perfis-mod<?= $open ? ' is-open' : '' ?>" data-perm-group>
-                        <div class="perfis-mod-head" data-mod-toggle role="button" tabindex="0" aria-expanded="<?= $open ? 'true' : 'false' ?>">
+                    <div class="perfis-mod is-open" data-perm-group>
+                        <div class="perfis-mod-head" data-mod-toggle role="button" tabindex="0" aria-expanded="true">
                             <label class="perfis-mod-check" onclick="event.stopPropagation()">
                                 <input type="checkbox" data-group-master="<?= View::e($gid) ?>"
                                     <?= $allOn ? 'checked' : '' ?>
                                     <?= ($onCount > 0 && !$allOn) ? 'data-indeterminate="1"' : '' ?>
-                                    aria-label="Marcar módulo <?= View::e($grupo) ?>">
+                                    aria-label="Marcar módulo <?= View::e($grupo['grupo']) ?>">
                             </label>
                             <div class="perfis-mod-title">
-                                <strong><?= View::e($grupo) ?></strong>
-                                <span data-group-meta="<?= View::e($gid) ?>"><?= (int) $onCount ?> de <?= count($items) ?> ativos</span>
+                                <strong><?= View::e($grupo['grupo']) ?></strong>
+                                <span data-group-meta="<?= View::e($gid) ?>"><?= (int) $onCount ?> de <?= (int) $cellCount ?> ações</span>
                             </div>
                             <?= $chevron ?>
                         </div>
-                        <div class="perfis-mod-body" data-group-id="<?= View::e($gid) ?>"<?= $open ? '' : ' hidden' ?>>
-                            <?php foreach ($items as $perm):
-                                $pid = (int) $perm['id'];
-                                $on = !empty($selected[$pid]);
-                                $hay = mb_strtolower(
-                                    (string) $perm['nome'] . ' ' . (string) $perm['codigo'] . ' ' . (string) ($perm['descricao'] ?? '') . ' ' . $grupo,
-                                    'UTF-8'
-                                );
-                                ?>
-                                <label class="perfis-row<?= $on ? ' is-on' : '' ?>" data-perm-item data-search="<?= View::e($hay) ?>">
-                                    <input type="checkbox" name="permissao_ids[]" value="<?= $pid ?>"
-                                        <?= $on ? 'checked' : '' ?>>
-                                    <span>
-                                        <span class="perfis-row-name"><?= View::e((string) $perm['nome']) ?></span>
-                                        <?php if (!empty($perm['descricao'])): ?>
-                                            <span class="perfis-row-desc"><?= View::e((string) $perm['descricao']) ?></span>
-                                        <?php endif; ?>
-                                    </span>
-                                </label>
-                            <?php endforeach; ?>
+                        <div class="perfis-mod-body" data-group-id="<?= View::e($gid) ?>">
+                            <div class="perfis-matrix-table" role="table">
+                                <div class="perfis-matrix-head" role="row">
+                                    <div class="perfis-matrix-cell is-label" role="columnheader">Menu / tela</div>
+                                    <?php foreach ($acoes as $acao): ?>
+                                        <div class="perfis-matrix-cell is-acao" role="columnheader" title="<?= View::e($acaoMeta[$acao]['label']) ?>">
+                                            <span class="perfis-acao-ico"><?= $icons[$acaoMeta[$acao]['icon']] ?></span>
+                                            <span class="perfis-acao-txt"><?= View::e($acaoMeta[$acao]['label']) ?></span>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                                <?php foreach ($grupo['itens'] as $item):
+                                    $hay = mb_strtolower(
+                                        $item['label'] . ' ' . $item['menu'] . ' ' . $item['recurso'] . ' ' . $grupo['grupo'],
+                                        'UTF-8'
+                                    );
+                                    ?>
+                                    <div class="perfis-matrix-row" role="row" data-perm-item data-search="<?= View::e($hay) ?>">
+                                        <div class="perfis-matrix-cell is-label" role="cell">
+                                            <span class="perfis-row-name"><?= View::e($item['label']) ?></span>
+                                            <span class="perfis-row-desc"><?= View::e($item['menu']) ?></span>
+                                        </div>
+                                        <?php foreach ($acoes as $acao):
+                                            $cel = $item['celulas'][$acao] ?? null;
+                                            if ($cel === null): ?>
+                                                <div class="perfis-matrix-cell is-acao is-na" role="cell" aria-hidden="true">—</div>
+                                            <?php else:
+                                                $pid = (int) $cel['id'];
+                                                $on = !empty($selected[$pid]);
+                                                ?>
+                                                <label class="perfis-matrix-cell is-acao<?= $on ? ' is-on' : '' ?>" role="cell" title="<?= View::e($acaoMeta[$acao]['label'] . ' · ' . $item['label']) ?>">
+                                                    <input type="checkbox" name="permissao_ids[]" value="<?= $pid ?>"
+                                                        <?= $on ? 'checked' : '' ?>
+                                                        aria-label="<?= View::e($acaoMeta[$acao]['label'] . ' ' . $item['label']) ?>">
+                                                    <span class="perfis-check" aria-hidden="true"></span>
+                                                </label>
+                                            <?php endif; ?>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -154,7 +219,7 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
 
   const boxes = () => Array.from(root.querySelectorAll('input[type="checkbox"][name="permissao_ids[]"]'));
 
-  const paintRow = (lab) => {
+  const paintCell = (lab) => {
     const input = lab.querySelector('input[type="checkbox"]');
     lab.classList.toggle('is-on', !!(input && input.checked));
   };
@@ -170,7 +235,7 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
     const total = visible.length;
     master.checked = total > 0 && on === total;
     master.indeterminate = on > 0 && on < total;
-    if (meta) meta.textContent = on + ' de ' + total + ' ativos';
+    if (meta) meta.textContent = on + ' de ' + total + ' ações';
   };
 
   const refreshAllGroups = () => {
@@ -186,8 +251,8 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
     boxes().forEach((b) => {
       if (b.closest('[data-perm-item]')?.hidden) return;
       b.checked = checked;
-      const lab = b.closest('[data-perm-item]');
-      if (lab) paintRow(lab);
+      const lab = b.closest('.perfis-matrix-cell');
+      if (lab) paintCell(lab);
     });
     refreshAllGroups();
   };
@@ -213,10 +278,11 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
     });
   });
 
-  root.querySelectorAll('[data-perm-item]').forEach((lab) => {
-    lab.querySelector('input')?.addEventListener('change', () => {
-      paintRow(lab);
-      const gid = lab.closest('[data-group-id]')?.getAttribute('data-group-id') || '';
+  root.querySelectorAll('.perfis-matrix-cell.is-acao input[type="checkbox"]').forEach((input) => {
+    const lab = input.closest('.perfis-matrix-cell');
+    input.addEventListener('change', () => {
+      if (lab) paintCell(lab);
+      const gid = input.closest('[data-group-id]')?.getAttribute('data-group-id') || '';
       refreshGroup(gid);
       refreshAllGroups();
     });
@@ -234,10 +300,9 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
       body.querySelectorAll('input[type="checkbox"][name="permissao_ids[]"]').forEach((b) => {
         if (b.closest('[data-perm-item]')?.hidden) return;
         b.checked = checked;
-        const lab = b.closest('[data-perm-item]');
-        if (lab) paintRow(lab);
+        const lab = b.closest('.perfis-matrix-cell');
+        if (lab) paintCell(lab);
       });
-      // abre o módulo ao marcar
       const mod = body.closest('.perfis-mod');
       if (mod && checked) {
         mod.classList.add('is-open');
@@ -252,9 +317,9 @@ $chevron = '<svg class="perfis-mod-chevron" viewBox="0 0 24 24" fill="none" stro
 
   search?.addEventListener('input', () => {
     const q = (search.value || '').trim().toLowerCase();
-    root.querySelectorAll('[data-perm-item]').forEach((lab) => {
-      const hay = lab.getAttribute('data-search') || '';
-      lab.hidden = q !== '' && !hay.includes(q);
+    root.querySelectorAll('[data-perm-item]').forEach((row) => {
+      const hay = row.getAttribute('data-search') || '';
+      row.hidden = q !== '' && !hay.includes(q);
     });
     root.querySelectorAll('[data-perm-group]').forEach((group) => {
       const visible = group.querySelectorAll('[data-perm-item]:not([hidden])').length;

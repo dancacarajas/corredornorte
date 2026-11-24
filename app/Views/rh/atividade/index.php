@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\AppClock;
 use App\Helpers\View;
 
 /** @var bool $dbOk */
@@ -8,16 +9,25 @@ use App\Helpers\View;
 /** @var array{online:int,sessoes_hoje:int,usuarios_ativos_7d:int} $resumo */
 /** @var string $busca */
 
-$fmtQuando = static function (?string $dt): string {
-    if ($dt === null || $dt === '') {
-        return '—';
-    }
-    $ts = strtotime($dt);
-    return $ts ? date('d/m/Y H:i', $ts) : '—';
-};
+$fmtQuando = static fn (?string $dt): string => AppClock::format($dt, 'd/m/Y H:i');
 $inicial = static function (string $nome): string {
     $n = trim($nome);
     return $n !== '' ? mb_strtoupper(mb_substr($n, 0, 1)) : '?';
+};
+$avatarUrl = static function (array $row, string $idKey = 'id'): ?string {
+    $ready = trim((string) ($row['avatar_url'] ?? ''));
+    if ($ready !== '') {
+        return $ready;
+    }
+    $path = trim((string) ($row['avatar_path'] ?? ''));
+    if ($path === '') {
+        return null;
+    }
+    $id = (int) ($row[$idKey] ?? 0);
+    if ($id <= 0) {
+        return null;
+    }
+    return '/conta/avatar?id=' . $id . '&v=' . substr(sha1($path), 0, 8);
 };
 ?>
 
@@ -59,9 +69,17 @@ $inicial = static function (string $nome): string {
         <?php else: ?>
             <p class="muted text-sm" id="atividadeOnlineEmpty" hidden>Ninguém online no momento.</p>
             <div class="atividade-online-grid" id="atividadeOnlineGrid">
-                <?php foreach ($online as $o): ?>
+                <?php foreach ($online as $o):
+                    $av = $avatarUrl($o, 'usuario_id');
+                    ?>
                     <a class="atividade-online-card" href="/rh/atividade/<?= (int) $o['usuario_id'] ?>">
-                        <span class="atividade-avatar" aria-hidden="true"><?= View::e($inicial((string) $o['nome'])) ?></span>
+                        <span class="atividade-avatar <?= $av ? 'has-photo' : '' ?>" aria-hidden="true">
+                            <?php if ($av): ?>
+                                <img src="<?= View::e($av) ?>" alt="">
+                            <?php else: ?>
+                                <?= View::e($inicial((string) $o['nome'])) ?>
+                            <?php endif; ?>
+                        </span>
                         <span>
                             <strong><?= View::e((string) $o['nome']) ?></strong>
                             <small>desde <?= View::e($fmtQuando((string) $o['logged_in_at'])) ?></small>
@@ -103,11 +121,18 @@ $inicial = static function (string $nome): string {
                 <tbody id="atividadeUsersBody">
                 <?php foreach ($usuarios as $u):
                     $isOnline = !empty($u['online_at']);
+                    $av = $avatarUrl($u, 'id');
                     ?>
                     <tr data-user-id="<?= (int) $u['id'] ?>">
                         <td>
                             <div class="atividade-user-cell">
-                                <span class="atividade-avatar <?= $isOnline ? 'is-online' : '' ?>"><?= View::e($inicial((string) $u['nome'])) ?></span>
+                                <span class="atividade-avatar <?= $isOnline ? 'is-online' : '' ?> <?= $av ? 'has-photo' : '' ?>">
+                                    <?php if ($av): ?>
+                                        <img src="<?= View::e($av) ?>" alt="">
+                                    <?php else: ?>
+                                        <?= View::e($inicial((string) $u['nome'])) ?>
+                                    <?php endif; ?>
+                                </span>
                                 <span>
                                     <strong><?= View::e((string) $u['nome']) ?></strong>
                                     <small class="muted"><?= View::e((string) $u['email']) ?></small>

@@ -9,6 +9,9 @@ $editando = $editando ?? null;
 $visualizando = $visualizando ?? null;
 $flash = $flash ?? null;
 $error = $error ?? null;
+$podeCriar = !empty($podeCriar);
+$podeEditar = !empty($podeEditar);
+$podeExcluir = !empty($podeExcluir);
 
 $isEdit = is_array($editando);
 $nomeForm = $isEdit ? (string) ($editando['nome'] ?? '') : '';
@@ -48,6 +51,7 @@ $fmtData = static function (?string $d): string {
         </div>
     </div>
     <div class="card-body section-stack">
+        <?php if (($isEdit && $podeEditar) || (!$isEdit && $podeCriar)): ?>
         <form method="post" action="/rh/vale-refeicao/config" class="form-grid cols-2" id="vrConfigForm">
             <?php if ($isEdit): ?>
                 <input type="hidden" name="id" value="<?= (int) $editando['id'] ?>">
@@ -108,6 +112,9 @@ $fmtData = static function (?string $d): string {
                 <?php endif; ?>
             </div>
         </form>
+        <?php elseif (!$podeCriar && !$podeEditar): ?>
+            <p class="muted">Seu perfil só permite visualizar as configurações de VR.</p>
+        <?php endif; ?>
     </div>
 </section>
 
@@ -148,7 +155,10 @@ $fmtData = static function (?string $d): string {
                             <td><?= !empty($c['ativo']) ? 'sim' : 'não' ?></td>
                             <td style="white-space:nowrap;">
                                 <a class="btn btn-ghost btn-sm" href="/rh/vale-refeicao?ver=<?= (int) $c['id'] ?>">Ver</a>
+                                <?php if ($podeEditar): ?>
                                 <a class="btn btn-ghost btn-sm" href="/rh/vale-refeicao?editar=<?= (int) $c['id'] ?>">Editar</a>
+                                <?php endif; ?>
+                                <?php if ($podeExcluir): ?>
                                 <form method="post" action="/rh/vale-refeicao/config/<?= (int) $c['id'] ?>/excluir"
                                       style="display:inline;"
                                       data-confirm-title="Excluir configuração?"
@@ -157,6 +167,7 @@ $fmtData = static function (?string $d): string {
                                       data-confirm-danger>
                                     <button class="btn btn-ghost btn-sm" type="submit">Excluir</button>
                                 </form>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

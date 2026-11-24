@@ -282,6 +282,9 @@ final class MotorPontoService
         ?int $usuarioId = null
     ): int {
         $this->validarPeriodo($dataInicio, $dataFim);
+        // DDL (CREATE/ALTER) no MySQL encerra a TX — rodar ANTES do beginTransaction.
+        // LotacaoResolver → HorarioService::aplicarDiaNoCfg chama ensureSchema por dia.
+        (new HorarioService($this->db))->ensureSchema();
         $periodoId = $this->garantirPeriodo($dataInicio, $dataFim);
         $inicio = new DateTimeImmutable($dataInicio);
         $fim = new DateTimeImmutable($dataFim);
@@ -298,8 +301,8 @@ final class MotorPontoService
 
             // regenera dias se ainda em aberto/tratamento
             $status = $this->espelhoStatus($espelhoId, true);
-            if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
-                throw new RuntimeException('Espelho fechado — reabra antes de regenerar.');
+            if (in_array($status, ['conferido', 'fechado', 'enviado', 'assinado', 'em_divergencia'], true)) {
+                throw new RuntimeException('Espelho fechado/conferido — reabra antes de regenerar.');
             }
 
             $this->db->prepare('DELETE FROM ponto_dias WHERE espelho_id = :id')->execute(['id' => $espelhoId]);
@@ -311,33 +314,30 @@ final class MotorPontoService
             }
 
             $this->recalcularTotais($espelhoId);
-            $this->db->commit();
-
-            // Classifica faltas/justificativas mesmo sem horário britânico.
-            try {
-                (new CalculoPontoService($this->db))->recalcularEspelho($espelhoId);
-            } catch (Throwable) {
+            if ($this->db->inTransaction()) {
+                $this->db->commit();
             }
-
-            // Reaplica HE aprovadas sobre as marcações geradas (também ocorre após o britânico).
-            try {
-                (new HeAutorizacaoService($this->db))->reaplicarAprovadasNoEspelho($espelhoId);
-            } catch (Throwable) {
-                // Ignora se a migração de HE ainda não existir.
-            }
-
-            // Garante Relatório de Atividades do mesmo período do cartão.
-            try {
-                (new RelatorioAtividadesService($this->db))->garantirParaEspelho($espelhoId);
-            } catch (Throwable) {
-                // Ignora se a migração de RA ainda não existir.
-            }
-
-            return $espelhoId;
         } catch (Throwable $e) {
-            $this->db->rollBack();
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
             throw $e;
         }
+
+        // Pós-commit: não pode cair no rollBack da geração.
+        try {
+            (new CalculoPontoService($this->db))->aplicarBritanicoNoEspelho($espelhoId);
+        } catch (Throwable) {
+        }
+
+        try {
+            // Sem e-mail aqui: SMTP/OAuth na geração congela o lote em 0%.
+            (new RelatorioAtividadesService($this->db))->garantirParaEspelho($espelhoId, false);
+        } catch (Throwable) {
+            // Ignora se a migração de RA ainda não existir.
+        }
+
+        return $espelhoId;
     }
 
     /** @return list<int> */
@@ -570,11 +570,14 @@ final class MotorPontoService
             $s2Adj = $s2 < $e2Adj ? $s2 + 1440 : $s2;
             $durManha = max(0, $s1Adj - $e1);
             $durTarde = max(0, $s2Adj - $e2Adj);
+            $durIntervaloBase = max(0, $e2Adj - $s1Adj);
             $e1n = $ent1Escolhido;
             $s1n = $e1n + $durManha;
             $e2n = ($e2 < $s1Adj ? $e2 + 1440 : $e2) + $dTarde;
-            if ($e2n <= $s1n) {
-                $e2n = $s1n + 1;
+            // Garante que a variação aleatória nunca reduza o intervalo abaixo do previsto (ex.: 60 min CLT Art. 71)
+            $minE2n = $s1n + max(1, $durIntervaloBase);
+            if ($e2n < $minE2n) {
+                $e2n = $minE2n;
             }
             $s2n = $e2n + $durTarde;
         } else {
@@ -651,6 +654,16 @@ final class MotorPontoService
     {
         if ($isFeriado && empty($cfg['trabalha_feriado'])) {
             return 'feriado';
+        }
+
+        // Horário RHiD (semanal/cíclico): tipo do dia já resolvido no LotacaoResolver.
+        if (isset($cfg['horario_dia_tipo']) && $cfg['horario_dia_tipo'] !== '') {
+            $td = (string) $cfg['horario_dia_tipo'];
+            if ($td === 'folga') {
+                $horarioTipo = (string) ($cfg['horario_tipo'] ?? 'semanal');
+                return $horarioTipo === 'ciclico' ? 'folga_escala' : 'folga';
+            }
+            return 'trabalho';
         }
 
         $tipoEscala = (string) ($cfg['escala_tipo'] ?? 'seg_sex');
@@ -747,18 +760,20 @@ final class MotorPontoService
             throw new RuntimeException('Tipo de ocorrência inválido.');
         }
 
-        $dia = $this->db->prepare('SELECT espelho_id FROM ponto_dias WHERE id = :id');
+        $dia = $this->db->prepare('SELECT espelho_id, data, tipo_dia, horas_previstas_min FROM ponto_dias WHERE id = :id');
         $dia->execute(['id' => $pontoDiaId]);
-        $espelhoId = $dia->fetchColumn();
-        if ($espelhoId === false) {
+        $diaRow = $dia->fetch();
+        if ($diaRow === false) {
             throw new RuntimeException('Dia não encontrado.');
         }
+        $espelhoId = (int) $diaRow['espelho_id'];
 
-        $status = $this->espelhoStatus((int) $espelhoId);
+        $status = $this->espelhoStatus($espelhoId);
         if (in_array($status, ['fechado', 'enviado', 'assinado'], true)) {
             throw new RuntimeException('Espelho fechado.');
         }
 
+        $min = max(0, $minutos);
         $ins = $this->db->prepare(
             'INSERT INTO ponto_ocorrencias (ponto_dia_id, tipo, minutos, observacao, usuario_id)
              VALUES (:dia, :tipo, :minutos, :obs, :usuario)'
@@ -766,7 +781,7 @@ final class MotorPontoService
         $ins->execute([
             'dia' => $pontoDiaId,
             'tipo' => $tipo,
-            'minutos' => $minutos,
+            'minutos' => $min,
             'obs' => $observacao,
             'usuario' => $usuarioId,
         ]);
@@ -779,15 +794,114 @@ final class MotorPontoService
             'atraso' => 'Atraso',
             default => ucfirst(str_replace('_', ' ', $tipo)),
         };
-        $this->db->prepare('UPDATE ponto_dias SET ocorrencia_resumo = :r WHERE id = :id')
-            ->execute(['r' => $label, 'id' => $pontoDiaId]);
+
+        $dow = !empty($diaRow['data']) ? (int) date('w', strtotime((string) $diaRow['data'])) : -1;
+        $isHe100 = ($dow === 0 || (string) ($diaRow['tipo_dia'] ?? '') === 'feriado');
+
+        switch ($tipo) {
+            case 'falta':
+                $minFalta = $min > 0 ? $min : (int) ($diaRow['horas_previstas_min'] ?? 0);
+                $this->db->prepare(
+                    "UPDATE ponto_dias
+                     SET dia_falta = 1,
+                         horas_falta_min = COALESCE(horas_falta_min, 0) + :m1,
+                         desconto_min = COALESCE(desconto_min, 0) + :m2,
+                         ok_status = 'falta',
+                         ocorrencia_resumo = :r
+                     WHERE id = :id"
+                )->execute(['m1' => $minFalta, 'm2' => $minFalta, 'r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'falta_justificada':
+            case 'atestado':
+                $this->db->prepare(
+                    "UPDATE ponto_dias
+                     SET dia_falta = 0,
+                         horas_falta_min = 0,
+                         atraso_bruto_min = 0,
+                         desconto_min = 0,
+                         ok_status = 'ok',
+                         ocorrencia_resumo = :r
+                     WHERE id = :id"
+                )->execute(['r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'hora_extra':
+                $colHe = $isHe100 ? 'he_100_min' : 'he_50_min';
+                $this->db->prepare(
+                    "UPDATE ponto_dias
+                     SET horas_extras_min = COALESCE(horas_extras_min, 0) + :m1,
+                         {$colHe} = COALESCE({$colHe}, 0) + :m2,
+                         ocorrencia_resumo = :r
+                     WHERE id = :id"
+                )->execute(['m1' => $min, 'm2' => $min, 'r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'trabalho_feriado':
+                $this->db->prepare(
+                    'UPDATE ponto_dias
+                     SET horas_extras_min = COALESCE(horas_extras_min, 0) + :m1,
+                         he_100_min = COALESCE(he_100_min, 0) + :m2,
+                         ocorrencia_resumo = :r
+                     WHERE id = :id'
+                )->execute(['m1' => $min, 'm2' => $min, 'r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'atraso':
+                $this->db->prepare(
+                    "UPDATE ponto_dias
+                     SET atraso_bruto_min = COALESCE(atraso_bruto_min, 0) + :m1,
+                         desconto_min = COALESCE(desconto_min, 0) + :m2,
+                         ok_status = CASE WHEN :m3 > 5 THEN 'pendente' ELSE ok_status END,
+                         ocorrencia_resumo = :r
+                     WHERE id = :id"
+                )->execute(['m1' => $min, 'm2' => $min, 'm3' => $min, 'r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'saida_antecipada':
+                $this->db->prepare(
+                    "UPDATE ponto_dias
+                     SET horas_falta_min = COALESCE(horas_falta_min, 0) + :m1,
+                         desconto_min = COALESCE(desconto_min, 0) + :m2,
+                         ok_status = CASE WHEN :m3 > 5 THEN 'pendente' ELSE ok_status END,
+                         ocorrencia_resumo = :r
+                     WHERE id = :id"
+                )->execute(['m1' => $min, 'm2' => $min, 'm3' => $min, 'r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'adicional_noturno':
+                $this->db->prepare(
+                    'UPDATE ponto_dias
+                     SET adn_min = COALESCE(adn_min, 0) + :m,
+                         ocorrencia_resumo = :r
+                     WHERE id = :id'
+                )->execute(['m' => $min, 'r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            case 'folga':
+                $this->db->prepare(
+                    "UPDATE ponto_dias
+                     SET dia_falta = 0,
+                         horas_falta_min = 0,
+                         desconto_min = 0,
+                         ok_status = 'folga',
+                         ocorrencia_resumo = :r
+                     WHERE id = :id"
+                )->execute(['r' => $label, 'id' => $pontoDiaId]);
+                break;
+
+            default:
+                $this->db->prepare('UPDATE ponto_dias SET ocorrencia_resumo = :r WHERE id = :id')
+                    ->execute(['r' => $label, 'id' => $pontoDiaId]);
+                break;
+        }
 
         if ($status === 'em_aberto') {
             $this->db->prepare("UPDATE ponto_espelhos SET status = 'em_tratamento' WHERE id = :id")
-                ->execute(['id' => (int) $espelhoId]);
+                ->execute(['id' => $espelhoId]);
         }
 
-        $this->recalcularTotais((int) $espelhoId);
+        $this->recalcularTotais($espelhoId);
     }
 
     public function alterarStatus(int $espelhoId, string $novoStatus, ?string $justificativa, ?int $usuarioId): void
@@ -837,9 +951,11 @@ final class MotorPontoService
                    {$justTableCond}
                    AND (
                        d.ent1 IS NULL
-                       OR d.sai1 IS NULL
-                       OR (d.ent2 IS NOT NULL AND d.sai2 IS NULL)
-                       OR (d.ent2 IS NULL AND d.sai2 IS NOT NULL)
+                       OR (d.sai1 IS NULL AND (d.ent2 IS NOT NULL OR d.sai2 IS NULL))
+                       OR (d.sai1 IS NOT NULL AND (
+                           (d.ent2 IS NOT NULL AND d.sai2 IS NULL)
+                           OR (d.ent2 IS NULL AND d.sai2 IS NOT NULL)
+                       ))
                    )"
             );
             $stPend->execute(['id' => $espelhoId]);
@@ -848,6 +964,8 @@ final class MotorPontoService
                     'Este cartão possui dias úteis sem batidas preenchidas e sem justificativa. Preencha os previstos ou justifique os dias pendentes antes de conferir/fechar.'
                 );
             }
+
+            (new PontoHeAutorizacaoService($this->db))->assertEspelhoPodeConferir($espelhoId);
         }
 
         $stmt = $this->db->prepare('SELECT status, versao FROM ponto_espelhos WHERE id = :id FOR UPDATE');
@@ -1005,19 +1123,39 @@ final class MotorPontoService
         }
 
         // sequencias reais usam 11-14 para não colidir com previsto(1-4)/gerado(5-8)
-        $seq = 10 + max(1, min(4, $sequencia));
-        $this->db->prepare('DELETE FROM ponto_marcacoes WHERE ponto_dia_id = :d AND sequencia = :s AND origem IN (\'relogio\',\'manual\',\'importado\')')
+        $slot = max(1, min(4, $sequencia));
+        $seq = 10 + $slot;
+        $horaNorm = trim($horario);
+        $horaNorm = ($horaNorm === '' || $horaNorm === '--:--') ? null : $this->normHora($horaNorm);
+
+        $this->db->prepare('DELETE FROM ponto_marcacoes WHERE ponto_dia_id = :d AND sequencia = :s')
             ->execute(['d' => $pontoDiaId, 's' => $seq]);
-        $this->db->prepare(
-            'INSERT INTO ponto_marcacoes (ponto_dia_id, sequencia, horario, origem) VALUES (:d,:s,:h,:o)'
-        )->execute(['d' => $pontoDiaId, 's' => $seq, 'h' => $horario, 'o' => $origem]);
+        if ($horaNorm !== null) {
+            $this->db->prepare(
+                'INSERT INTO ponto_marcacoes (ponto_dia_id, sequencia, horario, origem) VALUES (:d,:s,:h,:o)'
+            )->execute(['d' => $pontoDiaId, 's' => $seq, 'h' => $horaNorm, 'o' => $origem]);
+        }
+
+        $colMap = [1 => 'ent1', 2 => 'sai1', 3 => 'ent2', 4 => 'sai2'];
+        $col = $colMap[$slot];
+        $this->db->prepare("UPDATE ponto_dias SET {$col} = :h WHERE id = :id")
+            ->execute(['h' => $horaNorm, 'id' => $pontoDiaId]);
+
+        $calculo = new CalculoPontoService($this->db);
+        $calculo->recalcularDia($pontoDiaId);
+        $espelhoId = (int) $row['espelho_id'];
+        $calculo->atualizarTotaisEspelho($espelhoId);
+        if ((string) $row['status'] === 'em_aberto') {
+            $this->db->prepare("UPDATE ponto_espelhos SET status = 'em_tratamento' WHERE id = :id AND status = 'em_aberto'")
+                ->execute(['id' => $espelhoId]);
+        }
 
         $this->db->prepare(
             'INSERT INTO rh_auditoria (entidade, entidade_id, acao, depois_json, usuario_id)
              VALUES (\'ponto_dias\', :id, \'apontamento\', :j, :u)'
         )->execute([
             'id' => $pontoDiaId,
-            'j' => json_encode(['horario' => $horario, 'origem' => $origem, 'sequencia' => $sequencia], JSON_UNESCAPED_UNICODE),
+            'j' => json_encode(['horario' => $horaNorm, 'origem' => $origem, 'sequencia' => $sequencia], JSON_UNESCAPED_UNICODE),
             'u' => $usuarioId,
         ]);
     }

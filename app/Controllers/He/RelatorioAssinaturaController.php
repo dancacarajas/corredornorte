@@ -53,18 +53,33 @@ final class RelatorioAssinaturaController
         $this->headersPortal();
         $pdo = Db::tryConnection();
         $doc = $pdo instanceof PDO ? (new RelatorioAssinaturaService($pdo))->buscarPorToken($token) : null;
+        $dadosRa = null;
+        if ($pdo instanceof PDO && $doc !== null && !empty($doc['relatorio_id'])) {
+            try {
+                $dadosRa = (new RelatorioAtividadesService($pdo))->carregar((int) $doc['relatorio_id']);
+            } catch (Throwable) {
+                $dadosRa = null;
+            }
+        }
         $mensagem = $_SESSION['ra_assinatura_mensagem'][$token] ?? [];
         unset($_SESSION['ra_assinatura_mensagem'][$token]);
         $_SESSION['ra_assinatura_csrf'] ??= bin2hex(random_bytes(32));
+        $erroGet = isset($_GET['erro']) && is_string($_GET['erro']) ? trim($_GET['erro']) : null;
         View::render('he/relatorio_assinatura', [
             'documento' => $doc,
+            'dadosRa' => $dadosRa,
             'token' => $token,
             'csrf' => $_SESSION['ra_assinatura_csrf'],
             'assinaturaConfigurada' => RelatorioAssinaturaService::assinaturaConfigurada(),
             'textoAceite' => RelatorioAssinaturaService::TEXTO_ACEITE,
             'flash' => $mensagem['ok'] ?? null,
-            'error' => $mensagem['erro'] ?? null,
+            'error' => $mensagem['erro'] ?? ($erroGet !== '' ? $erroGet : null),
         ], null);
+    }
+
+    public function assinar(string $token = ''): void
+    {
+        $this->portalAssinar($token);
     }
 
     public function portalAssinar(string $token = ''): void
@@ -74,9 +89,14 @@ final class RelatorioAssinaturaController
         $csrf = $_POST['csrf'] ?? '';
         if (!is_string($csrf) || empty($_SESSION['ra_assinatura_csrf'])
             || !hash_equals($_SESSION['ra_assinatura_csrf'], $csrf)) {
-            http_response_code(403);
-            echo 'Sessão inválida. Volte ao portal e tente novamente.';
-            return;
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                @session_regenerate_id(true);
+            }
+            $_SESSION['ra_assinatura_csrf'] = bin2hex(random_bytes(32));
+            $msgExpirada = 'Sessão expirada, confirme novamente.';
+            $_SESSION['ra_assinatura_mensagem'] = [$token => ['erro' => $msgExpirada]];
+            header('Location: /assinar-relatorio/' . rawurlencode($token) . '?erro=' . rawurlencode($msgExpirada), true, 303);
+            exit;
         }
         $mensagem = [];
         try {
@@ -84,7 +104,8 @@ final class RelatorioAssinaturaController
             if (!$pdo instanceof PDO) {
                 throw new RuntimeException('Sistema indisponível. Tente novamente em instantes.');
             }
-            $nome = is_string($_POST['nome'] ?? null) ? $_POST['nome'] : '';
+            $nomeRaw = $_POST['nome'] ?? $_POST['nome_assinante'] ?? null;
+            $nome = is_string($nomeRaw) ? $nomeRaw : '';
             $hash = is_string($_POST['hash_sha256'] ?? null) ? $_POST['hash_sha256'] : '';
             (new RelatorioAssinaturaService($pdo))->assinarNoPortal(
                 $token, $nome, ($_POST['aceite'] ?? '') === '1', $hash

@@ -6,6 +6,8 @@ $root = dirname(__DIR__, 2);
 
 require $root . '/vendor/autoload.php';
 
+\App\Helpers\AppClock::applyPhpDefault();
+
 use App\Install\Installer;
 
 $installer = new Installer($root);

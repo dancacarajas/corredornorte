@@ -17,3 +17,10 @@
 .env
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+*.pyo
+/tmp/
+.playwright-cli/
+~$*
+/storage/exports/

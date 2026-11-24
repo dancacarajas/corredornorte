@@ -4,21 +4,26 @@ declare(strict_types=1);
 
 namespace App\Controllers\Rh;
 
+use App\Helpers\Auth;
+use App\Helpers\Csrf;
 use App\Helpers\Db;
 use App\Helpers\View;
-use App\Services\HeClienteService;
+use App\Services\ColaboradorCadastroLookups;
+use App\Services\ColaboradorPurgeService;
 use App\Services\LotacaoResolver;
 use App\Services\TransferenciaLotacaoService;
 use DateTimeImmutable;
 use PDO;
+use RuntimeException;
 use Throwable;
 
 final class ColaboradorController
 {
     public function createForm(): void
     {
+        Auth::requireAnyPermission('efetivo.criar', 'efetivo.operar');
         $pdo = Db::tryConnection();
-        View::render('rh/colaboradores/form', [
+        View::render('rh/colaboradores/form', array_merge([
             'pageTitle' => 'Novo colaborador',
             'pageSubtitle' => 'Identificação + lotação inicial (regras herdadas)',
             'activeMenu' => 'efetivo',
@@ -27,19 +32,16 @@ final class ColaboradorController
             'colaboradorId' => 0,
             'isEdit' => false,
             'formAction' => '/rh/colaboradores',
-            'lotacoes' => $this->lotacoesAtivas($pdo),
-            'empresas' => $this->empresas($pdo),
-            'colaboradores' => $this->colaboradoresAtivos($pdo),
-            'gestoresCliente' => $this->gestoresCliente($pdo),
             'errors' => [],
-        ]);
+        ], $this->formLookups($pdo)));
     }
 
     public function store(): void
     {
+        Auth::requireAnyPermission('efetivo.criar', 'efetivo.operar');
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Banco de dados indisponível.');
             return;
         }
 
@@ -53,7 +55,7 @@ final class ColaboradorController
         $data = $this->input();
         $errors = $this->validate($data, true);
         if ($errors !== []) {
-            View::render('rh/colaboradores/form', [
+            View::render('rh/colaboradores/form', array_merge([
                 'pageTitle' => 'Novo colaborador',
                 'pageSubtitle' => 'Corrija os campos destacados',
                 'activeMenu' => 'efetivo',
@@ -62,12 +64,8 @@ final class ColaboradorController
                 'colaboradorId' => 0,
                 'isEdit' => false,
                 'formAction' => '/rh/colaboradores',
-                'lotacoes' => $this->lotacoesAtivas($pdo),
-                'empresas' => $this->empresas($pdo),
-                'colaboradores' => $this->colaboradoresAtivos($pdo),
-            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => $errors,
-            ]);
+            ], $this->formLookups($pdo)));
             return;
         }
 
@@ -114,7 +112,7 @@ final class ColaboradorController
             exit;
         } catch (Throwable $e) {
             $pdo->rollBack();
-            View::render('rh/colaboradores/form', [
+            View::render('rh/colaboradores/form', array_merge([
                 'pageTitle' => 'Novo colaborador',
                 'pageSubtitle' => 'Falha ao salvar',
                 'activeMenu' => 'efetivo',
@@ -123,21 +121,18 @@ final class ColaboradorController
                 'colaboradorId' => 0,
                 'isEdit' => false,
                 'formAction' => '/rh/colaboradores',
-                'lotacoes' => $this->lotacoesAtivas($pdo),
-                'empresas' => $this->empresas($pdo),
-                'colaboradores' => $this->colaboradoresAtivos($pdo),
-            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => ['geral' => $e->getMessage()],
-            ]);
+            ], $this->formLookups($pdo)));
         }
     }
 
     public function editForm(string $id = '0'): void
     {
+        Auth::requireAnyPermission('efetivo.editar', 'efetivo.operar');
         $id = (int) $id;
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO || $id <= 0) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Não foi possível abrir a edição.');
             return;
         }
 
@@ -148,7 +143,7 @@ final class ColaboradorController
             return;
         }
 
-        View::render('rh/colaboradores/form', [
+        View::render('rh/colaboradores/form', array_merge([
             'pageTitle' => 'Editar colaborador',
             'pageSubtitle' => 'Mat. ' . $colaborador['matricula'],
             'activeMenu' => 'efetivo',
@@ -157,23 +152,20 @@ final class ColaboradorController
             'colaboradorId' => $id,
             'isEdit' => true,
             'formAction' => '/rh/colaboradores/' . $id,
-            'lotacoes' => $this->lotacoesAtivas($pdo),
-            'empresas' => $this->empresas($pdo),
-            'colaboradores' => $this->colaboradoresAtivos($pdo, $id),
-            'gestoresCliente' => $this->gestoresCliente($pdo),
             'errors' => [],
-        ]);
+        ], $this->formLookups($pdo)));
     }
 
     public function update(string $id = '0'): void
     {
+        Auth::requireAnyPermission('efetivo.editar', 'efetivo.operar');
         $id = (int) $id;
         if ($id <= 0) {
             $id = (int) ($_POST['id'] ?? 0);
         }
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO || $id <= 0) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Não foi possível salvar o colaborador.');
             return;
         }
 
@@ -188,7 +180,7 @@ final class ColaboradorController
         $data['id'] = (string) $id;
         $errors = $this->validate($data, false, $id);
         if ($errors !== []) {
-            View::render('rh/colaboradores/form', [
+            View::render('rh/colaboradores/form', array_merge([
                 'pageTitle' => 'Editar colaborador',
                 'pageSubtitle' => 'Corrija os campos destacados',
                 'activeMenu' => 'efetivo',
@@ -197,12 +189,8 @@ final class ColaboradorController
                 'colaboradorId' => $id,
                 'isEdit' => true,
                 'formAction' => '/rh/colaboradores/' . $id,
-                'lotacoes' => $this->lotacoesAtivas($pdo),
-                'empresas' => $this->empresas($pdo),
-                'colaboradores' => $this->colaboradoresAtivos($pdo, $id),
-            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => $errors,
-            ]);
+            ], $this->formLookups($pdo)));
             return;
         }
 
@@ -258,7 +246,7 @@ final class ColaboradorController
             header('Location: /rh/colaboradores/' . $id . '?ok=atualizado');
             exit;
         } catch (Throwable $e) {
-            View::render('rh/colaboradores/form', [
+            View::render('rh/colaboradores/form', array_merge([
                 'pageTitle' => 'Editar colaborador',
                 'pageSubtitle' => 'Falha ao salvar',
                 'activeMenu' => 'efetivo',
@@ -267,12 +255,8 @@ final class ColaboradorController
                 'colaboradorId' => $id,
                 'isEdit' => true,
                 'formAction' => '/rh/colaboradores/' . $id,
-                'lotacoes' => $this->lotacoesAtivas($pdo),
-                'empresas' => $this->empresas($pdo),
-                'colaboradores' => $this->colaboradoresAtivos($pdo, $id),
-            'gestoresCliente' => $this->gestoresCliente($pdo),
                 'errors' => ['geral' => $e->getMessage()],
-            ]);
+            ], $this->formLookups($pdo)));
         }
     }
 
@@ -281,7 +265,7 @@ final class ColaboradorController
         $id = (int) $id;
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO || $id <= 0) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Colaborador indisponível.');
             return;
         }
 
@@ -293,22 +277,48 @@ final class ColaboradorController
         }
 
         $resolver = new LotacaoResolver($pdo);
-        $atual = $resolver->resolve($id, new DateTimeImmutable('today'));
+        $atual = (string) ($colaborador['status'] ?? '') === 'desligado'
+            ? null
+            : $resolver->resolve($id, new DateTimeImmutable('today'));
         $historico = $this->historico($pdo, $id);
-        $excecoes = $pdo->prepare('SELECT x.*, j.codigo AS jornada_codigo, e.codigo AS escala_codigo
+        $excecoes = $pdo->prepare('SELECT x.*, h.codigo AS horario_codigo
             FROM rh_colaborador_excecoes x
-            LEFT JOIN rh_jornadas j ON j.id = x.jornada_id
-            LEFT JOIN rh_escalas e ON e.id = x.escala_id
+            LEFT JOIN rh_horarios h ON h.id = x.horario_id
             WHERE x.colaborador_id = :id ORDER BY x.vigencia_inicio DESC');
         $excecoes->execute(['id' => $id]);
         $auditoria = $pdo->prepare("SELECT * FROM rh_auditoria WHERE entidade='rh_colaboradores' AND entidade_id=:id ORDER BY id DESC LIMIT 50");
         $auditoria->execute(['id' => $id]);
+        $auditoriaRows = \App\Helpers\AuditoriaCopy::formatarLista($auditoria->fetchAll(PDO::FETCH_ASSOC) ?: [], $pdo);
 
+        $podeEditar = Auth::canAny('efetivo.editar', 'efetivo.operar');
+        $podeOperar = Auth::canAny('efetivo.operar', 'efetivo.editar');
+        $podeExcluir = Auth::can('efetivo.excluir');
         ob_start();
-        ?>
+        if ($podeEditar) {
+            ?>
         <a class="btn btn-primary btn-sm" href="/rh/colaboradores/<?= $id ?>/editar">Editar dados</a>
+            <?php
+        }
+        if ($podeOperar) {
+            ?>
         <button class="btn btn-secondary btn-sm" type="button" data-modal-open="excecaoModal">Exceção individual</button>
         <button class="btn btn-secondary btn-sm" type="button" data-modal-open="transferModal">Transferir lotação</button>
+            <?php
+        }
+        if ($podeExcluir) {
+            ?>
+        <form method="post" action="/rh/colaboradores/<?= $id ?>/excluir" style="display:inline;" class="js-excluir-colab">
+            <?= Csrf::field() ?>
+            <button class="btn btn-danger btn-sm" type="submit"
+                    data-confirm-title="Apagar permanentemente?"
+                    data-confirm="Apaga 100% este colaborador do sistema (cadastro, lotação, ponto, documentos e histórico). Não dá para desfazer."
+                    data-confirm-ok="Apagar definitivamente"
+                    data-confirm-tone="danger"
+                    data-confirm-danger>Excluir</button>
+        </form>
+            <?php
+        }
+        ?>
         <a class="btn btn-secondary btn-sm" href="/rh/efetivo">Voltar ao efetivo</a>
         <?php
         $topbarActions = ob_get_clean() ?: '';
@@ -322,38 +332,153 @@ final class ColaboradorController
             'lotacaoAtual' => $atual,
             'historico' => $historico,
             'excecoes' => $excecoes->fetchAll(),
-            'auditoria' => $auditoria->fetchAll(),
-            'lotacoes' => $this->lotacoesAtivas($pdo),
-            'jornadas' => $pdo->query("SELECT id, codigo, nome FROM rh_jornadas WHERE status='ativo' ORDER BY codigo")->fetchAll(),
-            'escalas' => $pdo->query("SELECT id, codigo, nome FROM rh_escalas WHERE status='ativo' ORDER BY codigo")->fetchAll(),
+            'auditoria' => $auditoriaRows,
+            'lotacoes' => $this->formLookups($pdo)['lotacoes'],
+            'horarios' => $this->lookupHorariosAtivos($pdo),
             'calendarios' => $pdo->query("SELECT id, codigo, nome FROM rh_calendarios WHERE status='ativo' ORDER BY codigo")->fetchAll(),
+            'podeEditar' => $podeEditar,
+            'podeOperar' => $podeOperar,
+            'podeExcluir' => $podeExcluir,
             'flash' => $_GET['ok'] ?? null,
             'error' => $_GET['erro'] ?? null,
         ]);
     }
 
-    public function storeExcecao(string $id = '0'): void
+    public function excluir(string $id = '0'): void
     {
+        Auth::requirePermission('efetivo.excluir');
+        Csrf::requireValid();
         $id = (int) $id;
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO || $id <= 0) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Não foi possível excluir o colaborador.');
+            return;
+        }
+
+        $log = static function (string $msg): void {
+            $dir = dirname(__DIR__, 2) . '/storage/logs';
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0775, true);
+            }
+            @file_put_contents(
+                $dir . '/excluir_colaborador.log',
+                date('c') . ' ' . $msg . "\n",
+                FILE_APPEND
+            );
+        };
+
+        try {
+            $apagado = (new ColaboradorPurgeService($pdo))->apagar($id);
+            $log('PURGE id=' . $id . ' mat=' . $apagado['matricula'] . ' nome=' . $apagado['nome'] . ' user=' . (string) (Auth::id() ?? 0));
+            header('Location: /rh/efetivo?ok=excluido');
+        } catch (Throwable $e) {
+            $log('ERROR id=' . $id . ' ' . $e->getMessage());
+            header('Location: /rh/efetivo?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
+    public function excluirMassa(): void
+    {
+        Auth::requirePermission('efetivo.excluir');
+        Csrf::requireValid();
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO) {
+            $this->redirectDbMissing('Não foi possível excluir em massa.');
+            return;
+        }
+
+        $log = static function (string $msg): void {
+            $dir = dirname(__DIR__, 2) . '/storage/logs';
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0775, true);
+            }
+            @file_put_contents($dir . '/excluir_colaborador.log', date('c') . ' MASS ' . $msg . "\n", FILE_APPEND);
+        };
+
+        $ids = array_values(array_unique(array_filter(
+            array_map('intval', (array) ($_POST['ids'] ?? [])),
+            static fn (int $i): bool => $i > 0
+        )));
+        $log('ids=' . implode(',', $ids) . ' actor=' . (string) Auth::id());
+
+        if ($ids === []) {
+            header('Location: /rh/efetivo?erro=' . rawurlencode('Selecione ao menos um colaborador.'));
+            exit;
+        }
+
+        try {
+            $ok = 0;
+            $purge = new ColaboradorPurgeService($pdo);
+            $pdo->beginTransaction();
+            foreach ($ids as $id) {
+                $apagado = $purge->apagar($id);
+                $log('PURGE id=' . $id . ' mat=' . $apagado['matricula'] . ' nome=' . $apagado['nome']);
+                $ok++;
+            }
+            $pdo->commit();
+            $purge->apagarArquivosPendentes();
+            $log('ok=' . $ok);
+
+            if ($ok === 0) {
+                header('Location: /rh/efetivo?erro=' . rawurlencode('Nenhum colaborador elegível para exclusão.'));
+            } else {
+                header('Location: /rh/efetivo?ok=excluido_massa&n=' . $ok);
+            }
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $log('ERROR ' . $e->getMessage());
+            header('Location: /rh/efetivo?erro=' . rawurlencode($e->getMessage()));
+        }
+        exit;
+    }
+
+    public function storeExcecao(string $id = '0'): void
+    {
+        Auth::requireAnyPermission('efetivo.operar', 'efetivo.editar');
+        Csrf::requireValid();
+        $id = (int) $id;
+        $pdo = Db::tryConnection();
+        if (!$pdo instanceof PDO || $id <= 0) {
+            $this->redirectDbMissing('Não foi possível registrar a exceção.');
             return;
         }
         try {
+            (new \App\Services\HorarioService($pdo))->ensureSchema();
+            $dados = [
+                'vigencia_inicio' => (string) ($_POST['vigencia_inicio'] ?? ''),
+                'vigencia_fim' => (string) ($_POST['vigencia_fim'] ?? ''),
+                'horario_id' => ($_POST['horario_id'] ?? '') !== '' ? (int) $_POST['horario_id'] : null,
+                'calendario_id' => ($_POST['calendario_id'] ?? '') !== '' ? (int) $_POST['calendario_id'] : null,
+                'observacao' => trim((string) ($_POST['observacao'] ?? '')) ?: null,
+            ];
             $pdo->prepare(
                 'INSERT INTO rh_colaborador_excecoes
-                (colaborador_id, vigencia_inicio, vigencia_fim, jornada_id, escala_id, calendario_id, observacao, usuario_id)
-                VALUES (:c,:i,:f,:j,:e,:cal,:o,:u)'
+                (colaborador_id, vigencia_inicio, vigencia_fim, horario_id, calendario_id, observacao, usuario_id)
+                VALUES (:c,:i,:f,:h,:cal,:o,:u)'
             )->execute([
                 'c' => $id,
-                'i' => (string) ($_POST['vigencia_inicio'] ?? ''),
-                'f' => (string) ($_POST['vigencia_fim'] ?? ''),
-                'j' => ($_POST['jornada_id'] ?? '') !== '' ? (int) $_POST['jornada_id'] : null,
-                'e' => ($_POST['escala_id'] ?? '') !== '' ? (int) $_POST['escala_id'] : null,
-                'cal' => ($_POST['calendario_id'] ?? '') !== '' ? (int) $_POST['calendario_id'] : null,
-                'o' => trim((string) ($_POST['observacao'] ?? '')) ?: null,
-                'u' => \App\Helpers\Auth::id(),
+                'i' => $dados['vigencia_inicio'],
+                'f' => $dados['vigencia_fim'],
+                'h' => $dados['horario_id'],
+                'cal' => $dados['calendario_id'],
+                'o' => $dados['observacao'],
+                'u' => Auth::id(),
+            ]);
+            $pdo->prepare(
+                'INSERT INTO rh_auditoria (entidade, entidade_id, acao, depois_json, usuario_id)
+                 VALUES (\'rh_colaboradores\', :id, \'excecao_individual\', :depois, :u)'
+            )->execute([
+                'id' => $id,
+                'depois' => json_encode([
+                    ...$dados,
+                    'resumo' => 'Exceção individual de '
+                        . $dados['vigencia_inicio'] . ' a ' . $dados['vigencia_fim']
+                        . ($dados['observacao'] ? ' · ' . $dados['observacao'] : '') . '.',
+                ], JSON_UNESCAPED_UNICODE),
+                'u' => Auth::id(),
             ]);
             header('Location: /rh/colaboradores/' . $id . '?ok=excecao');
         } catch (Throwable $e) {
@@ -364,10 +489,12 @@ final class ColaboradorController
 
     public function transfer(string $id = '0'): void
     {
+        Auth::requireAnyPermission('efetivo.operar', 'efetivo.editar');
+        Csrf::requireValid();
         $id = (int) $id;
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO || $id <= 0) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Não foi possível transferir a lotação.');
             return;
         }
 
@@ -400,10 +527,12 @@ final class ColaboradorController
 
     public function atualizarPercentualHe(string $id = '0'): void
     {
+        Auth::requireAnyPermission('efetivo.operar', 'efetivo.editar');
+        Csrf::requireValid();
         $id = (int) $id;
         $pdo = Db::tryConnection();
         if (!$pdo instanceof PDO || $id <= 0) {
-            $this->redirectDbMissing();
+            $this->redirectDbMissing('Não foi possível atualizar o percentual de HE.');
             return;
         }
 
@@ -412,7 +541,7 @@ final class ColaboradorController
 
         try {
             $service = new TransferenciaLotacaoService($pdo);
-            $service->atualizarPercentualHe($id, $percentualHe);
+            $service->atualizarPercentualHe($id, $percentualHe, Auth::id());
             header('Location: /rh/colaboradores/' . $id . '?ok=percentual_he');
             exit;
         } catch (Throwable $e) {
@@ -542,57 +671,46 @@ final class ColaboradorController
     /**
      * @return list<array<string,mixed>>
      */
-    /** @return list<array{id:int,nome:string,cliente:?string}> */
-    private function gestoresCliente(?PDO $pdo): array
+    /**
+     * @return array<string, list<array<string,mixed>>>
+     */
+    private function formLookups(?PDO $pdo): array
     {
+        $empty = [
+            'empresas' => [],
+            'cargos' => [],
+            'funcoes' => [],
+            'gestoresArcadis' => [],
+            'supervisores' => [],
+            'gestoresCliente' => [],
+            'lotacoes' => [],
+        ];
         if (!$pdo instanceof PDO) {
-            return [];
+            return $empty;
         }
         try {
-            return (new HeClienteService($pdo))->listarGestoresCliente();
+            return (new ColaboradorCadastroLookups($pdo))->all();
+        } catch (Throwable) {
+            return $empty;
+        }
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function lookupHorariosAtivos(PDO $pdo): array
+    {
+        try {
+            (new \App\Services\HorarioService($pdo))->ensureSchema();
+            return $pdo->query(
+                "SELECT id, codigo, nome FROM rh_horarios WHERE status='ativo' ORDER BY codigo"
+            )->fetchAll() ?: [];
         } catch (Throwable) {
             return [];
         }
     }
 
-    private function lotacoesAtivas(?PDO $pdo): array
+    private function redirectDbMissing(string $mensagem = 'Operação indisponível no momento.'): void
     {
-        if (!$pdo instanceof PDO) {
-            return [];
-        }
-        return $pdo->query(
-            "SELECT id, codigo, nome, percentual_he FROM rh_lotacoes WHERE status = 'ativo' ORDER BY nome"
-        )->fetchAll();
-    }
-
-    /**
-     * @return list<array<string,mixed>>
-     */
-    private function empresas(?PDO $pdo): array
-    {
-        if (!$pdo instanceof PDO) {
-            return [];
-        }
-        return $pdo->query("SELECT id, nome FROM rh_empresas WHERE status = 'ativo' ORDER BY nome")->fetchAll();
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function colaboradoresAtivos(?PDO $pdo, ?int $excludeId = null): array
-    {
-        if (!$pdo instanceof PDO) {
-            return [];
-        }
-        if ($excludeId !== null) {
-            $stmt = $pdo->prepare("SELECT id, matricula, nome FROM rh_colaboradores WHERE status='ativo' AND id <> :id ORDER BY nome");
-            $stmt->execute(['id' => $excludeId]);
-            return $stmt->fetchAll();
-        }
-        return $pdo->query("SELECT id, matricula, nome FROM rh_colaboradores WHERE status='ativo' ORDER BY nome")->fetchAll();
-    }
-
-    private function redirectDbMissing(): void
-    {
-        header('Location: /rh/efetivo');
+        header('Location: /rh/efetivo?erro=' . rawurlencode($mensagem));
         exit;
     }
 }

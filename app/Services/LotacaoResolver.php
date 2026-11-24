@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Config\Database;
 use DateTimeImmutable;
 use PDO;
+use Throwable;
 
 /**
  * Resolve a configuração operacional do colaborador em uma data.
@@ -60,13 +61,8 @@ final class LotacaoResolver
         $excecao = $this->excecaoVigente($colaboradorId, $dataStr);
 
         if ($excecao !== null) {
-            if (!empty($excecao['jornada_id'])) {
-                $lotacao['jornada_id'] = (int) $excecao['jornada_id'];
-                $lotacao['jornada'] = $this->fetchById('rh_jornadas', (int) $excecao['jornada_id']);
-            }
-            if (!empty($excecao['escala_id'])) {
-                $lotacao['escala_id'] = (int) $excecao['escala_id'];
-                $lotacao['escala'] = $this->fetchById('rh_escalas', (int) $excecao['escala_id']);
+            if (!empty($excecao['horario_id'])) {
+                $lotacao['horario_id'] = (int) $excecao['horario_id'];
             }
             if (!empty($excecao['calendario_id'])) {
                 $lotacao['calendario_id'] = (int) $excecao['calendario_id'];
@@ -94,6 +90,12 @@ final class LotacaoResolver
             ? max(1, min(200, (int) $overrideHe))
             : $baseHe;
 
+        // Modelo RHiD: previsto/tipo do dia vêm do horário (semanal/cíclico) por data.
+        try {
+            $lotacao = (new HorarioService($this->db))->aplicarDiaNoCfg($lotacao, $dia);
+        } catch (Throwable) {
+        }
+
         return $lotacao;
     }
 
@@ -110,33 +112,10 @@ final class LotacaoResolver
               cl.escala_ancora_data,
               cl.motivo,
               cl.percentual_he AS colaborador_percentual_he,
-              l.*,
-              l.percentual_he AS lotacao_percentual_he,
-              c.codigo AS contrato_codigo,
-              c.nome AS contrato_nome,
-              cc.codigo AS centro_custo_codigo,
-              cc.nome AS centro_custo_nome,
-              os.codigo AS os_codigo,
-              os.nome AS os_nome,
-              loc.nome AS localidade_nome,
-              loc.municipio,
-              loc.uf,
-              j.codigo AS jornada_codigo,
-              j.nome AS jornada_nome,
-              j.entrada, j.intervalo_inicio, j.intervalo_fim, j.saida,
-              j.carga_diaria_min, j.carga_semanal_min,
-              j.trabalha_sabado, j.trabalha_domingo, j.trabalha_feriado, j.adicional_noturno,
-              e.codigo AS escala_codigo,
-              e.nome AS escala_nome,
-              e.tipo AS escala_tipo
+              {$this->selectLotacaoCampos()}
             FROM rh_colaborador_lotacoes cl
             INNER JOIN rh_lotacoes l ON l.id = cl.lotacao_id
-            INNER JOIN rh_contratos c ON c.id = l.contrato_id
-            INNER JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
-            INNER JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
-            INNER JOIN rh_localidades loc ON loc.id = l.localidade_id
-            INNER JOIN rh_jornadas j ON j.id = l.jornada_id
-            INNER JOIN rh_escalas e ON e.id = l.escala_id
+            {$this->joinsLotacao()}
             WHERE cl.colaborador_id = :colaborador_id
               AND cl.vigencia_inicio <= :data
               AND (cl.vigencia_fim IS NULL OR cl.vigencia_fim >= :data2)
@@ -171,33 +150,10 @@ final class LotacaoResolver
               cl.escala_ancora_data,
               cl.motivo,
               cl.percentual_he AS colaborador_percentual_he,
-              l.*,
-              l.percentual_he AS lotacao_percentual_he,
-              c.codigo AS contrato_codigo,
-              c.nome AS contrato_nome,
-              cc.codigo AS centro_custo_codigo,
-              cc.nome AS centro_custo_nome,
-              os.codigo AS os_codigo,
-              os.nome AS os_nome,
-              loc.nome AS localidade_nome,
-              loc.municipio,
-              loc.uf,
-              j.codigo AS jornada_codigo,
-              j.nome AS jornada_nome,
-              j.entrada, j.intervalo_inicio, j.intervalo_fim, j.saida,
-              j.carga_diaria_min, j.carga_semanal_min,
-              j.trabalha_sabado, j.trabalha_domingo, j.trabalha_feriado, j.adicional_noturno,
-              e.codigo AS escala_codigo,
-              e.nome AS escala_nome,
-              e.tipo AS escala_tipo
+              {$this->selectLotacaoCampos()}
             FROM rh_colaborador_lotacoes cl
             INNER JOIN rh_lotacoes l ON l.id = cl.lotacao_id
-            INNER JOIN rh_contratos c ON c.id = l.contrato_id
-            INNER JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
-            INNER JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
-            INNER JOIN rh_localidades loc ON loc.id = l.localidade_id
-            INNER JOIN rh_jornadas j ON j.id = l.jornada_id
-            INNER JOIN rh_escalas e ON e.id = l.escala_id
+            {$this->joinsLotacao()}
             WHERE cl.colaborador_id = :colaborador_id
             ORDER BY
               (cl.vigencia_fim IS NULL) DESC,
@@ -230,32 +186,9 @@ final class LotacaoResolver
               NULL AS escala_ancora_data,
               'sistema' AS motivo,
               NULL AS colaborador_percentual_he,
-              l.*,
-              l.percentual_he AS lotacao_percentual_he,
-              c.codigo AS contrato_codigo,
-              c.nome AS contrato_nome,
-              cc.codigo AS centro_custo_codigo,
-              cc.nome AS centro_custo_nome,
-              os.codigo AS os_codigo,
-              os.nome AS os_nome,
-              loc.nome AS localidade_nome,
-              loc.municipio,
-              loc.uf,
-              j.codigo AS jornada_codigo,
-              j.nome AS jornada_nome,
-              j.entrada, j.intervalo_inicio, j.intervalo_fim, j.saida,
-              j.carga_diaria_min, j.carga_semanal_min,
-              j.trabalha_sabado, j.trabalha_domingo, j.trabalha_feriado, j.adicional_noturno,
-              e.codigo AS escala_codigo,
-              e.nome AS escala_nome,
-              e.tipo AS escala_tipo
+              {$this->selectLotacaoCampos()}
             FROM rh_lotacoes l
-            INNER JOIN rh_contratos c ON c.id = l.contrato_id
-            INNER JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
-            INNER JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
-            INNER JOIN rh_localidades loc ON loc.id = l.localidade_id
-            INNER JOIN rh_jornadas j ON j.id = l.jornada_id
-            INNER JOIN rh_escalas e ON e.id = l.escala_id
+            {$this->joinsLotacao()}
             WHERE l.status = 'ativo'
             ORDER BY l.id
             LIMIT 1
@@ -334,19 +267,44 @@ final class LotacaoResolver
         return $stmt->fetchAll();
     }
 
-    /**
-     * @return array<string,mixed>|null
-     */
-    private function fetchById(string $table, int $id): ?array
+    private function selectLotacaoCampos(): string
     {
-        $allowed = ['rh_jornadas', 'rh_escalas', 'rh_calendarios'];
-        if (!in_array($table, $allowed, true)) {
-            return null;
-        }
+        return <<<SQL
+              l.*,
+              l.percentual_he AS lotacao_percentual_he,
+              c.codigo AS contrato_codigo,
+              c.nome AS contrato_nome,
+              cc.codigo AS centro_custo_codigo,
+              cc.nome AS centro_custo_nome,
+              os.codigo AS os_codigo,
+              os.nome AS os_nome,
+              loc.nome AS localidade_nome,
+              loc.municipio,
+              loc.uf,
+              h.codigo AS horario_codigo,
+              h.nome AS horario_nome,
+              h.tipo AS horario_cadastro_tipo,
+              COALESCE(h.trabalha_feriado, 0) AS trabalha_feriado,
+              COALESCE(h.adicional_noturno, 0) AS adicional_noturno,
+              NULL AS entrada,
+              NULL AS intervalo_inicio,
+              NULL AS intervalo_fim,
+              NULL AS saida,
+              NULL AS carga_diaria_min,
+              NULL AS carga_semanal_min,
+              0 AS trabalha_sabado,
+              0 AS trabalha_domingo
+        SQL;
+    }
 
-        $stmt = $this->db->prepare("SELECT * FROM {$table} WHERE id = :id LIMIT 1");
-        $stmt->execute(['id' => $id]);
-        $row = $stmt->fetch();
-        return $row === false ? null : $row;
+    private function joinsLotacao(): string
+    {
+        return <<<SQL
+            INNER JOIN rh_contratos c ON c.id = l.contrato_id
+            INNER JOIN rh_centros_custo cc ON cc.id = l.centro_custo_id
+            INNER JOIN rh_ordens_servico os ON os.id = l.ordem_servico_id
+            INNER JOIN rh_localidades loc ON loc.id = l.localidade_id
+            LEFT JOIN rh_horarios h ON h.id = l.horario_id
+        SQL;
     }
 }

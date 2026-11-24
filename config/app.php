@@ -7,7 +7,7 @@ $config = [
     'tagline' => 'RH Operacional',
     'env' => 'local',
     'url' => getenv('ARCADIS_APP_URL') ?: '',
-    'timezone' => 'America/Belem',
+    'timezone' => 'America/Sao_Paulo',
     'ponto' => [
         // Preenche batidas automaticamente com variação diária (±N min), editáveis na gestão
         'horario_britanico' => true,
@@ -33,6 +33,12 @@ if (is_file($local)) {
             $config['mail']['from_name'] = $override['name'];
         }
     }
+}
+
+// Horário de negócio fixo: São Paulo / Brasil (migra legado America/Belem).
+$tz = (string) ($config['timezone'] ?? '');
+if ($tz === '' || $tz === 'America/Belem') {
+    $config['timezone'] = 'America/Sao_Paulo';
 }
 
 return $config;

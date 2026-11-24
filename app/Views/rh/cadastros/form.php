@@ -41,8 +41,7 @@ use App\Helpers\View;
             'centro_custo_id' => 'Centro de custo',
             'ordem_servico_id' => 'Ordem de serviço',
             'localidade_id' => 'Localidade (cidade)',
-            'jornada_id' => 'Jornada',
-            'escala_id' => 'Escala',
+            'horario_id' => 'Horário',
             'calendario_id' => 'Calendário (opcional · contrato)',
             'trabalha_sabado' => 'Trabalha sábado',
             'trabalha_domingo' => 'Trabalha domingo',
@@ -61,8 +60,7 @@ use App\Helpers\View;
             'centro_custo_id' => ['href' => '/rh/centros-custo', 'label' => 'Abrir centros de custo'],
             'ordem_servico_id' => ['href' => '/rh/ordens-servico', 'label' => 'Abrir OS'],
             'localidade_id' => ['href' => '/rh/localidades', 'label' => 'Abrir localidades'],
-            'jornada_id' => ['href' => '/rh/jornadas', 'label' => 'Abrir jornadas'],
-            'escala_id' => ['href' => '/rh/escalas', 'label' => 'Abrir escalas'],
+            'horario_id' => ['href' => '/rh/horarios', 'label' => 'Abrir horários'],
             'calendario_id' => ['href' => '/rh/calendarios', 'label' => 'Abrir feriados'],
             'empresa_id' => ['href' => '/rh/empresas', 'label' => 'Abrir empresas'],
         ];
@@ -77,8 +75,7 @@ use App\Helpers\View;
                     <a class="btn btn-secondary btn-sm" href="/rh/centros-custo">Centros de custo</a>
                     <a class="btn btn-secondary btn-sm" href="/rh/ordens-servico">Ordens de serviço</a>
                     <a class="btn btn-primary btn-sm" href="/rh/localidades">Localidades</a>
-                    <a class="btn btn-secondary btn-sm" href="/rh/jornadas">Jornadas</a>
-                    <a class="btn btn-secondary btn-sm" href="/rh/escalas">Escalas</a>
+                    <a class="btn btn-secondary btn-sm" href="/rh/horarios">Horários</a>
                     <a class="btn btn-secondary btn-sm" href="/rh/calendarios">Feriados</a>
                 </div>
             </div>
@@ -86,7 +83,7 @@ use App\Helpers\View;
         <?php foreach ($meta['fields'] as $field => $type): ?>
             <div class="form-field">
                 <label class="form-label"><?= View::e($fieldLabels[$field] ?? ucwords(str_replace('_', ' ', $field))) ?></label>
-                <?php if (in_array($type, ['empresa','contrato','centro_custo','ordem_servico','localidade','jornada','escala','calendario'], true)): ?>
+                <?php if (in_array($type, ['empresa','contrato','centro_custo','ordem_servico','localidade','horario','calendario'], true)): ?>
                     <select class="form-control" name="<?= View::e($field) ?>" <?= $type === 'calendario' ? '' : 'required' ?>>
                         <option value="">Selecione</option>
                         <?php foreach (($lookups[$type] ?? []) as $opt): ?>
@@ -168,73 +165,6 @@ use App\Helpers\View;
         </div>
     </form>
 </section>
-
-<?php if ($entity === 'jornadas'): ?>
-<script>
-(function () {
-    const form = document.querySelector('form.card-body');
-    if (!form) return;
-
-    const entrada = form.querySelector('[name="entrada"]');
-    const intIni = form.querySelector('[name="intervalo_inicio"]');
-    const intFim = form.querySelector('[name="intervalo_fim"]');
-    const saida = form.querySelector('[name="saida"]');
-    const diaria = form.querySelector('[name="carga_diaria_min"]');
-    const semanal = form.querySelector('[name="carga_semanal_min"]');
-    const sab = form.querySelector('[name="trabalha_sabado"]');
-    const dom = form.querySelector('[name="trabalha_domingo"]');
-    if (!entrada || !saida || !diaria || !semanal) return;
-
-    function toMin(v) {
-        if (!v) return null;
-        const m = String(v).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-        if (!m) return null;
-        return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-    }
-
-    function fmt(mins) {
-        mins = Math.max(0, Math.round(mins));
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-    }
-
-    function calc() {
-        let e = toMin(entrada.value);
-        let s = toMin(saida.value);
-        if (e === null || s === null) return;
-
-        // Cruza meia-noite
-        if (s <= e) s += 24 * 60;
-
-        let bruto = s - e;
-        const ii = toMin(intIni && intIni.value);
-        const iff = toMin(intFim && intFim.value);
-        if (ii !== null && iff !== null && iff > ii) {
-            bruto -= (iff - ii);
-        }
-
-        diaria.value = fmt(bruto);
-
-        let dias = 5;
-        if (sab && sab.checked) dias += 1;
-        if (dom && dom.checked) dias += 1;
-        // Plantão c/ sáb+dom: média semanal ~3,5 turnos (ex.: 12x36 → 42h)
-        if (sab && sab.checked && dom && dom.checked) dias = 3.5;
-
-        semanal.value = fmt(bruto * dias);
-    }
-
-    ['change', 'input'].forEach((ev) => {
-        [entrada, intIni, intFim, saida, sab, dom].forEach((el) => {
-            if (el) el.addEventListener(ev, calc);
-        });
-    });
-
-    calc();
-})();
-</script>
-<?php endif; ?>
 
 <script>
 (() => {

@@ -7,6 +7,11 @@ namespace App\Services;
 use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
 use RuntimeException;
+use setasign\Fpdi\PdfParser\PdfParser;
+use setasign\Fpdi\PdfParser\StreamReader;
+use setasign\Fpdi\PdfParser\Type\PdfDictionary;
+use setasign\Fpdi\PdfParser\Type\PdfString;
+use setasign\Fpdi\PdfParser\Type\PdfType;
 
 final class FolhaAssinaturaPdf
 {
@@ -18,10 +23,12 @@ final class FolhaAssinaturaPdf
     private const CARD_WIDTH = 236.0;
     private const CARD_HEIGHT = 46.0;
     private const FOOTER_HEIGHT = 64.0;
+    private const SUBJECT_FOLHA_V5 = 'Arcadis RH | folha de ponto retrato v5';
 
     private float $cardX = self::CARD_X;
     private float $cardY = self::CARD_Y;
     private float $footerY = self::PAGE_HEIGHT - 20 - self::FOOTER_HEIGHT;
+    private float $footerHeight = self::FOOTER_HEIGHT;
 
     /**
      * @param array{nome:string,assinado_em:string,sha256:string,codigo:string,verificar_url:string} $auditoria
@@ -55,9 +62,15 @@ final class FolhaAssinaturaPdf
             throw new RuntimeException('O link de validação do documento está indisponível.');
         }
 
+        $folhaV5 = $layout === null && $this->usaFormularioV5($original);
+        if ($folhaV5) {
+            // A linha de assinatura do formulário está centrada em x=301 pt.
+            $layout = ['card_x' => 301 - self::CARD_WIDTH / 2, 'card_y' => 654, 'footer_y' => 733];
+        }
         $this->cardX = (float) ($layout['card_x'] ?? self::CARD_X);
         $this->cardY = (float) ($layout['card_y'] ?? self::CARD_Y);
         $this->footerY = (float) ($layout['footer_y'] ?? (self::PAGE_HEIGHT - 20 - self::FOOTER_HEIGHT));
+        $this->footerHeight = $folhaV5 ? 54.0 : self::FOOTER_HEIGHT;
 
         $pdf = new FolhaAssinaturaCanvas('P', 'pt', 'Letter');
         $pdf->SetAutoPageBreak(false);
@@ -96,6 +109,19 @@ final class FolhaAssinaturaPdf
         if (!is_file($saida) || filesize($saida) < 1000) {
             throw new RuntimeException('Falha ao gravar o PDF assinado.');
         }
+    }
+
+    private function usaFormularioV5(string $original): bool
+    {
+        // O PDF arquivado é também a fonte de verdade ao reconstruir vias históricas.
+        $parser = new PdfParser(StreamReader::createByFile($original));
+        $trailer = $parser->getCrossReference()->getTrailer();
+        $info = PdfType::resolve(PdfDictionary::get($trailer, 'Info'), $parser);
+        if (!$info instanceof PdfDictionary) {
+            return false;
+        }
+        $subject = PdfType::resolve(PdfDictionary::get($info, 'Subject'), $parser);
+        return $subject instanceof PdfString && PdfString::unescape($subject->value) === self::SUBJECT_FOLHA_V5;
     }
 
     private function desenharSignatario(FolhaAssinaturaCanvas $pdf, array $auditoria, string $url): void
@@ -146,10 +172,10 @@ final class FolhaAssinaturaPdf
     private function desenharValidacao(FolhaAssinaturaCanvas $pdf, array $auditoria, string $url): void
     {
         $x = self::MARGIN;
-        $altura = self::FOOTER_HEIGHT;
+        $altura = $this->footerHeight;
         $largura = self::PAGE_WIDTH - 2 * self::MARGIN;
         $y = $this->footerY;
-        $qrSize = 56.0;
+        $qrSize = $altura - 8;
         $qrX = $x + $largura - $qrSize - 5;
         $qrY = $y + ($altura - $qrSize) / 2;
         $divisor = $x + 42;
@@ -163,13 +189,14 @@ final class FolhaAssinaturaPdf
         $pdf->SetTextColor(82, 91, 105);
         $rotulo = 'Validador';
         $rotuloX = $qrX - 8 - $pdf->GetStringWidth($rotulo);
-        $pdf->Text($rotuloX, $y + 34, $rotulo);
+        $centroY = $y + $altura / 2;
+        $pdf->Text($rotuloX, $centroY + 2, $rotulo);
 
         $pdf->SetTextColor(17, 17, 17);
         $pdf->SetFont('Helvetica', '', 8.2);
-        $pdf->Text($textoX, $y + 20, $this->txt('Assinado com Assinatura Eletrônica'));
-        $this->desenharLinha($pdf, $textoX, $y + 32, 'Hash SHA256 do original: ', $auditoria['sha256'], $rotuloX - 12);
-        $this->desenharLinha($pdf, $textoX, $y + 44, 'Link de validação: ', $url, $rotuloX - 12, $url);
+        $pdf->Text($textoX, $centroY - 12, $this->txt('Assinado com Assinatura Eletrônica'));
+        $this->desenharLinha($pdf, $textoX, $centroY, 'Hash SHA256 do original: ', $auditoria['sha256'], $rotuloX - 12);
+        $this->desenharLinha($pdf, $textoX, $centroY + 12, 'Link de validação: ', $url, $rotuloX - 12, $url);
 
         $this->desenharQr($pdf, $url, $qrX, $qrY, $qrSize);
         $pdf->Link($qrX, $qrY, $qrSize, $qrSize, $url);

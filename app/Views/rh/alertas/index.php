@@ -16,6 +16,9 @@ use App\Helpers\Csrf;
 /** @var int $usuarioId */
 /** @var bool $isHistorico */
 /** @var bool $podeConfigurar */
+/** @var bool $podeOperar */
+/** @var bool $todosPeriodos */
+/** @var int $outrosPeriodosNaoLidos */
 /** @var ?string $flashOk */
 /** @var ?string $erro */
 
@@ -24,6 +27,10 @@ $statusAtual = (string) ($filtros['status'] ?? 'abertos');
 $sevAtual = (string) ($filtros['severidade'] ?? '');
 $codAtual = (string) ($filtros['codigo'] ?? '');
 $qAtual = (string) ($filtros['q'] ?? '');
+$todosPeriodos = !empty($todosPeriodos);
+$outrosPeriodosNaoLidos = (int) ($outrosPeriodosNaoLidos ?? 0);
+$podeOperar = !empty($podeOperar);
+$podeConfigurar = !empty($podeConfigurar);
 
 $contadores = $contadores ?? [
     'abertos' => count($itens),
@@ -47,7 +54,11 @@ $temFiltroAtivo = ($statusAtual !== 'abertos')
     || ($qAtual !== '');
 
 $qsPeriodo = [];
-if ($dataInicio !== '' && $dataFim !== '') {
+if ($todosPeriodos) {
+    $qsPeriodo['periodo_sel'] = '|';
+    $qsPeriodo['todos_periodos'] = '1';
+} elseif ($dataInicio !== '' && $dataFim !== '') {
+    $qsPeriodo['periodo_sel'] = $dataInicio . '|' . $dataFim;
     $qsPeriodo['data_inicio'] = $dataInicio;
     $qsPeriodo['data_fim'] = $dataFim;
 }
@@ -83,13 +94,31 @@ $cardAtivoCobrancas = !$isHistorico && in_array($codAtual, ['cobranca', 'cobranc
         </div>
     <?php endif; ?>
 
+    <?php if (!$isHistorico && !$todosPeriodos && $outrosPeriodosNaoLidos > 0): ?>
+        <div class="alert alert--warning mb-4" role="status">
+            <div>
+                <div class="alert__title">Há alertas em outros períodos</div>
+                <div>
+                    <?= (int) $outrosPeriodosNaoLidos ?> não lido(s) fora do período selecionado.
+                    <a href="<?= htmlspecialchars($buildFilterUrl(['status' => 'abertos', 'periodo_sel' => '|', 'todos_periodos' => '1', 'data_inicio' => '', 'data_fim' => '']), ENT_QUOTES, 'UTF-8') ?>">
+                        Ver todos os períodos
+                    </a>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
+
     <header class="alertas-head">
         <div class="alertas-head-main">
             <div class="alertas-kicker-row">
                 <span class="alertas-kicker">
                     <?= $isHistorico ? 'Auditoria · Últimos 30 dias' : 'Monitoramento do Fechamento' ?>
                 </span>
-                <?php if ($periodoLabel !== ''): ?>
+                <?php if ($todosPeriodos): ?>
+                    <span class="alertas-periodo-pill" title="Exibindo alertas de todos os períodos">
+                        Período: todos
+                    </span>
+                <?php elseif ($periodoLabel !== ''): ?>
                     <span class="alertas-periodo-pill" title="Período de apuração ativo">
                         Período: <?= htmlspecialchars($periodoLabel, ENT_QUOTES, 'UTF-8') ?>
                     </span>
@@ -120,6 +149,7 @@ $cardAtivoCobrancas = !$isHistorico && in_array($codAtual, ['cobranca', 'cobranc
                 </a>
             </div>
 
+            <?php if ($podeOperar): ?>
             <form method="post" action="/rh/alertas/sincronizar" class="inline-form">
                 <?= Csrf::field() ?>
                 <input type="hidden" name="data_inicio" value="<?= htmlspecialchars($dataInicio, ENT_QUOTES, 'UTF-8') ?>">
@@ -133,10 +163,15 @@ $cardAtivoCobrancas = !$isHistorico && in_array($codAtual, ['cobranca', 'cobranc
                 <form method="post" action="/rh/alertas/marcar-todos-lidos" data-alertas-lidos-todos class="inline-form">
                     <?= Csrf::field() ?>
                     <input type="hidden" name="redirect" value="<?= htmlspecialchars($_SERVER['REQUEST_URI'] ?? '/rh/alertas', ENT_QUOTES, 'UTF-8') ?>">
+                    <input type="hidden" name="data_inicio" value="<?= htmlspecialchars($dataInicio, ENT_QUOTES, 'UTF-8') ?>">
+                    <input type="hidden" name="data_fim" value="<?= htmlspecialchars($dataFim, ENT_QUOTES, 'UTF-8') ?>">
+                    <input type="hidden" name="todos_periodos" value="<?= $todosPeriodos ? '1' : '0' ?>">
+                    <input type="hidden" name="periodo_sel" value="<?= htmlspecialchars($todosPeriodos ? '|' : ($dataInicio . '|' . $dataFim), ENT_QUOTES, 'UTF-8') ?>">
                     <button type="submit" class="btn btn--ghost btn--sm">
                         ✓ Marcar todos como lidos (<span data-stat-counter="nao_lidos_btn"><?= (int) $naoLidos ?></span>)
                     </button>
                 </form>
+            <?php endif; ?>
             <?php endif; ?>
 
             <?php if (!empty($podeConfigurar)): ?>
@@ -211,7 +246,7 @@ $cardAtivoCobrancas = !$isHistorico && in_array($codAtual, ['cobranca', 'cobranc
                     this.form.data_fim.value = p[1] || '';
                     this.form.submit();
                 ">
-                    <option value="|" <?= ($dataInicio === '' && $dataFim === '') ? 'selected' : '' ?>>Todos os períodos</option>
+                    <option value="|" <?= $todosPeriodos ? 'selected' : '' ?>>Todos os períodos</option>
                     <?php foreach ($periodosGerados as $p):
                         $pi = (string) $p['data_inicio'];
                         $pf = (string) $p['data_fim'];

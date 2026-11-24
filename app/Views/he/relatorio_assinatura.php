@@ -110,15 +110,90 @@ $pdfPath = $portalPath . '/pdf' . ($hashPdf === '' ? '' : '?versao=' . rawurlenc
                     <div>
                         <h2 class="card-title" id="titulo-documento">Relatório de atividades</h2>
                         <p class="card-subtitle">
-                            <?= View::e((string) $documento['nome']) ?>
+                            <?= View::e((string) ($documento['colaborador_nome'] ?? $documento['nome'] ?? '')) ?>
                             · <?= View::e(date('d/m/Y', strtotime((string) $documento['data_inicio'])) . ' a ' . date('d/m/Y', strtotime((string) $documento['data_fim']))) ?>
                         </p>
                     </div>
-                    <a class="btn btn-secondary btn-sm" href="<?= View::e($pdfPath) ?>"
+                    <a class="btn btn-primary btn-sm" href="<?= View::e($pdfPath) ?>"
                         target="_blank" rel="noopener noreferrer">
-                        <?= $assinado ? 'Abrir PDF assinado' : 'Abrir PDF' ?>
+                        Abrir / Baixar PDF do Relatório
                     </a>
                 </div>
+                <div style="padding:.75rem 1rem;background:#EFF6FF;border-bottom:1px solid var(--border);display:flex;justify-content:center;">
+                    <a class="btn btn-primary btn-sm" href="<?= View::e($pdfPath) ?>"
+                        target="_blank" rel="noopener noreferrer" download style="width:100%;justify-content:center;text-align:center;font-weight:700;">
+                        Abrir / Baixar PDF do Relatório
+                    </a>
+                </div>
+                <?php
+                $raDias = is_array($dadosRa['dias'] ?? null) ? $dadosRa['dias'] : [];
+                $raCont = is_array($dadosRa['contadores'] ?? null) ? $dadosRa['contadores'] : [];
+                $totalHeMin = 0;
+                foreach ($raDias as $dItem) {
+                    $totalHeMin += (int) ($dItem['he_minutos'] ?? 0);
+                }
+                $heHorasFmt = sprintf('%02d:%02d', intdiv($totalHeMin, 60), $totalHeMin % 60);
+                ?>
+                <?php if ($raDias !== []): ?>
+                    <div style="padding:1rem;border-bottom:1px solid var(--border);background:var(--surface);">
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5rem,1fr));gap:.6rem;margin-bottom:.85rem;">
+                            <div style="padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--canvas);">
+                                <div class="muted text-xs">Preenchidos</div>
+                                <strong style="font-size:1.05rem;"><?= (int) ($raCont['preenchidos'] ?? 0) ?> / <?= (int) ($raCont['trabalho'] ?? count($raDias)) ?></strong>
+                            </div>
+                            <div style="padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--canvas);">
+                                <div class="muted text-xs">Remoto</div>
+                                <strong style="font-size:1.05rem;"><?= (int) ($raCont['remoto'] ?? 0) ?>d</strong>
+                            </div>
+                            <div style="padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--canvas);">
+                                <div class="muted text-xs">Site / Viagem</div>
+                                <strong style="font-size:1.05rem;"><?= (int) ($raCont['site'] ?? 0) ?>d / <?= (int) ($raCont['viagem'] ?? 0) ?>d</strong>
+                            </div>
+                            <div style="padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--canvas);">
+                                <div class="muted text-xs">HE declarada</div>
+                                <strong style="font-size:1.05rem;"><?= View::e($heHorasFmt) ?></strong>
+                            </div>
+                        </div>
+                        <details open>
+                            <summary style="cursor:pointer;font-weight:600;font-size:.9rem;margin-bottom:.5rem;">
+                                Resumo diário das atividades (<?= count($raDias) ?> dias)
+                            </summary>
+                            <div class="table-wrap" style="max-height:18rem;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-md);">
+                                <table class="table" style="font-size:.82rem;margin:0;">
+                                    <thead>
+                                        <tr>
+                                            <th>Data</th>
+                                            <th>Amb.</th>
+                                            <th>Projeto / Descrição</th>
+                                            <th>HE</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    <?php foreach ($raDias as $dRow):
+                                        $dtFmt = !empty($dRow['data']) ? date('d/m', strtotime((string) $dRow['data'])) : '—';
+                                        $amb = (string) ($dRow['ambiente'] ?? '—');
+                                        $proj = trim((string) ($dRow['projeto_obra'] ?? ''));
+                                        $desc = trim((string) ($dRow['descricao'] ?? ''));
+                                        $heIni = substr((string) ($dRow['he_hora_inicio'] ?? ''), 0, 5);
+                                        $heFim = substr((string) ($dRow['he_hora_fim'] ?? ''), 0, 5);
+                                        $heTxt = ($heIni !== '' && $heFim !== '') ? ($heIni . '–' . $heFim) : '—';
+                                    ?>
+                                        <tr>
+                                            <td style="white-space:nowrap;"><strong><?= View::e($dtFmt) ?></strong></td>
+                                            <td><?= View::e($amb !== '' ? ucfirst($amb) : '—') ?></td>
+                                            <td>
+                                                <?php if ($proj !== ''): ?><strong><?= View::e($proj) ?>:</strong> <?php endif; ?>
+                                                <?= View::e($desc !== '' ? $desc : (string) ($dRow['ocorrencia_resumo'] ?? '—')) ?>
+                                            </td>
+                                            <td style="white-space:nowrap;"><?= View::e($heTxt) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </details>
+                    </div>
+                <?php endif; ?>
                 <iframe class="assinatura-pdf" src="<?= View::e($pdfPath) ?>"
                     title="<?= $assinado ? 'Relatório de atividades assinado' : 'Relatório de atividades para assinatura' ?>"></iframe>
             </section>
@@ -138,6 +213,7 @@ $pdfPath = $portalPath . '/pdf' . ($hashPdf === '' ? '' : '?versao=' . rawurlenc
                             <div class="form-field">
                                 <label class="form-label" for="nome-assinatura">Nome completo</label>
                                 <input class="form-control assinatura-nome" id="nome-assinatura" name="nome"
+                                    value="<?= View::e((string) ($documento['colaborador_nome'] ?? $documento['nome'] ?? '')) ?>"
                                     autocomplete="name" maxlength="160" required aria-describedby="instrucao-nome">
                                 <p class="form-hint" id="instrucao-nome">Digite o nome conforme o cadastro. Ele aparecerá na assinatura do PDF.</p>
                             </div>

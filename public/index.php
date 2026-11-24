@@ -12,7 +12,7 @@ use App\Controllers\Rh\CalendarioController;
 use App\Controllers\Rh\ColaboradorController;
 use App\Controllers\Rh\EfetivoController;
 use App\Controllers\Rh\EmailContaController;
-use App\Controllers\Rh\EscalaController;
+use App\Controllers\Rh\HorarioController;
 use App\Controllers\Rh\FolhaController;
 use App\Controllers\Rh\ImportacaoController;
 use App\Controllers\Rh\PerfilController;
@@ -21,8 +21,10 @@ use App\Controllers\Rh\RelatorioAtividadesController;
 use App\Controllers\Rh\UsuarioController;
 use App\Controllers\Rh\AtividadeController;
 use App\Controllers\CronController;
+use App\Controllers\Rh\HeRelatorioController;
 use App\Controllers\Rh\MedicaoController;
 use App\Controllers\Rh\ValeRefeicaoController;
+use App\Controllers\Rh\EntregaEquipamentoController;
 use App\Helpers\Auth;
 use App\Helpers\Csrf;
 use App\Helpers\HePortalAuth;
@@ -34,7 +36,11 @@ $root = dirname(__DIR__);
 require $root . '/vendor/autoload.php';
 
 $config = require $root . '/config/app.php';
-date_default_timezone_set($config['timezone']);
+$tz = (string) ($config['timezone'] ?? \App\Helpers\AppClock::TIMEZONE);
+if ($tz === '' || $tz === 'America/Belem') {
+    $tz = \App\Helpers\AppClock::TIMEZONE;
+}
+date_default_timezone_set($tz);
 if (function_exists('mb_internal_encoding')) {
     mb_internal_encoding('UTF-8');
 }
@@ -96,7 +102,6 @@ $importacao = ImportacaoController::class;
 $ponto = PontoController::class;
 $folha = FolhaController::class;
 $calendario = CalendarioController::class;
-$escala = EscalaController::class;
 $emailConta = EmailContaController::class;
 $usuarios = UsuarioController::class;
 $atividade = AtividadeController::class;
@@ -195,52 +200,111 @@ if (!$isPublic) {
     if ($normalizedPath === '/') {
         $requireAny('dashboard.ver');
     } elseif ($normalizedPath === '/rh/efetivo/exportar') {
-        $requireAny('efetivo.ver', 'efetivo.editar', 'importacoes.gerenciar');
+        $requireAny('efetivo.ver', 'efetivo.editar', 'efetivo.criar', 'efetivo.operar', 'importacoes.gerenciar', 'importacoes.operar');
     } elseif (str_starts_with($normalizedPath, '/rh/efetivo')) {
-        $requireAny('efetivo.ver', 'efetivo.editar');
+        $requireAny('efetivo.ver', 'efetivo.editar', 'efetivo.criar', 'efetivo.operar');
     } elseif (str_starts_with($normalizedPath, '/rh/colaboradores')) {
-        if ($httpMethod === 'POST' || $normalizedPath === '/rh/colaboradores/novo' || str_ends_with($normalizedPath, '/editar')) {
-            $requireAny('efetivo.editar');
+        if ($normalizedPath === '/rh/colaboradores/excluir-massa' || str_ends_with($normalizedPath, '/excluir')) {
+            $requireAny('efetivo.excluir');
+        } elseif (str_contains($normalizedPath, '/transferir') || str_contains($normalizedPath, '/excecoes') || str_contains($normalizedPath, '/percentual-he')) {
+            $requireAny('efetivo.operar', 'efetivo.editar');
+        } elseif ($normalizedPath === '/rh/colaboradores/novo' || ($httpMethod === 'POST' && !preg_match('#/\d+#', $normalizedPath))) {
+            $requireAny('efetivo.criar', 'efetivo.editar', 'efetivo.operar');
+        } elseif ($httpMethod === 'POST' || str_ends_with($normalizedPath, '/editar')) {
+            $requireAny('efetivo.editar', 'efetivo.operar');
         } else {
-            $requireAny('efetivo.ver', 'efetivo.editar');
+            $requireAny('efetivo.ver', 'efetivo.editar', 'efetivo.criar', 'efetivo.operar', 'efetivo.excluir');
         }
     } elseif ($normalizedPath === '/rh/importacoes/modelo') {
-        $requireAny('importacoes.gerenciar', 'efetivo.ver', 'efetivo.editar');
+        $requireAny('importacoes.gerenciar', 'importacoes.ver', 'importacoes.operar', 'efetivo.ver', 'efetivo.editar', 'efetivo.criar', 'efetivo.operar');
     } elseif (str_starts_with($normalizedPath, '/rh/importacoes')) {
-        $requireAny('importacoes.gerenciar');
+        $requireAny('importacoes.gerenciar', 'importacoes.ver', 'importacoes.operar');
     } elseif (str_starts_with($normalizedPath, '/rh/email')) {
-        $requireAny('email.gerenciar');
+        $requireAny('email.gerenciar', 'email.ver', 'email.operar');
     } elseif (str_starts_with($normalizedPath, '/rh/usuarios')) {
-        $requireAny('usuarios.gerenciar');
+        if (str_ends_with($normalizedPath, '/excluir')) {
+            $requireAny('usuarios.excluir', 'usuarios.gerenciar');
+        } elseif (str_contains($normalizedPath, '/enviar-reset')) {
+            $requireAny('usuarios.operar', 'usuarios.gerenciar');
+        } elseif ($httpMethod === 'POST' || str_contains($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')) {
+            $requireAny('usuarios.gerenciar', 'usuarios.criar', 'usuarios.editar', 'usuarios.operar');
+        } else {
+            $requireAny('usuarios.gerenciar', 'usuarios.ver', 'usuarios.criar', 'usuarios.editar', 'usuarios.operar', 'usuarios.excluir');
+        }
     } elseif ($normalizedPath === '/rh/atividade/heartbeat') {
         // qualquer usuário autenticado — presença
     } elseif (str_starts_with($normalizedPath, '/rh/atividade')) {
         $requireAny('atividade.ver');
     } elseif (str_starts_with($normalizedPath, '/rh/perfis')) {
-        $requireAny('perfis.gerenciar');
+        if (str_ends_with($normalizedPath, '/excluir')) {
+            $requireAny('perfis.excluir', 'perfis.gerenciar');
+        } elseif ($httpMethod === 'POST' || str_contains($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')) {
+            $requireAny('perfis.gerenciar', 'perfis.criar', 'perfis.editar', 'perfis.operar');
+        } else {
+            $requireAny('perfis.gerenciar', 'perfis.ver', 'perfis.criar', 'perfis.editar', 'perfis.operar', 'perfis.excluir');
+        }
     } elseif (str_starts_with($normalizedPath, '/rh/folha')) {
-        $httpMethod === 'POST' ? $requireAny('folha.enviar') : $requireAny('folha.ver', 'folha.enviar');
+        $httpMethod === 'POST'
+            ? $requireAny('folha.enviar', 'folha.operar')
+            : $requireAny('folha.ver', 'folha.enviar', 'folha.operar');
     } elseif ($normalizedPath === '/rh/ponto/periodo/excluir') {
-        $requireAny('ponto.excluir_periodo');
+        $requireAny('ponto.excluir_periodo', 'ponto.excluir', 'ponto.operar');
+    } elseif (str_starts_with($normalizedPath, '/rh/ponto/justificativa-tipos')) {
+        if ($httpMethod === 'POST' || str_contains($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')) {
+            $requireAny('justificativa_tipos.criar', 'justificativa_tipos.editar', 'ponto.editar', 'ponto.operar');
+        } else {
+            $requireAny('justificativa_tipos.ver', 'ponto.ver', 'ponto.editar', 'ponto.operar');
+        }
     } elseif (str_starts_with($normalizedPath, '/rh/ponto')) {
-        $httpMethod === 'POST' ? $requireAny('ponto.editar') : $requireAny('ponto.ver', 'ponto.editar');
+        $httpMethod === 'POST'
+            ? $requireAny('ponto.editar', 'ponto.operar')
+            : $requireAny('ponto.ver', 'ponto.editar', 'ponto.operar');
     } elseif (str_starts_with($normalizedPath, '/rh/medicao')) {
         $httpMethod === 'POST'
-            ? $requireAny('medicao.editar', 'ponto.editar')
-            : $requireAny('medicao.ver', 'medicao.editar', 'ponto.ver', 'ponto.editar');
+            ? $requireAny('medicao.operar', 'medicao.editar', 'ponto.editar', 'ponto.operar')
+            : $requireAny('medicao.ver', 'medicao.operar', 'medicao.editar', 'ponto.ver', 'ponto.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/relatorio-he')) {
+        $httpMethod === 'POST'
+            ? $requireAny('he_relatorio.operar', 'medicao.operar', 'medicao.editar', 'ponto.editar')
+            : $requireAny('he_relatorio.ver', 'he_relatorio.operar', 'medicao.ver', 'medicao.operar', 'ponto.ver');
     } elseif (str_starts_with($normalizedPath, '/rh/relatorios-atividades')) {
         $httpMethod === 'POST'
-            ? $requireAny('ra.editar', 'ponto.editar')
-            : $requireAny('ra.ver', 'ra.editar', 'ponto.ver', 'ponto.editar');
+            ? $requireAny('ra.editar', 'ra.operar', 'ponto.editar')
+            : $requireAny('ra.ver', 'ra.editar', 'ra.operar', 'ponto.ver', 'ponto.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/vale-refeicao/relatorio')) {
+        $httpMethod === 'POST'
+            ? $requireAny('vr_relatorio.operar', 'vr.editar', 'ponto.editar')
+            : $requireAny('vr_relatorio.ver', 'vr_relatorio.operar', 'vr.ver', 'vr.editar');
     } elseif (str_starts_with($normalizedPath, '/rh/vale-refeicao')) {
         $httpMethod === 'POST'
-            ? $requireAny('vr.editar', 'ponto.editar')
-            : $requireAny('vr.ver', 'vr.editar', 'ponto.ver', 'ponto.editar');
-    } elseif (preg_match('#^/rh/(empresas|contratos|centros-custo|ordens-servico|localidades|jornadas|escalas|lotacoes|cargos|funcoes|gestores-arcadis|gestores-cliente|supervisores|calendarios)(/|$)#', $normalizedPath)) {
-        if ($httpMethod === 'POST' || str_ends_with($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')) {
-            $requireAny('cadastros.editar');
+            ? $requireAny('vr.criar', 'vr.editar', 'vr.excluir', 'ponto.editar')
+            : $requireAny('vr.ver', 'vr.criar', 'vr.editar', 'ponto.ver', 'ponto.editar');
+    } elseif (str_starts_with($normalizedPath, '/rh/entregas-equipamentos')) {
+        $httpMethod === 'POST'
+            ? $requireAny('entregas.gerir', 'entregas.operar')
+            : $requireAny('entregas.ver', 'entregas.gerir', 'entregas.operar');
+    } elseif (str_starts_with($normalizedPath, '/rh/alertas/config')) {
+        $requireAny('alertas.gerenciar', 'alertas_config.ver', 'alertas_config.editar', 'alertas_config.operar');
+    } elseif (preg_match('#^/rh/(empresas|contratos|centros-custo|ordens-servico|localidades|lotacoes|cargos|funcoes|gestores-arcadis|gestores-cliente|supervisores|calendarios|horarios)(/|$)#', $normalizedPath, $mCad)) {
+        $slugCad = (string) ($mCad[1] ?? '');
+        $mapaCad = \App\Services\PerfilService::mapaCadastrosMenu()[$slugCad] ?? null;
+        if ($mapaCad !== null) {
+            $isNovo = str_ends_with($normalizedPath, '/novo')
+                || ($httpMethod === 'POST' && preg_match('#^/rh/' . preg_quote($slugCad, '#') . '/?$#', $normalizedPath) === 1);
+            $isExcluir = str_contains($normalizedPath, '/excluir');
+            if ($isExcluir) {
+                $requireAny($mapaCad['excluir'], $mapaCad['editar'], 'cadastros.editar');
+            } elseif ($isNovo) {
+                $requireAny($mapaCad['criar'], $mapaCad['editar'], 'cadastros.editar');
+            } elseif ($httpMethod === 'POST' || str_ends_with($normalizedPath, '/editar') || preg_match('#/\d+$#', $normalizedPath)) {
+                $requireAny($mapaCad['editar'], $mapaCad['criar'], 'cadastros.editar');
+            } else {
+                $requireAny($mapaCad['ver'], $mapaCad['criar'], $mapaCad['editar'], 'cadastros.ver', 'cadastros.editar');
+            }
         } else {
-            $requireAny('cadastros.ver', 'cadastros.editar');
+            $httpMethod === 'POST' || str_ends_with($normalizedPath, '/novo') || str_ends_with($normalizedPath, '/editar')
+                ? $requireAny('cadastros.editar')
+                : $requireAny('cadastros.ver', 'cadastros.editar');
         }
     }
 } elseif (str_starts_with($path, '/he') && !in_array($normalizedPath, ['/he/login'], true)) {
@@ -277,8 +341,6 @@ foreach ([
     'centros-custo' => 'centrosCusto',
     'ordens-servico' => 'ordensServico',
     'localidades' => 'localidades',
-    'jornadas' => 'jornadas',
-    'escalas' => 'escalas',
     'lotacoes' => 'lotacoes',
     'cargos' => 'cargos',
     'funcoes' => 'funcoes',
@@ -299,10 +361,17 @@ foreach ([
     $router->post('/rh/' . $slug . '/{id}', static function (string $id) use ($cadastro, $slug): void {
         (new $cadastro())->update($slug, $id);
     });
+    $router->post('/rh/' . $slug . '/{id}/excluir', static function (string $id) use ($cadastro, $slug): void {
+        (new $cadastro())->destroy($slug, $id);
+    });
 }
 
-$router->get('/rh/escalas/{id}', [$escala, 'show']);
-$router->post('/rh/escalas/{id}/ciclo', [$escala, 'saveCiclo']);
+$horario = HorarioController::class;
+$router->get('/rh/horarios', [$horario, 'index']);
+$router->get('/rh/horarios/novo', [$horario, 'novo']);
+$router->post('/rh/horarios', [$horario, 'save']);
+$router->get('/rh/horarios/{id}', [$horario, 'show']);
+$router->post('/rh/horarios/{id}', [$horario, 'save']);
 
 $router->get('/rh/calendarios', [$calendario, 'index']);
 $router->get('/rh/calendarios/novo', [$calendario, 'create']);
@@ -311,6 +380,7 @@ $router->get('/rh/calendarios/{id}', [$calendario, 'edit']);
 $router->post('/rh/calendarios/{id}', [$calendario, 'update']);
 $router->post('/rh/calendarios/{id}/feriados', [$calendario, 'addFeriado']);
 $router->post('/rh/calendarios/{id}/feriados/{feriadoId}/excluir', [$calendario, 'deleteFeriado']);
+$router->post('/rh/calendarios/{id}/excluir', [$calendario, 'destroy']);
 
 $router->get('/rh/localidades/{id}/feriados', [$calendario, 'porCidade']);
 $router->post('/rh/localidades/{id}/feriados', [$calendario, 'addFeriadoCidade']);
@@ -318,12 +388,15 @@ $router->post('/rh/localidades/{id}/feriados/{feriadoId}/excluir', [$calendario,
 
 $router->get('/rh/colaboradores/novo', [$colaborador, 'createForm']);
 $router->post('/rh/colaboradores', [$colaborador, 'store']);
+// Rotas literais ANTES de {id}, senão "excluir-massa" cai em update((int)'excluir-massa'=0).
+$router->post('/rh/colaboradores/excluir-massa', [$colaborador, 'excluirMassa']);
 $router->get('/rh/colaboradores/{id}/editar', [$colaborador, 'editForm']);
-$router->post('/rh/colaboradores/{id}', [$colaborador, 'update']);
-$router->get('/rh/colaboradores/{id}', [$colaborador, 'show']);
+$router->post('/rh/colaboradores/{id}/excluir', [$colaborador, 'excluir']);
 $router->post('/rh/colaboradores/{id}/transferir', [$colaborador, 'transfer']);
 $router->post('/rh/colaboradores/{id}/percentual-he', [$colaborador, 'atualizarPercentualHe']);
 $router->post('/rh/colaboradores/{id}/excecoes', [$colaborador, 'storeExcecao']);
+$router->post('/rh/colaboradores/{id}', [$colaborador, 'update']);
+$router->get('/rh/colaboradores/{id}', [$colaborador, 'show']);
 
 $router->get('/rh/importacoes', [$importacao, 'index']);
 $router->get('/rh/importacoes/modelo', [$importacao, 'baixarModelo']);
@@ -349,6 +422,7 @@ $router->get('/rh/usuarios/novo', [$usuarios, 'createForm']);
 $router->post('/rh/usuarios', [$usuarios, 'store']);
 $router->get('/rh/usuarios/{id}/editar', [$usuarios, 'editForm']);
 $router->post('/rh/usuarios/{id}', [$usuarios, 'update']);
+$router->post('/rh/usuarios/{id}/excluir', [$usuarios, 'excluir']);
 $router->post('/rh/usuarios/{id}/enviar-reset', [$usuarios, 'enviarReset']);
 
 $router->get('/rh/atividade', [$atividade, 'index']);
@@ -361,6 +435,7 @@ $router->get('/rh/perfis/novo', [$perfisCtrl, 'createForm']);
 $router->post('/rh/perfis', [$perfisCtrl, 'store']);
 $router->get('/rh/perfis/{id}/editar', [$perfisCtrl, 'editForm']);
 $router->post('/rh/perfis/{id}/duplicar', [$perfisCtrl, 'duplicar']);
+$router->post('/rh/perfis/{id}/excluir', [$perfisCtrl, 'excluir']);
 $router->post('/rh/perfis/{id}', [$perfisCtrl, 'update']);
 
 $justTipos = \App\Controllers\Rh\JustificativaTipoController::class;
@@ -373,6 +448,10 @@ $router->post('/rh/ponto/justificativa-tipos', [$justTipos, 'store']);
 $router->post('/rh/ponto/justificativa-tipos/{id}/excluir', [$justTipos, 'excluir']);
 $router->post('/rh/ponto/justificativa-tipos/{id}', [$justTipos, 'update']);
 $router->get('/rh/ponto/anexos/{justificativaId}', [$ponto, 'baixarAnexo']);
+$router->get('/rh/ponto/{id}/he-autorizacao/{anexoId}', [$ponto, 'baixarHeAutorizacao']);
+$router->post('/rh/ponto/{id}/turno-autorizacao', [$ponto, 'salvarTurnoAutorizacao']);
+$router->get('/rh/ponto/{id}/turno-autorizacao/{authId}', [$ponto, 'baixarTurnoAutorizacao']);
+$router->post('/rh/ponto/{id}/turno-autorizacao/{authId}/excluir', [$ponto, 'excluirTurnoAutorizacao']);
 $router->get('/rh/ponto/{id}', [$ponto, 'show']);
 $router->post('/rh/ponto/{id}/dia', [$ponto, 'salvarDia']);
 $router->post('/rh/ponto/{id}/justificativa', [$ponto, 'justificativa']);
@@ -388,6 +467,12 @@ $router->post('/rh/ponto/{id}/resolver-divergencia', [$ponto, 'resolverDivergenc
 $router->post('/rh/ponto/{id}/resolver-divergencia-reenviar', [$ponto, 'resolverDivergenciaEReenviar']);
 $router->post('/rh/ponto/{id}/folha/gerar', [$ponto, 'gerarFolhaPdf']);
 $router->post('/rh/ponto/{id}/folha/enviar', [$ponto, 'enviarFolhaEmail']);
+
+$heRelatorio = HeRelatorioController::class;
+$router->get('/rh/relatorio-he', [$heRelatorio, 'index']);
+$router->get('/rh/relatorio-he/excel', [$heRelatorio, 'exportarExcel']);
+$router->post('/rh/relatorio-he/pendentes', [$heRelatorio, 'salvarPendente']);
+$router->post('/rh/relatorio-he/pendentes/{id}/excluir', [$heRelatorio, 'excluirPendente']);
 
 $raRh = RelatorioAtividadesController::class;
 $router->get('/rh/relatorios-atividades', [$raRh, 'index']);
@@ -406,6 +491,27 @@ $router->get('/rh/vale-refeicao/relatorio/excel', [$vrRh, 'exportarExcel']);
 $router->get('/rh/vale-refeicao/exportar', [$vrRh, 'exportarCsv']);
 $router->post('/rh/vale-refeicao/config', [$vrRh, 'salvarConfig']);
 $router->post('/rh/vale-refeicao/config/{id}/excluir', [$vrRh, 'excluirConfig']);
+
+$entregasRh = EntregaEquipamentoController::class;
+$router->get('/rh/entregas-equipamentos', [$entregasRh, 'index']);
+$router->get('/rh/entregas-equipamentos/nova', [$entregasRh, 'createForm']);
+$router->post('/rh/entregas-equipamentos', [$entregasRh, 'store']);
+$router->get('/rh/entregas-equipamentos/equipamentos', [$entregasRh, 'equipamentos']);
+$router->post('/rh/entregas-equipamentos/equipamentos', [$entregasRh, 'salvarEquipamento']);
+$router->post('/rh/entregas-equipamentos/equipamentos/{id}/excluir', [$entregasRh, 'excluirEquipamento']);
+$router->get('/rh/entregas-equipamentos/perifericos', [$entregasRh, 'perifericos']);
+$router->post('/rh/entregas-equipamentos/perifericos', [$entregasRh, 'salvarPeriferico']);
+$router->post('/rh/entregas-equipamentos/perifericos/{id}/excluir', [$entregasRh, 'excluirPeriferico']);
+$router->get('/rh/entregas-equipamentos/colaborador/{id}', [$entregasRh, 'colaboradorJson']);
+$router->get('/rh/entregas-equipamentos/{id}/pdf', [$entregasRh, 'pdf']);
+$router->get('/rh/entregas-equipamentos/{id}/anexo/{anexoId}', [$entregasRh, 'anexo']);
+$router->get('/rh/entregas-equipamentos/{id}/emitir', [$entregasRh, 'emitir']);
+$router->post('/rh/entregas-equipamentos/{id}/emitir', [$entregasRh, 'emitir']);
+$router->post('/rh/entregas-equipamentos/{id}/anexar-assinado', [$entregasRh, 'anexarAssinado']);
+$router->post('/rh/entregas-equipamentos/{id}/devolucao', [$entregasRh, 'devolucao']);
+$router->post('/rh/entregas-equipamentos/{id}/cancelar', [$entregasRh, 'cancelar']);
+$router->get('/rh/entregas-equipamentos/{id}', [$entregasRh, 'editForm']);
+$router->post('/rh/entregas-equipamentos/{id}', [$entregasRh, 'update']);
 
 $medicao = MedicaoController::class;
 $router->get('/rh/medicao', [$medicao, 'index']);

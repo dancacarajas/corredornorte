@@ -17,8 +17,10 @@ $currentUser = $currentUser ?? ($authUser ? [
     'avatar_url' => \App\Helpers\Auth::avatarUrl($authUser),
 ] : ['id' => 0, 'name' => 'Administrador', 'email' => '', 'role' => 'RH Operacional', 'avatar' => '', 'avatar_url' => null]);
 
-$alertasBadge = (int) ($alertasBadge ?? 0);
-if ($alertasBadge === 0 && \App\Helpers\Auth::check() && \App\Helpers\Auth::canAny('alertas.ver', 'dashboard.ver')) {
+// Badge = não lidos do período padrão (mais recente), igual à Central de Alertas.
+// Se a página já calculou ($alertasBadge > 0 ou explícito via array_key_exists no extract),
+// respeita o valor; senão recalcula no período vigente.
+if (!isset($alertasBadge) && \App\Helpers\Auth::check() && \App\Helpers\Auth::canAny('alertas.ver', 'dashboard.ver')) {
     try {
         $pdoBadge = \App\Helpers\Db::tryConnection();
         if ($pdoBadge instanceof PDO) {
@@ -28,6 +30,7 @@ if ($alertasBadge === 0 && \App\Helpers\Auth::check() && \App\Helpers\Auth::canA
         $alertasBadge = 0;
     }
 }
+$alertasBadge = (int) ($alertasBadge ?? 0);
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -36,12 +39,9 @@ if ($alertasBadge === 0 && \App\Helpers\Auth::check() && \App\Helpers\Auth::canA
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="<?= View::e(Csrf::token()) ?>">
     <title><?= View::e($pageTitle) ?> · <?= View::e($app['name']) ?></title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=avatar-20261114">
-    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=alertas-badge-20261115">
+    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=brand-20261118b">
     <link rel="stylesheet" href="<?= View::asset('css/conta.css') ?>?v=conta-20261114">
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
@@ -84,7 +84,7 @@ if ($alertasBadge === 0 && \App\Helpers\Auth::check() && \App\Helpers\Auth::canA
         </main>
     </div>
 </div>
-<script src="<?= View::asset('js/app.js') ?>?v=nav-vr-20261114"></script>
+<script src="<?= View::asset('js/app.js') ?>?v=confirm-submit-20261116"></script>
 <script src="<?= View::asset('js/batch-runner.js') ?>?v=email-report-20261114"></script>
 <?php if (\App\Helpers\Auth::check()): ?>
 <script src="<?= View::asset('js/atividade-heartbeat.js') ?>?v=atividade-20261116"></script>

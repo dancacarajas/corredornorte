@@ -54,7 +54,17 @@ final class RelatorioAssinaturaService
                 "SELECT * FROM ra_documentos WHERE relatorio_id = ? AND status <> 'invalidado' ORDER BY id DESC FOR UPDATE"
             );
             $docs->execute([$relatorioId]);
-            foreach ($docs->fetchAll(PDO::FETCH_ASSOC) as $doc) {
+            $existentes = $docs->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($existentes as $doc) {
+                if ((string) ($doc['status'] ?? '') === 'assinado') {
+                    $this->db->commit();
+                    return [
+                        'portal_url' => $this->baseUrl() . '/assinar-relatorio/' . $doc['portal_token'],
+                        'documento_id' => (int) $doc['id'],
+                    ];
+                }
+            }
+            foreach ($existentes as $doc) {
                 $arquivoRegistrado = $this->caminhoDestino((string) $doc['arquivo_path']);
                 $hashRegistrado = is_file($arquivoRegistrado) ? hash_file('sha256', $arquivoRegistrado) : false;
                 if (hash_equals((string) $doc['hash_sha256'], $hash)
@@ -65,8 +75,8 @@ final class RelatorioAssinaturaService
                         'documento_id' => (int) $doc['id'],
                     ];
                 }
-                if ($doc['status'] === 'enviado') {
-                    $this->db->prepare("UPDATE ra_documentos SET status = 'invalidado' WHERE id = ?")
+                if ($doc['status'] !== 'invalidado' && $doc['status'] !== 'assinado') {
+                    $this->db->prepare("UPDATE ra_documentos SET status = 'invalidado' WHERE id = ? AND status <> 'assinado'")
                         ->execute([(int) $doc['id']]);
                 }
             }
@@ -110,7 +120,14 @@ final class RelatorioAssinaturaService
     public function buscarPorRelatorio(int $relatorioId): ?array
     {
         $st = $this->db->prepare(
-            "SELECT * FROM ra_documentos WHERE relatorio_id = ? AND status <> 'invalidado' ORDER BY id DESC LIMIT 1"
+            "SELECT d.*
+             FROM ra_documentos d
+             INNER JOIN ra_relatorios r ON r.id = d.relatorio_id
+             WHERE d.relatorio_id = ?
+               AND d.status <> 'invalidado'
+               AND r.status IN ('enviado', 'aprovado')
+             ORDER BY d.id DESC
+             LIMIT 1"
         );
         $st->execute([$relatorioId]);
         return $st->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -136,7 +153,7 @@ final class RelatorioAssinaturaService
              INNER JOIN rh_colaboradores c ON c.id = r.colaborador_id
              INNER JOIN ponto_periodos pp ON pp.id = r.periodo_id
              WHERE d.portal_token = ? AND d.status <> 'invalidado'
-               AND (d.status = 'assinado' OR r.status IN ('enviado','aprovado'))
+               AND r.status IN ('enviado','aprovado')
              LIMIT 1" . ($lock ? ' FOR UPDATE' : '')
         );
         $st->execute([$token]);

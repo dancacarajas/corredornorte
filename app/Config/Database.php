@@ -34,6 +34,8 @@ final class Database
                 PDO::ATTR_EMULATE_PREPARES => false,
             ]);
             self::$pdo->exec("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+            // Horário de negócio do sistema: São Paulo / Brasil (UTC-03, sem depender de tz tables).
+            self::$pdo->exec("SET time_zone = '-03:00'");
         } catch (PDOException $e) {
             throw new RuntimeException('Falha na conexão MySQL: ' . $e->getMessage(), previous: $e);
         }

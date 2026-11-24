@@ -289,7 +289,99 @@ final class Auth
             return true;
         }
 
-        return in_array($permissao, $user['permissoes'] ?? [], true);
+        $lista = $user['permissoes'] ?? [];
+        if (in_array($permissao, $lista, true)) {
+            return true;
+        }
+
+        // Atalhos legado: cadastros.ver/editar liberam os cadastros granulares do menu.
+        foreach (self::aliasesPermissao($permissao) as $alias) {
+            if (in_array($alias, $lista, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<string> */
+    private static function aliasesPermissao(string $permissao): array
+    {
+        static $map = null;
+        if ($map === null) {
+            $map = self::buildAliasMap();
+        }
+
+        return $map[$permissao] ?? [];
+    }
+
+    /**
+     * Ponte legado ↔ matriz 360° (Ver/Criar/Editar/Excluir/Operar).
+     *
+     * @return array<string, list<string>>
+     */
+    private static function buildAliasMap(): array
+    {
+        $map = [];
+        $add = static function (string $code, string ...$aliases) use (&$map): void {
+            $map[$code] = array_values(array_unique(array_merge($map[$code] ?? [], $aliases)));
+        };
+
+        foreach (\App\Services\PerfilService::mapaCadastrosMenu() as $meta) {
+            $ver = $meta['ver'];
+            $criar = $meta['criar'];
+            $editar = $meta['editar'];
+            $excluir = $meta['excluir'];
+            // Granulares aceitam atalho legado e ações “mais fortes” do mesmo recurso.
+            $add($ver, 'cadastros.ver', 'cadastros.editar', $criar, $editar, $excluir);
+            $add($criar, 'cadastros.editar', $editar);
+            $add($editar, 'cadastros.editar');
+            $add($excluir, 'cadastros.editar', $editar);
+        }
+        $add('cadastros.ver', ...\App\Services\PerfilService::codigosCadastrosVer());
+        $add('cadastros.editar', ...\App\Services\PerfilService::codigosCadastrosEditar());
+
+        // Pacotes legado ↔ ações 360 do mesmo módulo.
+        $pacotes = [
+            'usuarios.gerenciar' => ['usuarios.ver', 'usuarios.criar', 'usuarios.editar', 'usuarios.excluir', 'usuarios.operar'],
+            'perfis.gerenciar' => ['perfis.ver', 'perfis.criar', 'perfis.editar', 'perfis.excluir', 'perfis.operar'],
+            'email.gerenciar' => ['email.ver', 'email.operar'],
+            'importacoes.gerenciar' => ['importacoes.ver', 'importacoes.operar'],
+            'alertas.gerenciar' => ['alertas_config.ver', 'alertas_config.editar', 'alertas_config.operar'],
+            'ponto.excluir_periodo' => ['ponto.excluir'],
+            'folha.enviar' => ['folha.operar'],
+            'medicao.editar' => ['medicao.operar'],
+            'vr.editar' => ['vr.criar', 'vr.editar', 'vr.excluir'],
+            'entregas.gerir' => ['entregas.operar', 'entregas.ver'],
+        ];
+        foreach ($pacotes as $legado => $acoes) {
+            $add($legado, ...$acoes);
+            foreach ($acoes as $acao) {
+                $add($acao, $legado);
+            }
+        }
+
+        // Leitura implícita quando há ação de escrita/operação no mesmo recurso.
+        $implicitos = [
+            'efetivo.ver' => ['efetivo.criar', 'efetivo.editar', 'efetivo.excluir', 'efetivo.operar'],
+            'ponto.ver' => ['ponto.editar', 'ponto.excluir', 'ponto.operar'],
+            'folha.ver' => ['folha.operar', 'folha.enviar'],
+            'medicao.ver' => ['medicao.operar', 'medicao.editar'],
+            'ra.ver' => ['ra.editar', 'ra.operar'],
+            'vr.ver' => ['vr.criar', 'vr.editar', 'vr.excluir'],
+            'vr_relatorio.ver' => ['vr_relatorio.operar'],
+            'justificativa_tipos.ver' => ['justificativa_tipos.criar', 'justificativa_tipos.editar', 'justificativa_tipos.excluir', 'ponto.editar'],
+            'alertas.ver' => ['alertas.operar'],
+            'alertas_config.ver' => ['alertas_config.editar', 'alertas_config.operar', 'alertas.gerenciar'],
+            'entregas.ver' => ['entregas.operar', 'entregas.gerir'],
+            'mapa.ver' => ['dashboard.ver'],
+            'dashboard.ver' => ['mapa.ver'],
+        ];
+        foreach ($implicitos as $ver => $fortes) {
+            $add($ver, ...$fortes);
+        }
+
+        return $map;
     }
 
     public static function canAny(string ...$permissoes): bool
@@ -326,6 +418,15 @@ final class Auth
             ]);
             exit;
         }
+    }
+
+    public static function requireAnyPermission(string ...$permissoes): void
+    {
+        self::requireLogin();
+        if (self::canAny(...$permissoes)) {
+            return;
+        }
+        self::requirePermission($permissoes[0] ?? 'acesso');
     }
 
     public static function logout(): void

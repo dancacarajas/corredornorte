@@ -108,7 +108,7 @@ $ogDesc = $periodoTexto !== ''
         body {
             margin: 0;
             background: var(--canvas, #F3F4F6);
-            color: var(--ink, #111111);
+            color: var(--ink);
             font-family: var(--font-sans, "Source Sans 3", system-ui, -apple-system, sans-serif);
             line-height: 1.5;
         }
@@ -176,7 +176,7 @@ $ogDesc = $periodoTexto !== ''
         .ap-kpi strong {
             font-size: 1.15rem;
             font-weight: 800;
-            color: var(--ink, #111111);
+            color: var(--ink);
         }
         .ap-grid {
             display: grid;
@@ -266,7 +266,7 @@ $ogDesc = $periodoTexto !== ''
             border-radius: 10px;
             font: inherit;
             background: #fff;
-            color: var(--ink, #111111);
+            color: var(--ink);
         }
         .ap-check {
             display: flex;
@@ -305,7 +305,7 @@ $ogDesc = $periodoTexto !== ''
             border: 1px solid #CBD5E1;
             border-radius: 10px;
             background: #fff;
-            color: var(--ink, #111111);
+            color: var(--ink);
             font: inherit;
             font-weight: 600;
             cursor: pointer;
@@ -681,8 +681,13 @@ $ogDesc = $periodoTexto !== ''
         const form = document.getElementById(formId);
         const btn = document.getElementById(btnId);
         if (!form || !btn) return;
-        form.addEventListener('submit', () => {
+        form.addEventListener('submit', (ev) => {
+            if (form.dataset.submitting === '1') {
+                ev.preventDefault();
+                return;
+            }
             if (!form.checkValidity()) return;
+            form.dataset.submitting = '1';
             btn.disabled = true;
             btn.classList.add('is-loading');
             const label = btn.querySelector('.ap-btn-label');

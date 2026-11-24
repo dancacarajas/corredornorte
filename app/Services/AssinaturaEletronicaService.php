@@ -139,17 +139,32 @@ final class AssinaturaEletronicaService
         }
         $selo = self::configuracaoSelo();
         $assinadoPath = null;
+        $assinaturaPersistida = false;
+        $doc = null;
         $this->db->beginTransaction();
         try {
             $doc = $this->buscarPorPortalToken($token, true);
-            if ($doc === null || $doc['status'] !== 'enviado') {
+            if ($doc === null) {
+                throw new RuntimeException('A folha não está disponível para assinatura.');
+            }
+            // Idempotente: 2º clique / retry após sucesso não pode virar erro vermelho.
+            if (($doc['status'] ?? '') === 'assinado') {
+                $this->db->commit();
+                $assinaturaPersistida = true;
+                return;
+            }
+            if ($doc['status'] !== 'enviado') {
                 throw new RuntimeException('A folha não está disponível para assinatura.');
             }
             if ($this->espelhoEmDivergencia((int) $doc['espelho_id'])) {
                 throw new RuntimeException('Esta folha está em análise de divergência pelo RH. Aguarde a correção e o reenvio.');
             }
+            $isRecorte = $doc['periodo_inicio'] !== null;
+            $statusPermitidosEspelho = $isRecorte
+                ? ['conferido', 'fechado', 'enviado', 'assinado']
+                : ['fechado', 'enviado', 'assinado'];
             $statusEspelhoAtual = $this->statusEspelho((int) $doc['espelho_id']);
-            if ($statusEspelhoAtual !== null && !in_array($statusEspelhoAtual, ['fechado', 'enviado', 'assinado'], true)) {
+            if ($statusEspelhoAtual !== null && !in_array($statusEspelhoAtual, $statusPermitidosEspelho, true)) {
                 throw new RuntimeException('O ponto do período foi reaberto para tratamento. Solicite uma nova via ao RH.');
             }
             if ((int) $doc['layout_pdf'] !== FolhaPontoService::LAYOUT_PDF_ATUAL) {
@@ -158,7 +173,7 @@ final class AssinaturaEletronicaService
             if ($hashVisualizado === '' || !hash_equals((string) $doc['hash_sha256'], $hashVisualizado)) {
                 throw new RuntimeException('Atualize a página e confira a via atual da folha antes de assinar.');
             }
-            if ($doc['periodo_inicio'] !== null) {
+            if ($isRecorte) {
                 $espelhos = $this->db->prepare('SELECT e.status FROM documentos_espelhos v
                     JOIN ponto_espelhos e ON e.id = v.espelho_id WHERE v.documento_id = ? FOR UPDATE');
                 $espelhos->execute([$doc['id']]);
@@ -166,7 +181,7 @@ final class AssinaturaEletronicaService
                 if (in_array('em_divergencia', $estados, true)) {
                     throw new RuntimeException('Esta folha está em análise de divergência pelo RH. Aguarde a correção e o reenvio.');
                 }
-                if ($estados === [] || array_diff($estados, ['fechado', 'enviado', 'assinado']) !== []) {
+                if ($estados === [] || array_diff($estados, ['conferido', 'fechado', 'enviado', 'assinado']) !== []) {
                     throw new RuntimeException('O ponto do período foi reaberto. Solicite uma nova via ao RH.');
                 }
             }
@@ -193,11 +208,14 @@ final class AssinaturaEletronicaService
             ];
 
             $assinadoPath = sprintf('storage/uploads/folhas/folha_%d_assinado_%s.pdf', $id, bin2hex(random_bytes(8)));
-            $this->renderCartaoAssinado($original, $this->absPath($assinadoPath), $audit, $selo);
-            $assinadoHash = hash_file('sha256', $this->absPath($assinadoPath));
-            if ($assinadoHash === false) {
+            $assinadoAbs = $this->absPath($assinadoPath);
+            $this->renderCartaoAssinado($original, $assinadoAbs, $audit, $selo);
+            clearstatcache(true, $assinadoAbs);
+            $assinadoHash = is_file($assinadoAbs) ? hash_file('sha256', $assinadoAbs) : false;
+            if ($assinadoHash === false || !is_file($assinadoAbs) || filesize($assinadoAbs) < 1000) {
                 throw new RuntimeException('Não foi possível verificar o PDF assinado.');
             }
+            @chmod($assinadoAbs, 0664);
 
             $this->db->prepare(
                 "UPDATE documentos SET status = 'assinado', arquivo_assinado_path = ?, arquivo_assinado_sha256 = ?,
@@ -210,23 +228,122 @@ final class AssinaturaEletronicaService
                 $this->db->prepare("UPDATE ponto_espelhos SET status = 'assinado' WHERE id = ?")
                     ->execute([(int) $doc['espelho_id']]);
             }
-            $this->auditar($id, 'assinatura_eletronica', [
-                'hash_sha256' => $hashes['sha256'],
-                'arquivo_assinado_sha256' => $assinadoHash,
-                'metodo_assinatura' => self::METODO_ASSINATURA,
-                'assinado_em' => $assinadoEm,
-            ]);
+            // Auditoria não pode derrubar a assinatura já gravada.
+            try {
+                $this->auditar($id, 'assinatura_eletronica', [
+                    'hash_sha256' => $hashes['sha256'],
+                    'arquivo_assinado_sha256' => $assinadoHash,
+                    'metodo_assinatura' => self::METODO_ASSINATURA,
+                    'assinado_em' => $assinadoEm,
+                ]);
+            } catch (Throwable $e) {
+                error_log('Arcadis RH: auditoria da assinatura falhou. ' . $e->getMessage());
+            }
             $this->db->commit();
-            $this->notificarAssinaturaConfirmacao($doc);
+            $assinaturaPersistida = true;
+            $doc['status'] = 'assinado';
+            $doc['arquivo_assinado_path'] = $assinadoPath;
+            $doc['arquivo_assinado_sha256'] = $assinadoHash;
+            $doc['assinatura_nome'] = $doc['nome'];
+            $doc['assinatura_em'] = $assinadoEm;
         } catch (Throwable $e) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
             }
-            if ($assinadoPath !== null && is_file($this->absPath($assinadoPath))) {
+            // Se a assinatura já foi persistida (corrida/retry), não trata como falha.
+            if (!$assinaturaPersistida && $assinadoPath !== null && is_file($this->absPath($assinadoPath))) {
                 unlink($this->absPath($assinadoPath));
             }
-            throw $e;
+            if (!$assinaturaPersistida) {
+                $ja = $this->buscarPorPortalToken($token);
+                if (is_array($ja) && ($ja['status'] ?? '') === 'assinado') {
+                    $doc = $ja;
+                    $assinaturaPersistida = true;
+                } else {
+                    throw $e;
+                }
+            }
         }
+
+        if (!is_array($doc)) {
+            return;
+        }
+
+        // Pós-commit: nunca propaga erro — a assinatura já está válida.
+        try {
+            $this->garantirPdfAssinado($doc);
+        } catch (Throwable $e) {
+            error_log('Arcadis RH: falha ao garantir PDF assinado pós-commit. ' . $e->getMessage());
+        }
+        try {
+            $this->notificarAssinaturaConfirmacao($doc);
+        } catch (Throwable $e) {
+            error_log('Arcadis RH: falha ao notificar assinatura. ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Garante o PDF assinado em disco para documentos já marcados como assinado.
+     * Recria via carimbo PHP se o arquivo tiver sumido (bug geral do portal).
+     *
+     * @param array<string,mixed> $doc
+     */
+    public function garantirPdfAssinado(array &$doc): string
+    {
+        if (($doc['status'] ?? '') !== 'assinado') {
+            throw new RuntimeException('Documento ainda não assinado.');
+        }
+        $rel = trim((string) ($doc['arquivo_assinado_path'] ?? ''));
+        if ($rel === '') {
+            $rel = sprintf(
+                'storage/uploads/folhas/folha_%d_assinado_%s.pdf',
+                (int) $doc['id'],
+                bin2hex(random_bytes(8))
+            );
+        }
+        $path = $this->absPath($rel);
+        clearstatcache(true, $path);
+        if (is_file($path) && filesize($path) > 1000) {
+            $hash = hash_file('sha256', $path);
+            if (is_string($hash) && $hash !== '') {
+                if ((string) ($doc['arquivo_assinado_sha256'] ?? '') !== $hash
+                    || (string) ($doc['arquivo_assinado_path'] ?? '') !== $rel
+                ) {
+                    $this->db->prepare(
+                        'UPDATE documentos SET arquivo_assinado_path = ?, arquivo_assinado_sha256 = ? WHERE id = ?'
+                    )->execute([$rel, $hash, (int) $doc['id']]);
+                    $doc['arquivo_assinado_path'] = $rel;
+                    $doc['arquivo_assinado_sha256'] = $hash;
+                }
+                return $path;
+            }
+        }
+
+        $original = $this->absPath((string) $doc['arquivo_path']);
+        if (!is_file($original)) {
+            throw new RuntimeException('PDF original da folha ausente.');
+        }
+        $audit = [
+            'nome' => (string) ($doc['assinatura_nome'] ?: $doc['nome'] ?? 'Colaborador'),
+            'assinado_em' => date('c', strtotime((string) ($doc['assinatura_em'] ?: 'now'))),
+            'sha256' => (string) $doc['hash_sha256'],
+            'codigo' => (string) $doc['codigo_verificacao'],
+            'verificar_url' => $this->baseUrl() . '/verificar/' . $doc['codigo_verificacao'],
+        ];
+        @mkdir(dirname($path), 0775, true);
+        (new FolhaAssinaturaPdf())->carimbar($original, $path, $audit);
+        clearstatcache(true, $path);
+        $hash = is_file($path) ? hash_file('sha256', $path) : false;
+        if ($hash === false || !is_file($path) || filesize($path) < 1000) {
+            throw new RuntimeException('Não foi possível recriar o PDF assinado.');
+        }
+        @chmod($path, 0664);
+        $this->db->prepare(
+            'UPDATE documentos SET arquivo_assinado_path = ?, arquivo_assinado_sha256 = ? WHERE id = ?'
+        )->execute([$rel, $hash, (int) $doc['id']]);
+        $doc['arquivo_assinado_path'] = $rel;
+        $doc['arquivo_assinado_sha256'] = $hash;
+        return $path;
     }
 
     public function buscarPorPortalToken(string $token, bool $lock = false): ?array
@@ -465,7 +582,10 @@ final class AssinaturaEletronicaService
                 $params[] = (string) $doc['periodo_fim'];
             }
 
+            // Portal do colaborador: só as 4 batidas do cartão (ent1..sai2).
+            // ponto_marcacoes guarda também previsto (1-4) e britânico (5-8) — não listar tudo.
             $sqlDias = "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo,
+                               d.ent1, d.sai1, d.ent2, d.sai2,
                                d.total_trab_min AS horas_trab_min,
                                d.horas_extras_min,
                                d.he_50_min,
@@ -484,6 +604,7 @@ final class AssinaturaEletronicaService
                 try {
                     $stmtDias = $this->db->prepare(
                         "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo,
+                                d.ent1, d.sai1, d.ent2, d.sai2,
                                 d.total_trab_min AS horas_trab_min, d.horas_extras_min, d.horas_falta_min,
                                 d.adn_min AS adicional_noturno_min
                          FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
@@ -493,54 +614,59 @@ final class AssinaturaEletronicaService
                 } catch (Throwable) {
                     // Bancos legados sem colunas calculadas retornam lista básica
                     $stmtDias = $this->db->prepare(
-                        "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
+                        "SELECT d.id, d.data, d.tipo_dia, d.ocorrencia_resumo,
+                                d.ent1, d.sai1, d.ent2, d.sai2
+                         FROM ponto_dias d WHERE {$where} ORDER BY d.data ASC"
                     );
                     $stmtDias->execute($params);
                     $rows = $stmtDias->fetchAll();
                 }
             }
 
-            $marcPorDia = [];
-            $diaIds = array_map(static fn (array $r): int => (int) $r['id'], $rows);
-            if ($diaIds !== []) {
-                $mPh = implode(',', array_fill(0, count($diaIds), '?'));
-                $stM = $this->db->prepare(
-                    "SELECT ponto_dia_id, sequencia, TIME_FORMAT(horario, '%H:%i') AS h
-                     FROM ponto_marcacoes WHERE ponto_dia_id IN ({$mPh}) ORDER BY sequencia ASC"
-                );
-                $stM->execute($diaIds);
-                foreach ($stM->fetchAll() as $m) {
-                    $marcPorDia[(int) $m['ponto_dia_id']][] = (string) $m['h'];
+            $fmtBatida = static function (?string $t): ?string {
+                $t = trim((string) $t);
+                if ($t === '') {
+                    return null;
                 }
-            }
+                return substr($t, 0, 5);
+            };
 
             foreach ($rows as $r) {
                 $trab = (int) ($r['horas_trab_min'] ?? 0);
                 $he = (int) ($r['horas_extras_min'] ?? 0);
-                $he50 = array_key_exists('he_50_min', $r) ? (int) $r['he_50_min'] : null;
-                $he100 = array_key_exists('he_100_min', $r) ? (int) $r['he_100_min'] : null;
+                $he50 = isset($r['he_50_min']) ? (int) $r['he_50_min'] : null;
+                $he100 = isset($r['he_100_min']) ? (int) $r['he_100_min'] : null;
                 $falta = (int) ($r['horas_falta_min'] ?? 0);
                 $adn = (int) ($r['adicional_noturno_min'] ?? 0);
                 $tipo = (string) ($r['tipo_dia'] ?? 'trabalho');
-                if ($he50 === null || $he100 === null) {
-                    $isCem = in_array($tipo, ['folga', 'feriado', 'folga_escala'], true);
+                if ($he50 === null || $he100 === null || ($he > 0 && ($he50 + $he100) === 0)) {
+                    // Alinhado ao CalculoPontoService: 100% só feriado ou domingo; sábado/folga → % lotação.
+                    $dow = (int) date('w', strtotime((string) ($r['data'] ?? '')) ?: time());
+                    $isCem = ($tipo === 'feriado') || ($dow === 0);
                     $he50 = $isCem ? 0 : $he;
                     $he100 = $isCem ? $he : 0;
                 }
+
+                $batidas = array_values(array_filter([
+                    $fmtBatida($r['ent1'] ?? null),
+                    $fmtBatida($r['sai1'] ?? null),
+                    $fmtBatida($r['ent2'] ?? null),
+                    $fmtBatida($r['sai2'] ?? null),
+                ], static fn (?string $h): bool => $h !== null && $h !== ''));
 
                 $totais['trab_min'] += $trab;
                 $totais['falta_min'] += $falta;
                 $totais['adn_min'] += $adn;
                 $totais['he50_min'] += $he50;
                 $totais['he100_min'] += $he100;
-                if ($trab > 0 || $he > 0 || $he50 > 0 || $he100 > 0 || $falta > 0 || !empty($marcPorDia[(int) $r['id']])) {
+                if ($trab > 0 || $he > 0 || $he50 > 0 || $he100 > 0 || $falta > 0 || $batidas !== []) {
                     $totais['dias']++;
                 }
 
                 $dias[] = [
                     'data' => (string) $r['data'],
                     'tipo_dia' => $tipo,
-                    'batidas' => $marcPorDia[(int) $r['id']] ?? [],
+                    'batidas' => $batidas,
                     'trab_min' => $trab,
                     'he_min' => $he50 + $he100 > 0 ? ($he50 + $he100) : $he,
                     'falta_min' => $falta,
@@ -845,17 +971,40 @@ final class AssinaturaEletronicaService
     /** @param array{ARCADIS_SEAL_P12_PATH:string,ARCADIS_SEAL_P12_PASSWORD:string}|null $selo */
     private function renderCartaoAssinado(string $original, string $saida, array $auditoria, ?array $selo): void
     {
-        // Preferência: selo PAdES via Python quando o ambiente permite.
-        if ($selo !== null && function_exists('proc_open')) {
-            try {
-                $this->renderCartaoAssinadoPython($original, $saida, $auditoria, $selo);
-                return;
-            } catch (Throwable $e) {
-                error_log('Arcadis RH: selo Python indisponível, usando carimbo PHP. ' . $e->getMessage());
-            }
+        // Base sempre em PHP (estável no Hostinger). PAdES Python é opcional e só substitui
+        // se o arquivo final existir de fato — evita "Arquivo ausente" após assinar.
+        (new FolhaAssinaturaPdf())->carimbar($original, $saida, $auditoria);
+        clearstatcache(true, $saida);
+        if (!is_file($saida) || filesize($saida) < 1000) {
+            throw new RuntimeException('Não foi possível gerar o PDF assinado.');
         }
 
-        (new FolhaAssinaturaPdf())->carimbar($original, $saida, $auditoria);
+        if ($selo === null || !function_exists('proc_open')) {
+            return;
+        }
+        $tmp = $saida . '.pades.tmp.pdf';
+        try {
+            $this->renderCartaoAssinadoPython($original, $tmp, $auditoria, $selo);
+            clearstatcache(true, $tmp);
+            if (is_file($tmp) && filesize($tmp) > 1000) {
+                if (!@rename($tmp, $saida)) {
+                    if (!@copy($tmp, $saida)) {
+                        throw new RuntimeException('Falha ao publicar PDF selado.');
+                    }
+                    @unlink($tmp);
+                }
+            }
+        } catch (Throwable $e) {
+            error_log('Arcadis RH: selo Python indisponível, mantendo carimbo PHP. ' . $e->getMessage());
+        } finally {
+            if (is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
+        clearstatcache(true, $saida);
+        if (!is_file($saida) || filesize($saida) < 1000) {
+            (new FolhaAssinaturaPdf())->carimbar($original, $saida, $auditoria);
+        }
     }
 
     /** @param array{ARCADIS_SEAL_P12_PATH:string,ARCADIS_SEAL_P12_PASSWORD:string} $selo */

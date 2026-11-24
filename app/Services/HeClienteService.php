@@ -180,7 +180,8 @@ final class HeClienteService
             $data,
             $fim,
             $minutos,
-            'HE Cliente (RA #' . (int) $dia['relatorio_id'] . ') — saída ajustada para ' . substr($fim, 0, 5)
+            'HE Cliente (RA #' . (int) $dia['relatorio_id'] . ') — ' . substr($ini, 0, 5) . ' às ' . substr($fim, 0, 5),
+            $ini
         );
         $this->db->prepare(
             "UPDATE ra_dias
@@ -263,7 +264,8 @@ final class HeClienteService
         if ($ini === null || $fim === null) {
             throw new RuntimeException('HE: informe início e fim no formato HH:MM.');
         }
-        if ($this->diffMinutos($ini, $fim) <= 0) {
+        $minutos = $this->diffMinutos($ini, $fim);
+        if ($minutos <= 0) {
             throw new RuntimeException('HE: a hora final deve ser após a inicial.');
         }
 
@@ -272,11 +274,25 @@ final class HeClienteService
         if ($sai2 !== null) {
             $iniMin = $this->toMin($ini);
             $fimMin = $this->toMin($fim);
+            $heIni = $iniMin;
+            $heFim = $iniMin + $minutos;
             $sai2Min = $this->toMin($sai2 . ':00');
             $ent1Min = $ent1 !== null ? $this->toMin($ent1 . ':00') : null;
-            $aposExpediente = $iniMin >= $sai2Min;
-            $antesExpediente = $ent1Min !== null && $fimMin <= $ent1Min;
-            if (!$aposExpediente && !$antesExpediente) {
+
+            if ($ent1Min !== null) {
+                $turnoIni = $ent1Min;
+                $turnoFim = $sai2Min <= $ent1Min ? $sai2Min + 1440 : $sai2Min;
+                $antesExpediente = ($iniMin < $fimMin) && ($heFim <= $turnoIni);
+                $aposExpediente = ($heIni >= $turnoFim)
+                    || ($turnoFim > 1440 && $heIni >= $sai2Min && $heFim <= $turnoIni);
+                $sobrepoeTurno = (max($heIni, $turnoIni) < min($heFim, $turnoFim))
+                    || ($heFim > 1440 && max($heIni, $turnoIni + 1440) < min($heFim, $turnoFim + 1440));
+                $faixaValida = ($antesExpediente || $aposExpediente) && !$sobrepoeTurno;
+            } else {
+                $faixaValida = ($heIni >= $sai2Min);
+            }
+
+            if (!$faixaValida) {
                 $rotuloData = $dataRef ?? (string) ($diaPonto['data'] ?? '');
                 $prefixo = $rotuloData !== '' ? 'Em ' . date('d/m', strtotime($rotuloData) ?: time()) . ': ' : '';
                 $faixaMsg = $ent1 !== null
@@ -421,16 +437,26 @@ final class HeClienteService
         return null;
     }
 
-    private function diffMinutos(string $ini, string $fim): int
+    /**
+     * Calcula duração em minutos entre $ini e $fim.
+     * Só aceita virada de meia-noite plausível (início >= 18:00, fim <= 06:00, duração <= 12h)
+     * ou quando explicitamente permitido, evitando aceitar 18:00->17:00 como 23h de HE.
+     */
+    private function diffMinutos(string $ini, string $fim, bool $permiteVirada = false): int
     {
-        $a = strtotime('1970-01-01 ' . substr($ini, 0, 8));
-        $b = strtotime('1970-01-01 ' . substr($fim, 0, 8));
-        if ($a === false || $b === false) {
+        $a = $this->toMin($ini);
+        $b = $this->toMin($fim);
+        if ($b === $a) {
             return 0;
         }
         if ($b < $a) {
-            $b += 86400;
+            $duracaoVirada = ($b + 1440) - $a;
+            $viradaPlausivel = ($a >= 18 * 60 && $b <= 6 * 60 && $duracaoVirada <= 12 * 60);
+            if ($viradaPlausivel || ($permiteVirada && $duracaoVirada <= 12 * 60)) {
+                return $duracaoVirada;
+            }
+            return $b - $a;
         }
-        return (int) (($b - $a) / 60);
+        return $b - $a;
     }
 }

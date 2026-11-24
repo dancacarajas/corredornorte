@@ -13,10 +13,14 @@ declare(strict_types=1);
  *   curl -fsS -H "X-Cron-Key: SEGREDO" https://DOMINIO/cron/alertas-digest
  */
 
-require dirname(__DIR__) . '/vendor/autoload.php';
-
 use App\Helpers\Db;
 use App\Services\AlertasService;
+
+$root = dirname(__DIR__);
+require $root . '/vendor/autoload.php';
+
+$config = require $root . '/config/app.php';
+date_default_timezone_set((string) ($config['timezone'] ?? 'America/Sao_Paulo'));
 
 $pdo = Db::tryConnection();
 if (!$pdo instanceof PDO) {

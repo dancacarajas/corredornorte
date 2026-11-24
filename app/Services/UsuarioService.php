@@ -196,6 +196,28 @@ final class UsuarioService
         }
     }
 
+    /** Exclui conta = inativa (preserva histórico). */
+    public function excluir(int $id, ?int $actorId = null): void
+    {
+        $atual = $this->buscar($id);
+        if ($atual === null) {
+            throw new RuntimeException('Usuário não encontrado.');
+        }
+        if ($actorId !== null && $actorId === $id) {
+            throw new RuntimeException('Você não pode excluir o próprio usuário.');
+        }
+        if ((string) ($atual['status'] ?? '') === 'inativo') {
+            throw new RuntimeException('Usuário já está inativo.');
+        }
+
+        $this->db->prepare("UPDATE usuarios SET status = 'inativo' WHERE id = :id")->execute(['id' => $id]);
+        $this->audit('usuarios', $id, 'excluir', [
+            'status' => $atual['status'],
+        ], [
+            'status' => 'inativo',
+        ], $actorId);
+    }
+
     /** @param list<int> $perfilIds */
     private function syncPerfis(int $usuarioId, array $perfilIds): void
     {

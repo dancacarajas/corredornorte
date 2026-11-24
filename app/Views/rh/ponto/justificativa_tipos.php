@@ -12,6 +12,8 @@ use App\Helpers\View;
 
 $tipos = $tipos ?? [];
 $podeEditar = (bool) ($podeEditar ?? false);
+$podeCriar = (bool) ($podeCriar ?? $podeEditar);
+$podeExcluir = (bool) ($podeExcluir ?? $podeEditar);
 $editId = (int) ($editId ?? 0);
 $editRow = null;
 foreach ($tipos as $t) {
@@ -84,15 +86,19 @@ foreach ($tipos as $t) {
                             </span>
                         </td>
                         <td><?= $usos ?></td>
-                        <?php if ($podeEditar): ?>
+                        <?php if ($podeEditar || $podeExcluir): ?>
                             <td>
                                 <div class="stack-row" style="justify-content:flex-end;gap:.35rem;">
+                                    <?php if ($podeEditar): ?>
                                     <a class="btn btn-secondary btn-sm" href="/rh/ponto/justificativa-tipos?editar=<?= $id ?>#formTipo">Editar</a>
+                                    <?php endif; ?>
+                                    <?php if ($podeExcluir): ?>
                                     <form method="post" action="/rh/ponto/justificativa-tipos/<?= $id ?>/excluir" style="display:inline;"
                                           onsubmit="return confirm('<?= $usos > 0 ? 'Este tipo já foi usado. Desativar?' : 'Excluir este tipo?' ?>');">
                                         <input type="hidden" name="_csrf" value="<?= View::e(Csrf::token()) ?>">
                                         <button class="btn btn-ghost btn-sm" type="submit"><?= $usos > 0 ? 'Desativar' : 'Excluir' ?></button>
                                     </form>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         <?php endif; ?>
@@ -104,7 +110,7 @@ foreach ($tipos as $t) {
     <?php endif; ?>
 </section>
 
-<?php if ($podeEditar): ?>
+<?php if (($editRow && $podeEditar) || (!$editRow && $podeCriar)): ?>
 <section class="card" id="formTipo" style="margin-top:1rem;">
     <div class="card-header">
         <div>
