@@ -102,8 +102,8 @@ $ogDesc = $periodoTexto !== ''
     <meta name="twitter:title" content="<?= View::e($ogTitle) ?>">
     <meta name="twitter:description" content="<?= View::e($ogDesc) ?>">
     <meta name="twitter:image" content="<?= View::e($ogImage) ?>">
-    <link rel="stylesheet" href="/assets/css/tokens.css">
-    <link rel="stylesheet" href="/assets/css/components.css">
+    <link rel="stylesheet" href="/assets/css/tokens.css?v=brand-20261127a">
+    <link rel="stylesheet" href="/assets/css/components.css?v=brand-20261127a">
     <style>
         body {
             margin: 0;

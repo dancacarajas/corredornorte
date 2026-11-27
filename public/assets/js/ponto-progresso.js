@@ -1,6 +1,30 @@
 (() => {
   const popup = document.getElementById('ponto-progresso');
   const confirmPopup = document.getElementById('ponto-periodo-existe');
+  const inexistentePopup = document.getElementById('ponto-periodo-inexistente');
+
+  const fecharDialogSeguro = (dlg) => {
+    if (!dlg) return;
+    if (typeof dlg.close === 'function' && dlg.open) {
+      dlg.close();
+    } else {
+      dlg.removeAttribute('open');
+    }
+  };
+
+  fecharDialogSeguro(popup);
+  fecharDialogSeguro(confirmPopup);
+  fecharDialogSeguro(inexistentePopup);
+
+  document.querySelectorAll('[data-dialog-close]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      const dlg = btn.closest('dialog');
+      if (!dlg) return;
+      ev.preventDefault();
+      fecharDialogSeguro(dlg);
+    });
+  });
+
   if (typeof popup?.showModal !== 'function') return;
 
   const barra = popup.querySelector('[role="progressbar"]');
@@ -163,7 +187,7 @@
 
         if (eventoResp?.type === 'exists_confirm' || eventoResp?.exists === true) {
           ocupado = false;
-          popup.close();
+          fecharDialogSeguro(popup);
           if (!abrirConfirmacaoExistente(eventoResp, formulario, endpoint)) {
             throw new Error(mensagemErro(eventoResp, 'Já existe cartão gerado para este período.'));
           }
@@ -227,18 +251,41 @@
   popup.addEventListener('cancel', (evento) => {
     if (ocupado) evento.preventDefault();
   });
+  popup.addEventListener('click', (evento) => {
+    if (evento.target === popup && !ocupado) fecharDialogSeguro(popup);
+  });
   popup.addEventListener('close', () => {
     if (urlAtualizacao !== null) window.location.assign(urlAtualizacao);
   });
+  fechar?.addEventListener('click', (evento) => {
+    evento.preventDefault();
+    if (!ocupado) fecharDialogSeguro(popup);
+  });
+
+  if (inexistentePopup) {
+    inexistentePopup.addEventListener('click', (evento) => {
+      if (evento.target === inexistentePopup) fecharDialogSeguro(inexistentePopup);
+    });
+  }
 
   if (confirmPopup) {
+    confirmPopup.addEventListener('click', (evento) => {
+      if (evento.target === confirmPopup) {
+        fecharDialogSeguro(confirmPopup);
+        pendenteFormulario = null;
+        pendenteEndpoint = null;
+      }
+    });
+    confirmPopup.addEventListener('close', () => {
+      // Mantém estado limpo caso feche via ESC ou botão X
+    });
     document.getElementById('ponto-periodo-existe-cancelar')?.addEventListener('click', () => {
-      confirmPopup.close();
+      fecharDialogSeguro(confirmPopup);
       pendenteFormulario = null;
       pendenteEndpoint = null;
     });
     document.getElementById('ponto-periodo-existe-sobrescrever')?.addEventListener('click', () => {
-      confirmPopup.close();
+      fecharDialogSeguro(confirmPopup);
       if (!pendenteFormulario || !pendenteEndpoint) return;
       const form = pendenteFormulario;
       const endpoint = pendenteEndpoint;

@@ -1277,3 +1277,10 @@ button.ponto-he-chip:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Garante ocultação nativa de <dialog> fechados e rodapés [hidden] */
+dialog.ponto-progresso:not([open]),
+dialog.modal:not([open]),
+.ponto-progresso .modal-footer[hidden] {
+  display: none !important;
+}

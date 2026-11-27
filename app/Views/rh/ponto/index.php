@@ -492,10 +492,11 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
 </section>
 
 <dialog class="modal" id="ponto-periodo-inexistente"
-        data-auto-open="<?= $periodoInexistente ? '1' : '0' ?>"
+        data-auto-open="0"
         aria-labelledby="ponto-periodo-inexistente-titulo">
     <div class="modal-header">
         <h2 class="card-title" id="ponto-periodo-inexistente-titulo">Período sem cartão</h2>
+        <button class="btn btn-ghost btn-sm" type="button" data-dialog-close aria-label="Fechar">Fechar</button>
     </div>
     <div class="modal-body section-stack">
         <p>Não existe cartão de ponto gerado para este período.</p>
@@ -505,19 +506,14 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
         <?php endif; ?>
     </div>
     <form method="dialog" class="modal-footer">
-        <button class="btn btn-primary btn-sm" type="submit">Entendi</button>
+        <button class="btn btn-primary btn-sm" type="submit" data-dialog-close>Entendi</button>
     </form>
 </dialog>
-<script>
-(() => {
-  const d = document.getElementById('ponto-periodo-inexistente');
-  if (d?.dataset.autoOpen === '1' && typeof d.showModal === 'function') d.showModal();
-})();
-</script>
 
 <dialog class="modal" id="ponto-periodo-existe" aria-labelledby="ponto-periodo-existe-titulo">
     <div class="modal-header">
         <h2 class="card-title" id="ponto-periodo-existe-titulo">Cartão já gerado</h2>
+        <button class="btn btn-ghost btn-sm" type="button" data-dialog-close aria-label="Fechar">Fechar</button>
     </div>
     <div class="modal-body section-stack">
         <p>Já existe cartão gerado para este período.</p>
@@ -545,10 +541,10 @@ $rotuloPeriodo = date('d/m/Y', strtotime($dataInicio)) . ' a ' . date('d/m/Y', s
         </div>
     </div>
     <form method="dialog" class="modal-footer" hidden>
-        <button class="btn btn-primary btn-sm" type="submit">Fechar</button>
+        <button class="btn btn-primary btn-sm" type="submit" id="ponto-progresso-fechar">Fechar</button>
     </form>
 </dialog>
-<script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-gerar-20261119b" defer></script>
+<script src="<?= View::asset('js/ponto-progresso.js') ?>?v=ponto-gerar-20261127a" defer></script>
 
 <div class="modal-backdrop" id="pontoReabrirModal">
     <div class="modal">

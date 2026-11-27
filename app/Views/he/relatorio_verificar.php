@@ -41,8 +41,8 @@ if ($status === 'invalidado') {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <title>Verificação do relatório de atividades · Arcadis RH</title>
-    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>">
+    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261127a">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261127a">
     <style>
         .verificacao-header {
             background: var(--surface);

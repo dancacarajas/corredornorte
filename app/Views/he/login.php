@@ -17,9 +17,9 @@ $next = HePortalAuth::safeNext(isset($next) ? (string) $next : (string) ($_GET['
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portal do Colaborador · Arcadis</title>
     <meta name="referrer" content="no-referrer">
-    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261118b">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261118b">
-    <link rel="stylesheet" href="<?= View::asset('css/auth.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261127a">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261127a">
+    <link rel="stylesheet" href="<?= View::asset('css/auth.css') ?>?v=brand-20261127a">
     <style>
         body {
             min-height: 100vh; display: grid; place-items: center; padding: 1.5rem;

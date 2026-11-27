@@ -20,10 +20,11 @@ $currentUser = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="<?= View::e(Csrf::token()) ?>">
     <title><?= View::e($pageTitle) ?> · Portal</title>
-    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261118b">
-    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261118b">
-    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=brand-20261118b">
-    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=brand-20261118b">
+    <link rel="stylesheet" href="<?= View::asset('css/tokens.css') ?>?v=brand-20261127a">
+    <link rel="stylesheet" href="<?= View::asset('css/components.css') ?>?v=brand-20261127a">
+    <link rel="stylesheet" href="<?= View::asset('css/layout.css') ?>?v=brand-20261127a">
+    <link rel="stylesheet" href="<?= View::asset('css/portal.css') ?>?v=brand-20261127a">
+    <style>dialog:not([open]),[hidden]{display:none!important;}</style>
     <?php foreach (($extraCss ?? []) as $cssFile): ?>
         <link rel="stylesheet" href="<?= View::asset($cssFile) ?>">
     <?php endforeach; ?>
